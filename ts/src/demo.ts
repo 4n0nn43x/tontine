@@ -3,7 +3,7 @@
 // Every claim prints PASS or FAIL; the exit code is non-zero if any check fails.
 import { Sandbox, DEFAULT_ACCOUNT_ID, DEFAULT_PRIVATE_KEY } from "near-sandbox";
 import { JsonRpcProvider, type Account } from "near-api-js";
-import { account, call, view, fmt, USDC, waitUntilChainTime, sleep } from "./chain.ts";
+import { account, call, view, fmt, USDC, sleep, TGAS } from "./chain.ts";
 import { createAccount, createFirm, deployContract, wasm } from "./deploy.ts";
 import { loadStrategies } from "./strategy.ts";
 import { makeLlm } from "./llm.ts";
@@ -27,6 +27,7 @@ async function rejects(p: Promise<unknown>, expect: string): Promise<string | nu
 const section = (s: string) => console.log(`\n== ${s}`);
 
 const EPOCH_SECS = 4;
+const TOKEN = `nep141:usdc.${DEFAULT_ACCOUNT_ID}`;
 const FLOOR = USDC(2);
 
 async function main() {
@@ -42,13 +43,19 @@ async function main() {
     const [usdc, tender, judgeA, client, inference, ...owners] = await Promise.all(
       ["usdc", "tender", "judge", "client", "inference", "o1", "o2", "o3", "o4", "o5"].map((n) => mk(n, n === "tender" ? "60" : "20")),
     );
+    // The exact intents.near code running on mainnet (defuse 0.4.5, code hash BtA1BEFN...), see wasm/README.md.
+    const intents = await mk("intents", "100");
+    const I = intents.acct.accountId;
+    await deployContract(intents.acct, wasm("intents_mainnet"), "new", {
+      config: { wnear_id: `wrap.${DEFAULT_ACCOUNT_ID}`, fees: { fee: 0, fee_collector: I }, roles: {} },
+    });
     const T = tender.acct.accountId;
     await deployContract(usdc.acct, wasm("mock_ft"), "new", {});
     await deployContract(tender.acct, wasm("tender"), "new", {
       config: {
         admin: T,
         judge: judgeA.acct.accountId,
-        payment: { Ft: { token: usdc.acct.accountId } },
+        payment: { Intents: { contract: I, token_id: TOKEN } },
         dividend_bps: 3000,
         liquidation_fee_bps: 200,
         min_bond: USDC(5).toString(),
@@ -60,7 +67,7 @@ async function main() {
         liquidation_reveal_secs: 3,
       },
     });
-    console.log(`tender=${T}  usdc=${usdc.acct.accountId} (mock, sandbox only)`);
+    console.log(`tender=${T}  intents=${I} (mainnet code)  usdc=${usdc.acct.accountId} (mock, sandbox only)`);
 
     const strategies = await loadStrategies();
     const firms: FirmHandle[] = [];
@@ -80,9 +87,14 @@ async function main() {
     check("firm accounts have no full access key", perms.length === 2 && perms.every((p: any) => p !== "FullAccess" && p.FunctionCall), `${perms.length} function call keys`);
 
     section("funding (mock USDC)");
-    const ftCall = (from: Account, amount: bigint, msg: object | "") =>
-      call(from, usdc.acct.accountId, "ft_transfer_call", { receiver_id: T, amount: amount.toString(), msg: msg === "" ? "" : JSON.stringify(msg) }, 1n);
-    await call(usdc.acct, usdc.acct.accountId, "mint", { account_id: T, amount: "0" });
+    // Mainnet payment path, two steps: deposit USDC into intents.near, then mt_transfer_call to tender,
+    // which receives mt_on_transfer. (defuse 0.4.5 has no deposit-and-notify: a deposit credited straight
+    // to tender would never reach its ledger.)
+    const ftCall = async (from: Account, amount: bigint, msg: object | "") => {
+      await call(from, usdc.acct.accountId, "ft_transfer_call", { receiver_id: I, amount: amount.toString(), msg: "" }, 1n, TGAS(100));
+      return call(from, I, "mt_transfer_call", { receiver_id: T, token_id: TOKEN, amount: amount.toString(), approval: null, memo: null, msg: msg === "" ? "" : JSON.stringify(msg) }, 1n, TGAS(250));
+    };
+    await call(usdc.acct, usdc.acct.accountId, "mint", { account_id: I, amount: "0" });
     await call(usdc.acct, usdc.acct.accountId, "mint", { account_id: client.acct.accountId, amount: USDC(100).toString() });
     await Promise.all(
       firms.map(async (f, i) => {
@@ -120,11 +132,16 @@ async function main() {
     check("delivery accepted by the judge, job paid", r1.verdict?.accept === true && jobAfter.status === "Paid");
     const pending = BigInt(await view(provider, T, "pending_dividends", { firm_id: w1.id, account_id: w1.owner.accountId }));
     check("30% of the price accrued to shareholders", pending === (BigInt(r1.auction.price) * 3000n) / 10000n, `${fmt(pending)} USDC to ${w1.owner.accountId}`);
+    const mtBal = async (a: string) => BigInt(await view(provider, I, "mt_balance_of", { account_id: a, token_id: TOKEN }));
     const usdcBefore = BigInt(await view(provider, usdc.acct.accountId, "ft_balance_of", { account_id: w1.owner.accountId }));
+    const intentsBefore = await mtBal(w1.owner.accountId);
     await call(w1.owner, T, "claim_dividends", { firm_id: w1.id }, 1n);
-    await call(w1.owner, T, "withdraw", { amount: pending.toString() }, 1n, 100_000_000_000_000n);
+    // tender moves its intents.near balance as predecessor (mt_transfer, 1 yocto), no intent signed.
+    await call(w1.owner, T, "withdraw", { amount: pending.toString() }, 1n, TGAS(100));
+    check("tender paid the dividend through intents.near mt_transfer", (await mtBal(w1.owner.accountId)) - intentsBefore === pending);
+    await call(w1.owner, I, "ft_withdraw", { token: usdc.acct.accountId, receiver_id: w1.owner.accountId, amount: pending.toString(), memo: null, msg: null }, 1n, TGAS(100));
     const usdcAfter = BigInt(await view(provider, usdc.acct.accountId, "ft_balance_of", { account_id: w1.owner.accountId }));
-    check("shareholder withdrew the dividend to its wallet", usdcAfter - usdcBefore === pending);
+    check("shareholder withdrew the dividend from intents.near to its wallet", usdcAfter - usdcBefore === pending);
     check("firm paid its own inference from its treasury", BigInt(await view(provider, T, "balance_of", { account_id: inference.acct.accountId })) > 0n);
 
     section("3. a firm delivers nothing, the judge rejects it, its owner's bond is slashed");

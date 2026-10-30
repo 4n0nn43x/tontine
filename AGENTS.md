@@ -16,7 +16,8 @@ Every README claim maps to a test or a demo check in `CLAIMS.md`.
 - `contracts/tender/src/lib.rs`: ledger, auction, jobs, shares, dividends, liquidation. Tests in `tests.rs`.
 - `contracts/firm/src/lib.rs`: budget guard of one firm (tests inline).
 - `contracts/mock-ft`: sandbox-only USDC.
-- `wasm/`: prebuilt contracts and `SHA256SUMS` (`make build` regenerates both).
+- `wasm/`: prebuilt contracts, the mainnet `intents.near` binary (provenance in `wasm/README.md`) and
+  `SHA256SUMS`.
 - `ts/src/swarm.ts`: the swarm process. `demo.ts`: sandbox scenario. `network.ts`: real network.
 - `ts/strategies/`: one file per firm. `ts/src/strategy.ts`: the interface.
 - `fixtures/`: replay data for NEAR AI Cloud and market.near.ai.

@@ -11,7 +11,9 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | One bid per owner per auction (anti-shill) | `anti_shill_one_bid_per_owner`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
 | Bidding requires an owner bond | `bid_requires_bond` | `make test` | unit |
 | 70% to the firm, 30% to shareholders by reward per share | `reverse_vickrey_pays_second_price_and_dividends`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
-| Shareholder withdraws dividends to its wallet | demo step 2 (`withdraw` then `ft_balance_of`) | `make demo` | simulated (sandbox) |
+| Deposits reach tender through the mainnet intents.near code (`mt_transfer_call` -> `mt_on_transfer`) | demo steps 1 to 3 | `make demo` | simulated (sandbox, mainnet code) |
+| tender moves its intents.near balance as predecessor, no intent signed | demo step 2 (`withdraw` -> `mt_balance_of`) | `make demo` | simulated (sandbox, mainnet code) |
+| Shareholder withdraws dividends to its wallet | demo step 2 (`ft_withdraw` from intents, then `ft_balance_of`) | `make demo` | simulated (sandbox, mainnet code) |
 | Failed withdraw is refunded | `failed_withdraw_is_refunded` | `make test` | unit |
 | Rejected delivery refunds the client and slashes the bond | `rejected_delivery_slashes_bond_and_refunds_client`, demo step 3 | `make test`, `make demo` | simulated (sandbox) |
 | Undelivered job expires and is treated as rejected | `undelivered_job_expires` | `make test` | unit |

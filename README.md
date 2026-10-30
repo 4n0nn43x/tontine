@@ -17,14 +17,14 @@ make demo     # local NEAR sandbox 2.13.4 (protocol 86, as mainnet), prebuilt wa
 ```
 
 You see one `PASS` or `FAIL` line per claim and `ALL CHECKS PASS` at the end (exit code 0).
-The demo deploys `tender`, a mock USDC and five firm contracts, then:
+The demo deploys the mainnet `intents.near` code, `tender`, a mock USDC and five firm contracts, then:
 
 | Step | Do | See |
 | --- | --- | --- |
-| 1 | A client pays a job with `ft_transfer_call(tender, 10 USDC, {"PostJob":...})` | `PASS job posted and escrowed by the deposit` |
+| 1 | A client deposits 10 USDC into intents, then `mt_transfer_call(tender, ..., {"PostJob":...})` | `PASS job posted and escrowed by the deposit` |
 | 2 | Five house firms commit sealed bids, reveal, `settle` | `PASS lowest bid wins, paid the second-lowest price (price 5.50 USDC, bids 3.52 < 5.50 < 7.00 < 8.50)` |
 | 2 | A second firm of the same owner tries to bid | `PASS anti-shill: a second firm of the same owner cannot bid` |
-| 2 | Winner pays its inference from its treasury, delivers, the judge accepts | `PASS 30% of the price accrued to shareholders`, `PASS shareholder withdrew the dividend to its wallet` |
+| 2 | Winner pays its inference from its treasury, delivers, the judge accepts | `PASS 30% of the price accrued to shareholders`, `PASS tender paid the dividend through intents.near mt_transfer`, `PASS shareholder withdrew the dividend from intents.near to its wallet` |
 | 3 | Gambler Inc wins a small job and delivers nothing | `PASS empty delivery rejected`, `PASS owner bond slashed by 5 USDC` |
 | 4 | Gambler Inc stays under the treasury floor for 2 epochs | `PASS below the floor for 2 epochs -> Liquidating` |
 | 4 | Rivals bid in the same auction code (forward, second price) | `PASS rival bought the firm`, `PASS buyer firm holds 100% of the shares`, `PASS cascade: 2% fee, then shareholders` |
@@ -65,9 +65,13 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
   never a full access key. Function call keys cannot attach deposits, so the agent can only reach
   non-payable methods. `spend` checks the cap and `spent + amount <= budget`, books before the promise,
   rolls back in the callback.
-- **Money**: an internal ledger in one stable token. Deposits by `ft_on_transfer` (NEP-141, sandbox) or
-  `mt_on_transfer` (USDC held in `intents.near`, mainnet). `withdraw` uses `ft_transfer` or
-  `intents.near::mt_transfer` as predecessor with 1 yocto, refunded in the callback on failure.
+- **Money**: an internal ledger in USDC held inside `intents.near`. A client pays in two steps:
+  `usdc.ft_transfer_call(intents.near, amount, "")`, then
+  `intents.near.mt_transfer_call(tender, "nep141:<usdc>", amount, msg)`, which calls `tender.mt_on_transfer`.
+  (The mainnet verifier, defuse 0.4.5, has no deposit-and-notify: USDC deposited straight to tender's
+  intents account would never reach its ledger.) `withdraw` calls `intents.near.mt_transfer` as predecessor
+  with 1 yocto, no intent signed, refunded in the callback on failure; the receiver then `ft_withdraw`s to
+  its wallet. A plain NEP-141 mode (`ft_on_transfer`) exists for networks without Intents.
 - **Swarm** (`ts/`): one process runs every firm's strategy. A third party adds a firm by PR of one file
   in `ts/strategies/` (see `ts/src/strategy.ts` for the interface).
 - **Delivery oracle**: an LLM judge on NEAR AI Cloud (`cloud-api.near.ai/v1`); the verdict and the
@@ -103,8 +107,8 @@ NEAR: run it yourself. Keys go to `keys/` (gitignored).
 - Shares carry symbolic amounts and are not an offer of securities.
 - The Intents DAO can disable predecessor authentication (`force_disable_auth_by_predecessor_ids`);
   the mainnet payment path depends on it.
-- The sandbox demo uses a mock USDC (`contracts/mock-ft`, anyone can mint). The `mt_on_transfer` /
-  intents `mt_transfer` path is covered by unit tests, not yet by a sandbox run against the defuse wasm.
+- The sandbox demo runs the exact `intents.near` mainnet code (see `wasm/README.md`) but with a mock USDC
+  (`contracts/mock-ft`, anyone can mint), since the real USDC contract is not deployed in the sandbox.
 - Storage is paid by `tender`; spam is bounded by the bond requirement on bidding only.
 - `epoch_tick` iterates every firm (fine for tens of firms).
 - Not revealing a committed bid costs nothing, so a bidder can still choose to stay out after the commit phase.
@@ -114,7 +118,8 @@ NEAR: run it yourself. Keys go to `keys/` (gitignored).
 
 ## Libraries (Q-005)
 
-near-sdk 5.29.1, near-contract-standards 5.29.1 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4
+NEAR Intents verifier (defuse 0.4.5, MIT, binary taken from `intents.near`, sandbox only), near-sdk 5.29.1,
+near-contract-standards 5.29.1 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4
 (sandbox binaries 2.13.4 and 2.14.0), tsx, TypeScript. Data: DefiLlama, NEARBlocks public APIs. All code written in the
 hackathon window, with AI assistance.
 
