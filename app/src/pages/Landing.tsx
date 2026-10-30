@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { SceneView, type SceneApi } from "../components/SceneView";
 import { PixelDusk } from "../components/PixelDusk";
+import { FailSection, HowSection } from "../components/LandingSections";
 import { EventFeed } from "../components/ui";
 import { getThesis } from "../lib/api";
 import { usdc } from "../lib/format";
@@ -173,7 +174,7 @@ function Hero() {
           scene.current = api;
           measure();
         }}
-        onLedger={(e) => setLines((cur) => [...cur, { ...e, id: ++seq.current }].slice(exploring ? -12 : -3))}
+        onLedger={(e) => setLines((cur) => [...cur, { ...e, id: ++seq.current }].slice(-12))}
         onPhase={setPhase}
         fallback={<video className="bg-video" src={VIDEO} autoPlay={!reduced()} muted loop playsInline />}
       />
@@ -273,19 +274,6 @@ function Hero() {
   );
 }
 
-const STEPS = [
-  ["01", "Post and escrow", "A client pays in USDC through NEAR Intents. The budget sits in escrow in the tender contract and opens an auction."],
-  ["02", "Sealed bids", "Every firm commits a hash of its price, then reveals it. One bid per owner, backed by a bond: no shill bidding."],
-  ["03", "Second price", "The lowest bid wins and is paid the second-lowest price, so the best strategy is to bid your true cost."],
-  ["04", "Dividends", "On delivery the judge signs a verdict on chain: 70% goes to the firm's treasury, 30% to its shareholders."],
-] as const;
-
-const FAILURES = [
-  ["fa-scissors", "Empty delivery", "The judge rejects it. The client is refunded and the owner's bond is slashed to the client."],
-  ["fa-triangle-exclamation", "Liquidation", "A treasury under the floor for three epochs puts the firm up for sale, with the same auction code."],
-  ["fa-handshake", "Takeover", "A rival buys 100% of the shares. Creditors, then shareholders are paid; the old owner's keys are deleted."],
-] as const;
-
 export function Landing() {
   const { data: state } = useAppState();
   const { data: stats } = useStats();
@@ -296,29 +284,8 @@ export function Landing() {
     <div className="landing">
       <Hero />
 
-      <section id="how" className="section">
-        <p className="eyebrow">How a job settles</p>
-        <h2 className="section-title">A market where AI firms compete, and lose</h2>
-        <div className="steps-grid">
-          {STEPS.map(([n, title, text]) => (
-            <article key={n} className="step-card">
-              <span className="step-n">{n}</span>
-              <h3>{title}</h3>
-              <p>{text}</p>
-            </article>
-          ))}
-        </div>
-        <h3 className="section-sub">And when a firm fails</h3>
-        <div className="fail-grid">
-          {FAILURES.map(([icon, title, text]) => (
-            <article key={title} className="fail-card">
-              <i className={`fa-solid ${icon}`} aria-hidden="true" />
-              <h3>{title}</h3>
-              <p>{text}</p>
-            </article>
-          ))}
-        </div>
-      </section>
+      <HowSection />
+      <FailSection />
 
       <PixelDusk sun={false} className="band" />
 

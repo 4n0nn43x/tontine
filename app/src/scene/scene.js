@@ -63,6 +63,8 @@ const DUNE_VERT = /* glsl */ `
   uniform vec3 uGlow;
   uniform vec3 uDeep;
   uniform vec3 uHaze;
+  uniform vec2 uMouse;
+  uniform float uAspect;
   varying vec3 vColor;
   varying float vAlpha;
   void main() {
@@ -71,6 +73,10 @@ const DUNE_VERT = /* glsl */ `
     p.y += sin(p.x * 0.55 - uTime * 0.55 + p.z * 0.3) * 0.035;
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
     gl_Position = projectionMatrix * mv;
+    vec2 dm = gl_Position.xy / max(gl_Position.w, 0.0001) - uMouse;
+    dm.x *= uAspect;
+    float push = exp(-dot(dm, dm) * 22.0);
+    gl_Position.xy += normalize(dm + 1e-4) * vec2(1.0 / uAspect, 1.0) * push * 0.07 * gl_Position.w;
     float dist = -mv.z;
     float far = smoothstep(18.0, 150.0, dist);
     float near = smoothstep(2.0, 16.0, dist);
@@ -121,6 +127,8 @@ const TERRAIN_FRAG = /* glsl */ `
   uniform vec3 uHaze;
   uniform vec3 uBase;
   uniform float uTime;
+  uniform vec2 uMouse;        // pointer in NDC
+  uniform vec2 uResolution;   // drawing buffer, device pixels
   varying vec3 vN;
   varying vec3 vW;
   varying float vDist;
@@ -141,7 +149,18 @@ const TERRAIN_FRAG = /* glsl */ `
     float reach = smoothstep(6.0, 34.0, vDist);
     vec3 dusk = mix(uHaze * 1.4, uGlow * 0.7, pow(face, 3.0));
     col += dusk * (0.12 + 0.75 * pow(face, 4.0)) * reach;
-    col *= 0.78 + 0.44 * hash(floor(vW.xz * 40.0));
+    // Wind: ripples travel across the sand and the grain drifts with them.
+    float wind = 0.5 + 0.5 * sin(vW.x * 0.55 + vW.z * 1.9 - uTime * 0.7 + sin(vW.x * 0.13 + uTime * 0.2) * 2.0);
+    col += dusk * 0.12 * wind * reach;
+    vec2 grain = vW.xz * 40.0 + vec2(uTime * 1.6, uTime * 0.5);
+    // Under the pointer the grains scatter outwards and catch the light.
+    vec2 dm = gl_FragCoord.xy / uResolution * 2.0 - 1.0 - uMouse;
+    dm.x *= uResolution.x / uResolution.y;
+    float m = exp(-dot(dm, dm) * 22.0);
+    grain += normalize(dm + 1e-4) * m * (6.0 + 3.0 * sin(uTime * 2.5));
+    float g = hash(floor(grain));
+    col *= 0.78 + 0.44 * g;
+    col += uGlow * m * (0.05 + 0.22 * g) * (0.45 + 0.55 * reach);
     float fog = smoothstep(26.0, 300.0, vDist);
     col = mix(col, uHaze, fog * 0.8);
     col += uGlow * 0.07 * fog * fog * (0.6 + 0.4 * rim);
@@ -189,7 +208,7 @@ const SKY_FRAG = /* glsl */ `
       col += glow * (0.55 * exp(-t * 14.0) + 0.16 * exp(-t * 3.5));
     } else {
       float b = -t * (1.0 - uHorizon) / max(uHorizon, 0.001);   // 0 at the horizon, 1 at the bottom
-      col = mix(glow * 0.32, vec3(0.0), smoothstep(0.0, 0.18, b));
+      col = mix(low * 0.8, vec3(0.227, 0.129, 0.25), smoothstep(0.0, 0.25, b));
     }
 
     // Glyph rain, only above the horizon.
@@ -384,6 +403,8 @@ export function startScene({
     uGlow: { value: hex("#ff9f86") },
     uDeep: { value: hex("#1a1026") },
     uHaze: { value: hex("#7d4d78") },
+    uMouse: { value: new THREE.Vector2(9, 9) },
+    uAspect: { value: 1 },
   };
   const dunes = new THREE.Points(
     new THREE.BufferGeometry(),
@@ -409,6 +430,8 @@ export function startScene({
     uHaze: { value: hex("#3a2140") },
     uBase: { value: hex("#060309") },
     uTime: { value: 0 },
+    uMouse: { value: new THREE.Vector2(9, 9) },
+    uResolution: skyUniforms.uResolution,
   };
   const terrain = new THREE.Mesh(
     new THREE.BufferGeometry(),
@@ -1109,10 +1132,11 @@ export function startScene({
 
   // ------------------------------------------------------------------ camera
 
-  const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
+  const pointer = { x: 0, y: 0, tx: 0, ty: 0, seen: false };
 
   function onPointer(e) {
     const r = canvas.getBoundingClientRect();
+    pointer.seen = true;
     pointer.tx = Math.max(-1, Math.min(1, ((e.clientX - r.left) / Math.max(1, r.width)) * 2 - 1));
     pointer.ty = Math.max(-1, Math.min(1, ((e.clientY - r.top) / Math.max(1, r.height)) * 2 - 1));
   }
@@ -1161,6 +1185,12 @@ export function startScene({
     skyUniforms.uTime.value = clock;
     duneUniforms.uTime.value = clock;
     terrainUniforms.uTime.value = clock;
+    // The pointer, smoothed, in NDC (pointer.y grows downwards).
+    const mx = pointer.seen ? pointer.x : 9;
+    const my = pointer.seen ? -pointer.y : 9;
+    duneUniforms.uMouse.value.set(mx, my);
+    terrainUniforms.uMouse.value.set(mx, my);
+    duneUniforms.uAspect.value = camera.aspect;
     shared.uCalmStrength.value = calmStrength * (1 - explore);
     const showSwarm = swarmInHero || explore > 0.02;
     for (const c of [decoCloud, agentsCloud, glowCloud]) c.points.visible = showSwarm;

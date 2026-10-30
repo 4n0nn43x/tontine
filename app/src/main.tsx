@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import "./styles/base.css";
 import "./styles/landing.css";
+import "./styles/sections.css";
 import "./styles/app.css";
 import { AppShell } from "./components/AppShell";
 import { Landing } from "./pages/Landing";

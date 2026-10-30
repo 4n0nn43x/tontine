@@ -1,0 +1,485 @@
+/* Landing sections: graphite cards with lit panels, light ribbons, a flow card for failures. */
+
+.landing {
+  --graphite: linear-gradient(160deg, #1b1d1e, #141617);
+  --card-line: rgba(255, 255, 255, 0.06);
+  background:
+    radial-gradient(ellipse 60% 40% at 50% 0%, rgba(124, 92, 255, 0.08), transparent 70%),
+    #0c0d10;
+  /* The light ribbons overflow their sections. */
+  overflow-x: clip;
+}
+
+/* Every landing card gets the graphite look with a soft top-left light. */
+.landing .anatomy article,
+.landing .proofs li,
+.landing .live-kpis > div,
+.landing .teaser,
+.landing .code,
+.landing .live-feed,
+.lab-card,
+.flow-card {
+  border: 1px solid var(--card-line);
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(255, 255, 255, 0.055), transparent 55%),
+    var(--graphite);
+  transition: border-color 0.3s ease;
+}
+
+@media (hover: hover) {
+  .landing .anatomy article:hover,
+  .landing .proofs li:hover,
+  .lab-card:hover,
+  .flow-card:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+  }
+}
+
+/* ---------------------------------------------------------------- reveal */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 0.7s var(--ease),
+    transform 0.7s var(--ease);
+}
+
+.reveal.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------------------------------------------------------------- ribbons */
+
+.section.lab,
+.section.fail-split {
+  isolation: isolate;
+}
+
+.ribbon {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+.ribbon-how {
+  top: -6%;
+  right: -38%;
+  width: 120%;
+  height: 70%;
+  opacity: 0.55;
+}
+
+.ribbon-fail {
+  top: 0;
+  left: -30%;
+  width: 115%;
+  height: 100%;
+  opacity: 0.9;
+  transform: scaleX(-1) rotate(-4deg);
+}
+
+/* ---------------------------------------------------------------- bento */
+
+.bento {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.lab-card {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 22px;
+  padding: 14px 14px 26px;
+  border-radius: 22px;
+  overflow: hidden;
+}
+
+.lab-card.wide {
+  grid-column: 1 / -1;
+  grid-template-columns: 1.15fr 1fr;
+  grid-template-rows: none;
+  align-items: center;
+  gap: clamp(22px, 4vw, 56px);
+  padding: 14px clamp(22px, 4vw, 48px) 14px 14px;
+}
+
+.lab-card.wide.right {
+  grid-template-columns: 1fr 1.15fr;
+  padding: 14px 14px 14px clamp(22px, 4vw, 48px);
+}
+
+.lab-card.wide.right .lab-panel {
+  order: 2;
+}
+
+/* The lit inner panel, with a highlight that drifts slowly. */
+.lab-panel {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 250px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  background:
+    radial-gradient(60% 70% at var(--hx, 30%) var(--hy, 20%), rgba(215, 188, 255, 0.13), transparent 70%),
+    linear-gradient(180deg, #202325, #17191b);
+  overflow: hidden;
+  animation: panelLight 14s ease-in-out infinite alternate;
+}
+
+.lab-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 14px 14px;
+  pointer-events: none;
+}
+
+@property --hx {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 30%;
+}
+
+@property --hy {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 20%;
+}
+
+@keyframes panelLight {
+  to {
+    --hx: 75%;
+    --hy: 65%;
+  }
+}
+
+.lab-panel svg {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-height: 290px;
+}
+
+.lab-kicker {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.lab-copy {
+  padding: 0 12px;
+}
+
+.lab-copy h3 {
+  margin: 0 0 10px;
+  font-size: clamp(22px, 2.2vw, 30px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.lab-copy h3 em {
+  font-family: var(--font-display);
+  font-style: normal;
+  font-weight: 400;
+  color: #e8dcff;
+}
+
+.lab-copy > p {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.lab-copy ol {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 14px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  list-style: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+}
+
+.lab-copy li {
+  display: flex;
+  gap: 12px;
+}
+
+.lab-copy li span {
+  color: rgba(255, 255, 255, 0.35);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding-top: 2px;
+}
+
+/* SVG illustration parts */
+.draw .node {
+  fill: rgba(255, 255, 255, 0.03);
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 1;
+}
+
+.draw .node.hi {
+  stroke: rgba(246, 215, 167, 0.7);
+  fill: rgba(246, 215, 167, 0.06);
+}
+
+.draw .wire {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.42);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.draw .wire.dash {
+  stroke-dasharray: 4 5;
+}
+
+.draw .bar {
+  fill: rgba(255, 255, 255, 0.12);
+}
+
+.draw .bar.win {
+  fill: rgba(142, 240, 179, 0.55);
+}
+
+.draw .bar.second {
+  fill: rgba(246, 215, 167, 0.45);
+}
+
+.draw .share {
+  fill: rgba(255, 255, 255, 0.1);
+}
+
+.draw .share.mine {
+  fill: rgba(142, 240, 179, 0.8);
+}
+
+.draw .pulse {
+  fill: var(--accent);
+}
+
+.draw text {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+.draw .t-strong {
+  fill: rgba(255, 255, 255, 0.9);
+}
+
+.draw .t-dim {
+  fill: rgba(255, 255, 255, 0.42);
+}
+
+.draw .t-accent {
+  fill: var(--accent);
+}
+
+.draw .t-good {
+  fill: var(--good);
+}
+
+/* Strokes draw in once the card is revealed; bars grow; revealed bids appear in turn. */
+.reveal .draw .node,
+.reveal .draw .wire:not(.dash) {
+  stroke-dasharray: 900;
+  stroke-dashoffset: 900;
+  transition: stroke-dashoffset 1.6s var(--ease) 0.3s;
+}
+
+.reveal.in .draw .node,
+.reveal.in .draw .wire:not(.dash) {
+  stroke-dashoffset: 0;
+}
+
+.reveal .draw .bar {
+  transform: scaleX(0);
+  transform-box: fill-box;
+  transition: transform 1.1s var(--ease) 0.5s;
+}
+
+.reveal.in .draw .bar {
+  transform: none;
+}
+
+.reveal .reveal-num {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.reveal.in .reveal-num {
+  opacity: 1;
+}
+
+.reveal.in .reveal-num.n0 { transition-delay: 1.1s; }
+.reveal.in .reveal-num.n1 { transition-delay: 1.4s; }
+.reveal.in .reveal-num.n2 { transition-delay: 1.7s; }
+.reveal.in .reveal-num.n3 { transition-delay: 2s; }
+
+/* ---------------------------------------------------------------- failure flow */
+
+.fail-split {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: clamp(28px, 5vw, 72px);
+  align-items: center;
+}
+
+.flow-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 64px 1fr;
+  align-items: center;
+  gap: 0 clamp(40px, 6vw, 70px);
+  padding: 34px 26px 52px;
+  border-radius: 24px;
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(255, 255, 255, 0.06), transparent 55%),
+    rgba(24, 25, 26, 0.8);
+  backdrop-filter: blur(14px);
+}
+
+.flow-lines {
+  position: absolute;
+  inset: 34px 26px 52px;
+  width: calc(100% - 52px);
+  height: calc(100% - 86px);
+  pointer-events: none;
+}
+
+.flow-col {
+  position: relative;
+  display: grid;
+  gap: 26px;
+}
+
+.flow-pill {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(59, 61, 65, 0.62);
+  font-size: 13px;
+  color: #e6e5ec;
+  transition: background 0.25s ease;
+}
+
+.flow-pill i {
+  color: var(--bad);
+  font-size: 12px;
+}
+
+.flow-pill.out {
+  border-color: rgba(142, 240, 179, 0.45);
+  background: rgba(16, 58, 44, 0.62);
+}
+
+.flow-pill.out i {
+  color: var(--good);
+}
+
+.reveal .flow-pill.out {
+  opacity: 0.25;
+  transition: opacity 0.5s ease calc(1.2s + var(--i) * 0.25s);
+}
+
+.reveal.in .flow-pill.out {
+  opacity: 1;
+}
+
+@media (hover: hover) {
+  .flow-pill:hover {
+    background: rgba(80, 82, 88, 0.7);
+  }
+  .flow-hub:hover {
+    box-shadow: 0 0 34px rgba(255, 255, 255, 0.45);
+  }
+}
+
+.flow-hub {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  background: #fff;
+  color: #111;
+  font-size: 24px;
+  box-shadow: 0 0 22px rgba(255, 255, 255, 0.25);
+  transition: box-shadow 0.3s ease;
+}
+
+.flow-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.42);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+/* ---------------------------------------------------------------- narrow screens */
+
+@media (max-width: 1100px) {
+  .bento {
+    grid-template-columns: 1fr;
+  }
+  .lab-card.wide,
+  .lab-card.wide.right {
+    grid-template-columns: 1fr;
+    padding: 14px 14px 26px;
+  }
+  .lab-card.wide.right .lab-panel {
+    order: 0;
+  }
+  .fail-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .flow-card {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    padding: 24px 18px 48px;
+  }
+  .flow-lines {
+    display: none;
+  }
+  .flow-hub {
+    margin: 0 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal .draw .node,
+  .reveal .draw .wire,
+  .reveal .draw .bar,
+  .reveal .flow-pill.out {
+    transition: none;
+  }
+  .lab-panel {
+    animation: none;
+  }
+}
