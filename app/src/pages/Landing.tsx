@@ -9,7 +9,6 @@ import { usdc } from "../lib/format";
 import { useAppState, useEvents, useFirmName, useStats } from "../lib/hooks";
 import { PHASES } from "./Dashboard";
 
-const VIDEO = "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_012548_ef22562c-c0ae-4816-ad9d-f8922af4e6a7.mp4";
 
 const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -176,7 +175,7 @@ function Hero() {
         }}
         onLedger={(e) => setLines((cur) => [...cur, { ...e, id: ++seq.current }].slice(-12))}
         onPhase={setPhase}
-        fallback={<video className="bg-video" src={VIDEO} autoPlay={!reduced()} muted loop playsInline />}
+        fallback={<PixelDusk className="bg-video" />}
       />
       <div className="bg-scrim" />
 
