@@ -1,14 +1,16 @@
 //! tender: the market contract of Tontine.
 //!
-//! One sealed-bid second-price auction (commit-reveal) serves two purposes:
-//! - jobs: reverse auction, the lowest bid wins and is paid the second-lowest price;
-//! - liquidations: forward auction, the highest bid buys the bankrupt firm at the second-highest price.
+//! One sealed-bid second-price auction (commit-reveal, highest bid wins) serves two purposes:
+//! - orders: a client swaps the stable token for the asset (or back); firms bid the amount they deliver,
+//!   the best bid fills at the second-best amount (or the client's minimum if alone), atomically;
+//! - liquidations: the highest bid buys the bankrupt firm at the second-highest price.
 //!
-//! Money is an internal ledger in one stable token (USDC base units). Deposits arrive by
-//! `ft_on_transfer` (plain NEP-141) or `mt_on_transfer` (NEAR Intents, NEP-245). Firm shares are
-//! NEP-245 tokens (token_id = firm id, 100 per firm) with Synthetix-style dividends.
+//! Money is an internal ledger in two tokens: the stable token (USDC base units: bonds, fees, dividends,
+//! loans) and the traded asset (wNEAR). Deposits arrive by `ft_on_transfer` (plain NEP-141) or
+//! `mt_on_transfer` (NEAR Intents, NEP-245). Firm shares are NEP-245 tokens (token_id = firm id, 100 per
+//! firm) with Synthetix-style dividends.
 
-use near_sdk::json_types::{Base64VecU8, U128};
+use near_sdk::json_types::{Base64VecU8, I128, U128};
 use near_sdk::serde_json::{self, json};
 use near_sdk::store::{LookupMap, Vector};
 use near_sdk::{
@@ -25,8 +27,6 @@ const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 const SEC: u64 = 1_000_000_000;
 /// Upper bound on any phase or deadline, so `now + secs * SEC` can never overflow.
 const MAX_PHASE_SECS: u64 = 30 * 86_400;
-/// After this long without a verdict, anyone can cancel a delivered job (judge outage, no slash).
-const JUDGE_TIMEOUT_SECS: u64 = 3 * 86_400;
 const YEAR_SECS: u128 = 365 * 86_400;
 /// Smallest loan (1 USDC) and most open loans per firm: each loan is a row the firm carries in every call.
 const MIN_LOAN: u128 = 1_000_000;
@@ -41,8 +41,7 @@ const GAS_FIRM_INIT: Gas = Gas::from_tgas(30);
 /// Raw storage key of the firm contract code that `create_firm` deploys (set by the admin).
 const FIRM_CODE_KEY: &[u8] = b"firm_code";
 /// Methods an agent key may call on tender (none takes a deposit). Mirrors contracts/firm and ts/src/deploy.ts.
-const AGENT_TENDER_METHODS: &str =
-    "commit_bid,reveal_bid,deliver,settle,epoch_tick,expire,settle_dividends,commit_vote,reveal_vote,finalize,resolve_dispute";
+const AGENT_TENDER_METHODS: &str = "commit_bid,reveal_bid,settle,epoch_tick,settle_dividends";
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
@@ -57,39 +56,40 @@ pub enum Payment {
 #[derive(Clone)]
 pub struct Config {
     pub admin: AccountId,
-    /// Delivery oracle: the account that posts the attested LLM verdict.
-    pub judge: AccountId,
+    /// The stable token: ledger, bonds, fees, dividends and loans (USDC).
     pub payment: Payment,
+    /// The asset that orders trade against the stable token (wNEAR).
+    pub asset: Payment,
+    /// Base units of one whole asset token (10^24 for wNEAR). Prices are stable base units per asset unit.
+    pub asset_unit: U128,
+    /// Price that values inventories and anchors price bands until the first order fills.
+    pub initial_price: U128,
     pub dividend_bps: u16,
     pub liquidation_fee_bps: u16,
     pub min_bond: U128,
+    /// Smallest slash of an owner bond for a committed bid that is never revealed.
     pub slash: U128,
+    /// A firm whose net asset value stays under this floor for N epochs is liquidated.
     pub treasury_floor: U128,
     pub epochs_before_liquidation: u32,
     pub epoch_secs: u64,
     pub liquidation_commit_secs: u64,
     pub liquidation_reveal_secs: u64,
-    /// Tontine's cut of every paid job, taken before the dividend split. Paid to `admin`.
+    /// Tontine's cut of what the winning firm receives on each filled order. Paid to `admin`.
     #[serde(default)]
-    pub job_fee_bps: u16,
+    pub order_fee_bps: u16,
     /// Tontine's cut of every share sale, taken from the seller's proceeds. Paid to `admin`.
     #[serde(default)]
     pub trade_fee_bps: u16,
     /// Paid out of `admin`'s fee balance to whoever settles an auction or ticks an epoch.
     #[serde(default)]
     pub keeper_reward: U128,
-    /// Optimistic jobs: what a client stakes to dispute a delivery, lost to the evaluators if the panel accepts it.
+    /// Slash for an unrevealed order bid, in bps of the order's stable notional (at least `slash`).
     #[serde(default)]
-    pub dispute_bond: U128,
-    /// Owner bond each evaluator puts at stake, lost if it votes against the majority or does not reveal.
+    pub no_reveal_slash_bps: u16,
+    /// Fewest revealed bids for an order to fill (0 means 1); with fewer, everyone is refunded.
     #[serde(default)]
-    pub eval_stake: U128,
-    /// Evaluator firms per dispute (0 means 3).
-    #[serde(default)]
-    pub panel_size: u8,
-    /// Length of each vote phase of a dispute, commit then reveal (0 means 60 s).
-    #[serde(default)]
-    pub vote_secs: u64,
+    pub min_bidders: u8,
 }
 
 #[near(serializers = [borsh, json])]
@@ -129,6 +129,19 @@ pub struct LoanTerms {
     pub cap: U128,
 }
 
+/// The owner's limits on its firm's agent, checked by the contract on every revealed order bid: the AI
+/// chooses prices inside them and cannot step out, whatever it is told.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, PartialEq, Debug)]
+pub struct Policy {
+    /// Most of the firm's net asset value it may hold in the asset after a fill (10000 = no limit).
+    pub max_asset_bps: u16,
+    /// Farthest a bid's price may be from the last clearing price (0 = no band).
+    pub band_bps: u16,
+    /// Kill switch: a paused firm commits no bid.
+    pub paused: bool,
+}
+
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub struct Firm {
@@ -143,17 +156,18 @@ pub struct Firm {
     pub loan_terms: Option<LoanTerms>,
     pub epochs_below_floor: u32,
     pub liquidation_auction: Option<u64>,
-    // KYA registry and P&L
-    pub delivered: u32,
-    pub rejected: u32,
+    pub policy: Policy,
+    // record and P&L
+    pub fills: u32,
+    /// Stable notional of the orders it filled.
+    pub volume: U128,
+    /// Sum of each fill's edge: what it received minus what it delivered, valued at the previous clearing price.
+    pub edge: I128,
     pub slashed: U128,
-    pub revenue: U128,
     pub dividends: U128,
     pub takeovers: u32,
     /// False between a takeover and the firm contract confirming its new owner.
     pub owner_synced: bool,
-    /// Jobs this firm won that are not paid, rejected or cancelled yet.
-    pub open_jobs: u32,
     /// The firm's spec as published by its owner: JSON (name, description, skills, model, budgets...).
     pub profile: Option<String>,
 }
@@ -161,7 +175,7 @@ pub struct Firm {
 #[near(serializers = [borsh, json])]
 #[derive(Clone, PartialEq, Debug)]
 pub enum AuctionKind {
-    Job(u64),
+    Order(u64),
     Liquidation(u32),
 }
 
@@ -179,9 +193,7 @@ pub struct Bid {
 #[derive(Clone)]
 pub struct Auction {
     pub kind: AuctionKind,
-    /// true: lowest bid wins (jobs). false: highest bid wins (liquidations).
-    pub reverse: bool,
-    /// Reverse: price ceiling (job budget). Forward: price floor.
+    /// The lowest acceptable bid: the client's minimum for an order, the inventory value for a liquidation.
     pub reserve: U128,
     pub commit_end: u64,
     pub reveal_end: u64,
@@ -191,89 +203,58 @@ pub struct Auction {
     pub price: Option<U128>,
 }
 
+/// Buy: the client pays the stable token and receives the asset. Sell: the client pays the asset and
+/// receives the stable token.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Side {
+    Buy,
+    Sell,
+}
+
 #[near(serializers = [borsh, json])]
 #[derive(Clone, PartialEq, Debug)]
-pub enum JobStatus {
-    Bidding,
-    Assigned,
-    Delivered,
-    Paid,
-    Rejected,
-    Cancelled,
-    Disputed,
-}
-
-/// How a delivery is checked. `Judge`: the configured oracle posts the verdict (the default).
-/// `Optimistic`: the client accepts or disputes within `review_secs`; silence pays the firm, and a dispute
-/// goes to a panel of evaluator firms that vote with stakes (commit, then reveal).
-#[near(serializers = [borsh, json])]
-#[derive(Clone, PartialEq, Debug, Default)]
-pub enum Verify {
-    #[default]
-    Judge,
-    Optimistic { review_secs: u64 },
-}
-
-/// One evaluator of a dispute. `hash` is hex(sha256("{1|0}:{salt}")), 1 meaning the delivery is accepted.
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct Ballot {
-    pub firm_id: u32,
-    pub owner: AccountId,
-    pub hash: Option<String>,
-    pub vote: Option<bool>,
+pub enum OrderStatus {
+    Open,
+    Filled,
+    Refunded,
 }
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
-pub struct Dispute {
-    pub panel: Vec<Ballot>,
-    pub commit_end: u64,
-    pub reveal_end: u64,
-    pub resolved: bool,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct Job {
+pub struct Order {
     pub id: u64,
     pub client: AccountId,
-    pub budget: U128,
-    pub brief: String,
+    pub side: Side,
+    /// Escrowed when posted: stable for a buy, asset for a sell.
+    pub amount_in: U128,
+    /// The least the client accepts: the auction's reserve.
+    pub min_out: U128,
+    /// What the client was quoted elsewhere when posting (e.g. NEAR Intents 1Click). Informational.
+    pub reference_out: Option<U128>,
     pub auction: u64,
-    pub status: JobStatus,
-    pub deliver_secs: u64,
-    pub deadline: Option<u64>,
-    pub result: Option<String>,
-    pub attestation: Option<String>,
-    /// Owner of the winning firm when it bid: its lock and bond back this job, even if the firm is sold.
-    pub winner_owner: Option<AccountId>,
-    /// Acceptance criteria fixed when the job was posted: the delivery is judged against them only.
-    pub criteria: String,
-    pub verify: Verify,
-    /// Optimistic jobs: end of the client's review window, set on delivery.
-    pub review_end: Option<u64>,
+    pub status: OrderStatus,
+    pub firm: Option<u32>,
+    /// What the client received.
+    pub out: Option<U128>,
 }
 
 #[near(serializers = [json])]
-pub struct PostJob {
-    pub budget: U128,
-    pub brief: String,
+pub struct PostOrder {
+    pub side: Side,
+    pub amount_in: U128,
+    pub min_out: U128,
+    #[serde(default)]
+    pub reference_out: Option<U128>,
     pub commit_secs: u64,
     pub reveal_secs: u64,
-    pub deliver_secs: u64,
-    /// Acceptance criteria (format, checks, rubric), immutable once posted.
-    #[serde(default)]
-    pub criteria: String,
-    #[serde(default)]
-    pub verify: Verify,
 }
 
 /// `msg` of a deposit. Empty msg = plain deposit to the sender.
 #[near(serializers = [json])]
 pub enum DepositAction {
-    PostJob(PostJob),
-    /// Credit another account (e.g. fund a firm treasury).
+    PostOrder(PostOrder),
+    /// Credit another account (e.g. fund a firm's treasury or inventory).
     Credit(AccountId),
 }
 
@@ -290,15 +271,30 @@ pub struct Ask {
 #[near]
 enum Key {
     Balances,
+    Assets,
     Bonds,
     Locks,
     Firms,
     FirmByAccount,
-    Jobs,
+    Orders,
     Auctions,
     Asks,
     Storage,
-    Disputes,
+}
+
+/// The two ledgers.
+#[derive(Clone, Copy, PartialEq)]
+enum Token {
+    Stable,
+    Asset,
+}
+
+/// What the client pays and what it receives.
+fn tokens(side: Side) -> (Token, Token) {
+    match side {
+        Side::Buy => (Token::Stable, Token::Asset),
+        Side::Sell => (Token::Asset, Token::Stable),
+    }
 }
 
 #[ext_contract(ext_ft)]
@@ -330,19 +326,23 @@ trait FirmContract {
 #[derive(PanicOnDefault)]
 pub struct Tender {
     config: Config,
+    /// Stable token ledger.
     balances: LookupMap<AccountId, u128>,
+    /// Asset ledger.
+    assets: LookupMap<AccountId, u128>,
     bonds: LookupMap<AccountId, u128>,
-    /// Open commitments per owner (bids not yet settled + assigned jobs). Bond is locked while > 0.
+    /// Open commitments per owner (bids not yet settled). Bond is locked while > 0.
     locks: LookupMap<AccountId, u32>,
     firms: Vector<Firm>,
     firm_by_account: LookupMap<AccountId, u32>,
-    jobs: Vector<Job>,
+    orders: Vector<Order>,
     auctions: Vector<Auction>,
     asks: LookupMap<String, Ask>,
     /// NEP-145-style prepaid storage (yoctoNEAR): whoever grows the state pays for it.
     storage: LookupMap<AccountId, u128>,
     last_epoch: u64,
-    disputes: LookupMap<u64, Dispute>,
+    /// Stable base units per asset unit at the last fill (`initial_price` before any).
+    last_price: u128,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -351,11 +351,6 @@ fn hex(bytes: &[u8]) -> String {
 
 pub fn bid_hash(amount: u128, salt: &str) -> String {
     hex(&env::sha256(format!("{amount}:{salt}").as_bytes()))
-}
-
-/// Sealed vote of an evaluator: 1 accepts the delivery, 0 rejects it.
-pub fn vote_hash(accept: bool, salt: &str) -> String {
-    hex(&env::sha256(format!("{}:{salt}", accept as u8).as_bytes()))
 }
 
 fn emit(event: &str, data: serde_json::Value) {
@@ -381,22 +376,26 @@ impl Tender {
     #[init]
     pub fn new(config: Config) -> Self {
         require!(
-            [config.dividend_bps, config.liquidation_fee_bps, config.job_fee_bps, config.trade_fee_bps].iter().all(|b| *b as u128 <= BPS),
+            [config.dividend_bps, config.liquidation_fee_bps, config.order_fee_bps, config.trade_fee_bps, config.no_reveal_slash_bps]
+                .iter()
+                .all(|b| *b as u128 <= BPS),
             "bps > 100%"
         );
+        require!(config.asset_unit.0 > 0 && config.initial_price.0 > 0, "asset_unit and initial_price must be > 0");
         Self {
+            last_price: config.initial_price.0,
             config,
             balances: LookupMap::new(Key::Balances),
+            assets: LookupMap::new(Key::Assets),
             bonds: LookupMap::new(Key::Bonds),
             locks: LookupMap::new(Key::Locks),
             firms: Vector::new(Key::Firms),
             firm_by_account: LookupMap::new(Key::FirmByAccount),
-            jobs: Vector::new(Key::Jobs),
+            orders: Vector::new(Key::Orders),
             auctions: Vector::new(Key::Auctions),
             asks: LookupMap::new(Key::Asks),
             storage: LookupMap::new(Key::Storage),
             last_epoch: now(),
-            disputes: LookupMap::new(Key::Disputes),
         }
     }
 
@@ -406,14 +405,14 @@ impl Tender {
     /// so flush them first or the growth of this call is invisible.
     fn usage(&mut self) -> u64 {
         self.balances.flush();
+        self.assets.flush();
         self.bonds.flush();
         self.locks.flush();
         self.firms.flush();
         self.firm_by_account.flush();
-        self.jobs.flush();
+        self.orders.flush();
         self.auctions.flush();
         self.asks.flush();
-        self.disputes.flush();
         env::storage_usage()
     }
 
@@ -465,37 +464,77 @@ impl Tender {
         self.balances.insert(account.clone(), b - amount);
     }
 
-    fn apply_deposit(&mut self, sender: AccountId, amount: u128, msg: &str) {
+    fn credit_t(&mut self, t: Token, account: &AccountId, amount: u128) {
+        match t {
+            Token::Stable => self.credit(account, amount),
+            Token::Asset => {
+                let b = self.assets.get(account).copied().unwrap_or(0);
+                self.assets.insert(account.clone(), b + amount);
+            }
+        }
+    }
+
+    fn debit_t(&mut self, t: Token, account: &AccountId, amount: u128) {
+        match t {
+            Token::Stable => self.debit(account, amount),
+            Token::Asset => {
+                let b = self.assets.get(account).copied().unwrap_or(0);
+                require!(b >= amount, "insufficient asset balance");
+                self.assets.insert(account.clone(), b - amount);
+            }
+        }
+    }
+
+    fn asset_of(&self, account: &AccountId) -> u128 {
+        self.assets.get(account).copied().unwrap_or(0)
+    }
+
+    /// Stable value of an asset amount at the last clearing price.
+    fn value(&self, asset: u128) -> u128 {
+        asset * self.last_price / self.config.asset_unit.0
+    }
+
+    /// Net asset value of a firm: its stable treasury plus its asset inventory at the last clearing price.
+    fn nav(&self, f: &Firm) -> u128 {
+        self.balances.get(&f.account).copied().unwrap_or(0) + self.value(self.asset_of(&f.account))
+    }
+
+    fn apply_deposit(&mut self, t: Token, sender: AccountId, amount: u128, msg: &str) {
         let s0 = self.usage();
-        self.apply_deposit_inner(sender.clone(), amount, msg);
+        self.apply_deposit_inner(t, sender.clone(), amount, msg);
         // A deposit from someone without storage deposit panics: the token refunds it.
         self.charge(&sender, s0);
     }
 
-    fn apply_deposit_inner(&mut self, sender: AccountId, amount: u128, msg: &str) {
-        self.credit(&sender, amount);
-        emit("deposit", json!({"account": sender, "amount": U128(amount)}));
+    fn apply_deposit_inner(&mut self, t: Token, sender: AccountId, amount: u128, msg: &str) {
+        self.credit_t(t, &sender, amount);
+        let token = if t == Token::Stable { "stable" } else { "asset" };
+        emit("deposit", json!({"account": sender, "amount": U128(amount), "token": token}));
         if msg.is_empty() {
             return;
         }
         match serde_json::from_str::<DepositAction>(msg).unwrap_or_else(|_| env::panic_str("bad msg")) {
-            DepositAction::PostJob(p) => {
-                self.post_job_from(sender, p);
+            DepositAction::PostOrder(p) => {
+                require!(tokens(p.side).0 == t, "deposit the token the order sells");
+                self.post_order_from(sender, p);
             }
             DepositAction::Credit(to) => {
-                self.debit(&sender, amount);
-                self.credit(&to, amount);
+                self.debit_t(t, &sender, amount);
+                self.credit_t(t, &to, amount);
             }
         }
     }
 
-    /// NEP-141 receiver. Only the configured token is accepted.
+    /// NEP-141 receiver. Only the configured stable token and asset are accepted.
     pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> PromiseOrValue<U128> {
-        match &self.config.payment {
-            Payment::Ft { token } => require!(&env::predecessor_account_id() == token, "wrong token"),
+        let who = env::predecessor_account_id();
+        let t = match (&self.config.payment, &self.config.asset) {
+            (Payment::Ft { token }, _) if token == &who => Token::Stable,
+            (_, Payment::Ft { token }) if token == &who => Token::Asset,
+            (Payment::Ft { .. }, _) | (_, Payment::Ft { .. }) => env::panic_str("wrong token"),
             _ => env::panic_str("ft deposits disabled"),
-        }
-        self.apply_deposit(sender_id, amount.0, &msg);
+        };
+        self.apply_deposit(t, sender_id, amount.0, &msg);
         PromiseOrValue::Value(U128(0))
     }
 
@@ -509,15 +548,19 @@ impl Tender {
         msg: String,
     ) -> PromiseOrValue<Vec<U128>> {
         let _ = sender_id;
-        match &self.config.payment {
-            Payment::Intents { contract, token_id } => {
-                require!(&env::predecessor_account_id() == contract, "wrong mt contract");
-                require!(token_ids.len() == 1 && &token_ids[0] == token_id, "wrong token id");
-            }
-            _ => env::panic_str("intents deposits disabled"),
-        }
-        require!(previous_owner_ids.len() == 1 && amounts.len() == 1, "single token only");
-        self.apply_deposit(previous_owner_ids[0].clone(), amounts[0].0, &msg);
+        let who = env::predecessor_account_id();
+        require!(token_ids.len() == 1 && previous_owner_ids.len() == 1 && amounts.len() == 1, "single token only");
+        let route = |p: &Payment| matches!(p, Payment::Intents { contract, token_id } if contract == &who && token_id == &token_ids[0]);
+        let t = if route(&self.config.payment) {
+            Token::Stable
+        } else if route(&self.config.asset) {
+            Token::Asset
+        } else if matches!(self.config.payment, Payment::Intents { .. }) {
+            env::panic_str("wrong mt contract or token id")
+        } else {
+            env::panic_str("intents deposits disabled")
+        };
+        self.apply_deposit(t, previous_owner_ids[0].clone(), amounts[0].0, &msg);
         PromiseOrValue::Value(vec![U128(0)])
     }
 
@@ -536,11 +579,22 @@ impl Tender {
     /// Withdraw ledger balance out of the contract (ft_transfer or intents mt_transfer).
     #[payable]
     pub fn withdraw(&mut self, amount: U128, receiver_id: Option<AccountId>) -> Promise {
+        self.withdraw_t(Token::Stable, amount, receiver_id)
+    }
+
+    /// Withdraw asset ledger balance, the same way.
+    #[payable]
+    pub fn withdraw_asset(&mut self, amount: U128, receiver_id: Option<AccountId>) -> Promise {
+        self.withdraw_t(Token::Asset, amount, receiver_id)
+    }
+
+    fn withdraw_t(&mut self, t: Token, amount: U128, receiver_id: Option<AccountId>) -> Promise {
         near_sdk::assert_one_yocto();
         let me = env::predecessor_account_id();
         let to = receiver_id.unwrap_or_else(|| me.clone());
-        self.debit(&me, amount.0);
-        let p = match &self.config.payment {
+        self.debit_t(t, &me, amount.0);
+        let route = if t == Token::Stable { &self.config.payment } else { &self.config.asset };
+        let p = match route {
             Payment::Ft { token } => ext_ft::ext(token.clone())
                 .with_attached_deposit(ONE_YOCTO)
                 .with_static_gas(GAS_TRANSFER)
@@ -550,16 +604,17 @@ impl Tender {
                 .with_static_gas(GAS_TRANSFER)
                 .mt_transfer(to, token_id.clone(), amount, None, None),
         };
-        p.then(Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_withdraw(me, amount))
+        p.then(Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_withdraw(me, amount, t == Token::Asset))
     }
 
     #[private]
-    pub fn on_withdraw(&mut self, account: AccountId, amount: U128) -> bool {
+    pub fn on_withdraw(&mut self, account: AccountId, amount: U128, asset: bool) -> bool {
         let ok = matches!(env::promise_result_checked(0, 1024), Ok(_));
+        let t = if asset { Token::Asset } else { Token::Stable };
         if ok {
-            emit("withdraw", json!({"account": account, "amount": amount}));
+            emit("withdraw", json!({"account": account, "amount": amount, "token": if asset { "asset" } else { "stable" }}));
         } else {
-            self.credit(&account, amount.0);
+            self.credit_t(t, &account, amount.0);
         }
         ok
     }
@@ -581,7 +636,7 @@ impl Tender {
     pub fn withdraw_bond(&mut self, amount: U128) {
         near_sdk::assert_one_yocto();
         let me = env::predecessor_account_id();
-        require!(self.locks.get(&me).copied().unwrap_or(0) == 0, "bond locked by open bids or jobs");
+        require!(self.locks.get(&me).copied().unwrap_or(0) == 0, "bond locked by open bids");
         let b = self.bonds.get(&me).copied().unwrap_or(0);
         require!(b >= amount.0, "insufficient bond");
         self.bonds.insert(me.clone(), b - amount.0);
@@ -670,14 +725,15 @@ impl Tender {
             loan_terms: None,
             epochs_below_floor: 0,
             liquidation_auction: None,
-            delivered: 0,
-            rejected: 0,
+            // Until its owner says otherwise: bids within 10% of the last price, at most 80% of NAV in the asset.
+            policy: Policy { max_asset_bps: 8000, band_bps: 1000, paused: false },
+            fills: 0,
+            volume: U128(0),
+            edge: I128(0),
             slashed: U128(0),
-            revenue: U128(0),
             dividends: U128(0),
             takeovers: 0,
             owner_synced: true,
-            open_jobs: 0,
             profile: None,
         });
         self.firm_by_account.insert(account.clone(), id);
@@ -882,6 +938,18 @@ impl Tender {
         emit("loan_terms", json!({"firm_id": firm_id, "rate_bps": rate_bps, "cap": cap}));
     }
 
+    /// Owner sets its agent's limits (see `Policy`): the contract enforces them on every order bid.
+    #[payable]
+    pub fn set_policy(&mut self, firm_id: u32, policy: Policy) {
+        near_sdk::assert_one_yocto();
+        let mut f = self.firm(firm_id);
+        require!(env::predecessor_account_id() == f.owner, "owner only");
+        require!(policy.max_asset_bps as u128 <= BPS, "max_asset_bps above 100%");
+        emit("policy", json!({"firm_id": firm_id, "policy": policy}));
+        f.policy = policy;
+        self.save_firm(f);
+    }
+
     /// Principal plus interest accrued since `since`.
     fn owed(d: &Debt) -> u128 {
         let secs = (now().saturating_sub(d.since) / SEC) as u128;
@@ -920,16 +988,15 @@ impl Tender {
         pot
     }
 
-    // ---------------------------------------------------------------- auction (shared by jobs and liquidations)
+    // ---------------------------------------------------------------- auction (shared by orders and liquidations)
 
-    fn new_auction(&mut self, kind: AuctionKind, reverse: bool, reserve: u128, commit_secs: u64, reveal_secs: u64) -> u64 {
+    fn new_auction(&mut self, kind: AuctionKind, reserve: u128, commit_secs: u64, reveal_secs: u64) -> u64 {
         require!(commit_secs > 0 && reveal_secs > 0, "phases must be > 0");
         require!(commit_secs <= MAX_PHASE_SECS && reveal_secs <= MAX_PHASE_SECS, "phase too long");
         let commit_end = now() + commit_secs * SEC;
         let id = self.auctions.len() as u64;
         self.auctions.push(Auction {
             kind: kind.clone(),
-            reverse,
             reserve: U128(reserve),
             commit_end,
             reveal_end: commit_end + reveal_secs * SEC,
@@ -938,7 +1005,7 @@ impl Tender {
             winner: None,
             price: None,
         });
-        emit("auction_opened", json!({"auction_id": id, "kind": kind, "reverse": reverse, "reserve": U128(reserve)}));
+        emit("auction_opened", json!({"auction_id": id, "kind": kind, "reserve": U128(reserve)}));
         id
     }
 
@@ -964,8 +1031,12 @@ impl Tender {
         require!(self.bonds.get(&f.owner).copied().unwrap_or(0) >= self.config.min_bond.0, "owner bond too low");
         require!(!a.bids.iter().any(|b| b.owner == f.owner), "one bid per owner (anti-shill)");
         require!(!a.bids.iter().any(|b| b.firm_id == firm_id), "firm already bid");
-        if let AuctionKind::Liquidation(target) = a.kind {
-            require!(target != firm_id && self.firm(target).owner != f.owner, "cannot bid on own firm");
+        match a.kind {
+            AuctionKind::Liquidation(target) => require!(target != firm_id && self.firm(target).owner != f.owner, "cannot bid on own firm"),
+            AuctionKind::Order(oid) => {
+                require!(!f.policy.paused, "firm paused by its owner");
+                require!(self.order(oid).client != f.owner, "cannot fill your own order");
+            }
         }
         let s0 = self.usage();
         a.bids.push(Bid { firm_id, owner: f.owner.clone(), hash, revealed: None });
@@ -983,28 +1054,54 @@ impl Tender {
         let i = a.bids.iter().position(|b| b.firm_id == firm_id).unwrap_or_else(|| env::panic_str("no commit"));
         require!(a.bids[i].revealed.is_none(), "already revealed");
         require!(bid_hash(amount.0, &salt) == a.bids[i].hash, "hash mismatch");
-        if a.reverse {
-            require!(amount.0 <= a.reserve.0, "bid above budget");
-        } else {
-            require!(amount.0 >= a.reserve.0, "bid below reserve");
-            // A buyer escrows its bid from the firm treasury; only the owner may commit firm money to a takeover.
-            require!(env::predecessor_account_id() == f.owner, "owner only for takeover bids");
-            require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
-            self.debit(&f.account, amount.0);
+        require!(amount.0 >= a.reserve.0, "bid below reserve");
+        require!(f.status != FirmStatus::Liquidating && f.status != FirmStatus::Closed, "firm in liquidation or closed");
+        match a.kind {
+            AuctionKind::Liquidation(_) => {
+                // A buyer escrows its bid from the firm treasury; only the owner may commit firm money to a takeover.
+                require!(env::predecessor_account_id() == f.owner, "owner only for takeover bids");
+                self.debit(&f.account, amount.0);
+            }
+            AuctionKind::Order(oid) => {
+                // The firm escrows what it promises to deliver: settlement cannot fail.
+                let o = self.order(oid);
+                self.check_policy(&f, &o, amount.0);
+                self.debit_t(tokens(o.side).1, &f.account, amount.0);
+            }
         }
         a.bids[i].revealed = Some(amount);
         self.auctions.replace(auction_id as u32, a);
         emit("bid_revealed", json!({"auction_id": auction_id, "firm_id": firm_id, "amount": amount}));
     }
 
-    /// Winner index and second price (reserve if alone). Ties go to the earliest commit.
+    /// Winner index (highest bid) and second price (reserve if alone). Ties go to the earliest commit.
     pub fn clear_auction(a: &Auction) -> Option<(usize, u128)> {
         let mut r: Vec<(usize, u128)> =
             a.bids.iter().enumerate().filter_map(|(i, b)| b.revealed.map(|v| (i, v.0))).collect();
         // Stable sort keeps commit order among equal bids.
-        r.sort_by(|x, y| if a.reverse { x.1.cmp(&y.1) } else { y.1.cmp(&x.1) });
+        r.sort_by(|x, y| y.1.cmp(&x.1));
         let (i, _) = *r.first()?;
         Some((i, r.get(1).map_or(a.reserve.0, |s| s.1)))
+    }
+
+    /// The owner's limits on an order bid: price band around the last clearing price, inventory cap.
+    fn check_policy(&self, f: &Firm, o: &Order, out: u128) {
+        let unit = self.config.asset_unit.0;
+        // Stable per asset unit implied by this bid.
+        let price = match o.side {
+            Side::Buy => o.amount_in.0 * unit / out,
+            Side::Sell => out * unit / o.amount_in.0,
+        };
+        let band = f.policy.band_bps as u128;
+        if band > 0 {
+            require!(price.abs_diff(self.last_price) * BPS <= band * self.last_price, "bid outside the firm's price band");
+        }
+        if o.side == Side::Sell {
+            // The firm would hold more asset: check the share of its net asset value after the fill.
+            let asset = self.value(self.asset_of(&f.account) + o.amount_in.0);
+            let nav = self.balances.get(&f.account).copied().unwrap_or(0).saturating_sub(out) + asset;
+            require!(asset * BPS <= f.policy.max_asset_bps as u128 * nav, "fill over the firm's inventory limit");
+        }
     }
 
     /// Anyone can settle once the reveal phase is over.
@@ -1013,46 +1110,62 @@ impl Tender {
         require!(now() >= a.reveal_end, "reveal phase not over");
         require!(!a.settled, "already settled");
         a.settled = true;
-        let result = Self::clear_auction(&a);
+        let revealed = a.bids.iter().filter(|b| b.revealed.is_some()).count();
+        let order = match a.kind {
+            AuctionKind::Order(oid) => Some(self.order(oid)),
+            AuctionKind::Liquidation(_) => None,
+        };
+        let enough = order.is_none() || revealed >= (self.config.min_bidders as usize).max(1);
+        let result = if enough { Self::clear_auction(&a) } else { None };
         if let Some((i, price)) = result {
             a.winner = Some(a.bids[i].firm_id);
             a.price = Some(U128(price));
         }
         let winner_idx = result.map(|(i, _)| i);
-        // Release locks of losers; refund escrowed takeover bids of losers and the winner's surplus.
+        // What revealed bids escrowed: the order's output token, or stable for a takeover.
+        let escrow = order.as_ref().map_or(Token::Stable, |o| tokens(o.side).1);
+        // Release every lock; refund losers' escrow and the winner's surplus; slash unrevealed order bids.
         for (i, b) in a.bids.clone().iter().enumerate() {
-            let is_winner = Some(i) == winner_idx;
-            if !is_winner || !a.reverse {
-                self.lock(&b.owner, false);
-            }
-            if !a.reverse {
-                if let Some(v) = b.revealed {
+            self.lock(&b.owner, false);
+            match (b.revealed, &order) {
+                (Some(v), _) => {
                     let acct = self.firm(b.firm_id).account;
-                    let refund = if is_winner { v.0 - a.price.unwrap().0 } else { v.0 };
-                    self.credit(&acct, refund);
+                    let refund = if Some(i) == winner_idx { v.0 - a.price.unwrap().0 } else { v.0 };
+                    self.credit_t(escrow, &acct, refund);
                 }
+                (None, Some(o)) => self.slash_no_reveal(o, b),
+                (None, None) => {}
             }
         }
         let kind = a.kind.clone();
         self.auctions.replace(auction_id as u32, a.clone());
         emit("auction_settled", json!({"auction_id": auction_id, "winner": a.winner, "price": a.price}));
         match kind {
-            AuctionKind::Job(job_id) => {
-                let owner = winner_idx.map(|i| a.bids[i].owner.clone());
-                if let Some(id) = a.winner {
-                    let mut f = self.firm(id);
-                    f.open_jobs += 1;
-                    self.save_firm(f);
-                }
-                self.on_job_auction(job_id, owner, a.price)
-            }
+            AuctionKind::Order(oid) => self.on_order_auction(oid, a.winner, a.price),
             AuctionKind::Liquidation(firm_id) => self.on_liquidation_auction(firm_id, a.winner, a.price),
         }
-        // A job auction nobody won did no work: paying it would let anyone farm rewards with 1-unit jobs
+        // An order nobody filled did no work: paying it would let anyone farm rewards with dust orders
         // (audit finding 07).
-        if !a.reverse || a.winner.is_some() {
+        if order.is_none() || a.winner.is_some() {
             self.reward_keeper();
         }
+    }
+
+    /// A committed order bid that is never revealed was a free option on the price: its owner's bond pays
+    /// the client `no_reveal_slash_bps` of the order's stable notional (at least `slash`).
+    fn slash_no_reveal(&mut self, o: &Order, b: &Bid) {
+        let notional = if o.side == Side::Buy { o.amount_in.0 } else { o.min_out.0 };
+        let bond = self.bonds.get(&b.owner).copied().unwrap_or(0);
+        let cut = (notional * self.config.no_reveal_slash_bps as u128 / BPS).max(self.config.slash.0).min(bond);
+        if cut == 0 {
+            return;
+        }
+        self.bonds.insert(b.owner.clone(), bond - cut);
+        self.credit(&o.client, cut);
+        let mut f = self.firm(b.firm_id);
+        f.slashed = U128(f.slashed.0 + cut);
+        self.save_firm(f);
+        emit("slashed", json!({"order_id": o.id, "firm_id": b.firm_id, "owner": b.owner, "amount": U128(cut), "reason": "bid not revealed"}));
     }
 
     /// Pay the caller a small reward out of Tontine's fee balance, if there is enough in it. Only an
@@ -1069,350 +1182,94 @@ impl Tender {
         emit("keeper_paid", json!({"keeper": keeper, "amount": U128(r)}));
     }
 
-    // ---------------------------------------------------------------- jobs
+    // ---------------------------------------------------------------- orders
 
     #[payable]
-    pub fn post_job(&mut self, job: PostJob) -> u64 {
+    pub fn post_order(&mut self, order: PostOrder) -> u64 {
         near_sdk::assert_one_yocto();
         let me = env::predecessor_account_id();
         let s0 = self.usage();
-        let id = self.post_job_from(me.clone(), job);
+        let id = self.post_order_from(me.clone(), order);
         self.charge(&me, s0);
         id
     }
 
-    fn post_job_from(&mut self, client: AccountId, p: PostJob) -> u64 {
-        require!(p.budget.0 > 0, "budget must be > 0");
-        require!(p.brief.len() <= 2000, "brief too long");
-        require!(p.deliver_secs > 0 && p.deliver_secs <= MAX_PHASE_SECS, "deliver_secs out of range");
-        require!(p.criteria.len() <= 2000, "criteria too long");
-        if let Verify::Optimistic { review_secs } = p.verify {
-            require!(review_secs > 0 && review_secs <= MAX_PHASE_SECS, "review_secs out of range");
-        }
-        self.debit(&client, p.budget.0);
-        let id = self.jobs.len() as u64;
-        let auction = self.new_auction(AuctionKind::Job(id), true, p.budget.0, p.commit_secs, p.reveal_secs);
-        self.jobs.push(Job {
+    /// Escrow what the client sells and open the auction; `min_out` is its reserve.
+    fn post_order_from(&mut self, client: AccountId, p: PostOrder) -> u64 {
+        require!(p.amount_in.0 > 0 && p.min_out.0 > 0, "amount_in and min_out must be > 0");
+        self.debit_t(tokens(p.side).0, &client, p.amount_in.0);
+        let id = self.orders.len() as u64;
+        let auction = self.new_auction(AuctionKind::Order(id), p.min_out.0, p.commit_secs, p.reveal_secs);
+        self.orders.push(Order {
             id,
             client: client.clone(),
-            budget: p.budget,
-            brief: p.brief.clone(),
+            side: p.side,
+            amount_in: p.amount_in,
+            min_out: p.min_out,
+            reference_out: p.reference_out,
             auction,
-            status: JobStatus::Bidding,
-            deliver_secs: p.deliver_secs,
-            deadline: None,
-            result: None,
-            attestation: None,
-            winner_owner: None,
-            criteria: p.criteria.clone(),
-            verify: p.verify.clone(),
-            review_end: None,
+            status: OrderStatus::Open,
+            firm: None,
+            out: None,
         });
         emit(
-            "job_posted",
-            json!({"job_id": id, "client": client, "budget": p.budget, "brief": p.brief, "auction_id": auction, "criteria": p.criteria, "verify": p.verify}),
+            "order_posted",
+            json!({"order_id": id, "client": client, "side": p.side, "amount_in": p.amount_in, "min_out": p.min_out, "reference_out": p.reference_out, "auction_id": auction}),
         );
         id
     }
 
-    fn job(&self, id: u64) -> Job {
-        self.jobs.get(id as u32).cloned().unwrap_or_else(|| env::panic_str("no job"))
+    fn order(&self, id: u64) -> Order {
+        self.orders.get(id as u32).cloned().unwrap_or_else(|| env::panic_str("no order"))
     }
 
-    fn on_job_auction(&mut self, job_id: u64, winner_owner: Option<AccountId>, price: Option<U128>) {
-        let mut j = self.job(job_id);
-        match (winner_owner, price) {
-            (Some(o), Some(p)) => {
-                j.winner_owner = Some(o);
-                self.credit(&j.client, j.budget.0 - p.0);
-                j.status = JobStatus::Assigned;
-                j.deadline = Some(now() + j.deliver_secs * SEC);
-            }
-            _ => {
-                self.credit(&j.client, j.budget.0);
-                j.status = JobStatus::Cancelled;
-            }
+    /// Fill or refund. The winner's escrow already holds what it bid; it delivers the second-best amount
+    /// (`price`), keeps the rest, and receives what the client sold, minus Tontine's fee. The fill's edge
+    /// against the previous clearing price is the firm's realized result: 30% of a positive edge goes to
+    /// its shareholders at once.
+    fn on_order_auction(&mut self, id: u64, winner: Option<u32>, price: Option<U128>) {
+        let mut o = self.order(id);
+        let (tin, tout) = tokens(o.side);
+        let (Some(fid), Some(out)) = (winner, price) else {
+            self.credit_t(tin, &o.client, o.amount_in.0);
+            o.status = OrderStatus::Refunded;
+            emit("order_refunded", json!({"order_id": id, "client": o.client}));
+            self.orders.replace(id as u32, o);
+            return;
+        };
+        let mut f = self.firm(fid);
+        let (amount_in, out) = (o.amount_in.0, out.0);
+        let fee = amount_in * self.config.order_fee_bps as u128 / BPS;
+        self.credit_t(tout, &o.client, out);
+        self.credit_t(tin, &f.account, amount_in - fee);
+        self.credit_t(tin, &self.config.admin.clone(), fee);
+
+        let unit = self.config.asset_unit.0;
+        let (edge, notional, price) = match o.side {
+            // Received stable, delivered asset.
+            Side::Buy => ((amount_in - fee) as i128 - self.value(out) as i128, amount_in, amount_in * unit / out),
+            // Received asset, delivered stable.
+            Side::Sell => (self.value(amount_in - fee) as i128 - out as i128, out, out * unit / amount_in),
+        };
+        if edge > 0 {
+            let div = (edge as u128 * self.config.dividend_bps as u128 / BPS).min(self.balances.get(&f.account).copied().unwrap_or(0));
+            let dust = Self::distribute(&mut f, div);
+            self.debit(&f.account.clone(), div - dust);
+            f.dividends = U128(f.dividends.0 + div - dust);
         }
-        self.jobs.replace(job_id as u32, j);
-    }
-
-    fn winner_of(&self, j: &Job) -> (Firm, u128) {
-        let a = self.auction(j.auction);
-        (self.firm(a.winner.unwrap()), a.price.unwrap().0)
-    }
-
-    pub fn deliver(&mut self, job_id: u64, result: String) {
-        let mut j = self.job(job_id);
-        require!(j.status == JobStatus::Assigned, "job not assigned");
-        require!(now() <= j.deadline.unwrap(), "deadline passed");
-        require!(result.len() <= 4000, "result too long");
-        let (f, _) = self.winner_of(&j);
-        Self::assert_firm_actor(&f);
-        j.status = JobStatus::Delivered;
-        j.result = Some(result.clone());
-        if let Verify::Optimistic { review_secs } = j.verify {
-            j.review_end = Some(now() + review_secs * SEC);
-        }
-        let review_end = j.review_end;
-        let payer = j.winner_owner.clone().unwrap();
-        let s0 = self.usage();
-        self.jobs.replace(job_id as u32, j);
-        self.charge(&payer, s0);
-        emit("delivered", json!({"job_id": job_id, "firm_id": f.id, "result": result, "review_end": review_end}));
-    }
-
-    /// The delivery oracle posts its verdict with the NEAR AI Cloud attestation (signature payload).
-    pub fn verdict(&mut self, job_id: u64, accept: bool, attestation: String) {
-        require!(env::predecessor_account_id() == self.config.judge, "judge only");
-        require!(attestation.len() <= 4000, "attestation too long");
-        let mut j = self.job(job_id);
-        // The judge also decides a dispute for which no evaluator firm was eligible.
-        let fallback = j.status == JobStatus::Disputed && self.disputes.get(&job_id).map_or(true, |d| d.panel.is_empty());
-        require!((j.status == JobStatus::Delivered && j.verify == Verify::Judge) || fallback, "nothing to judge");
-        j.attestation = Some(attestation);
-        if fallback {
-            // Accepted: the client's dispute bond goes to Tontine. Rejected: it comes back.
-            let to = if accept { self.config.admin.clone() } else { j.client.clone() };
-            self.credit(&to, self.config.dispute_bond.0);
-        }
-        if accept {
-            self.pay(&mut j);
-        } else {
-            self.reject(&mut j, true);
-        }
-        self.jobs.replace(job_id as u32, j);
-    }
-
-    // ---------------------------------------------------------------- optimistic review and disputes
-
-    fn optimistic_delivery(&self, job_id: u64) -> Job {
-        let j = self.job(job_id);
-        require!(j.status == JobStatus::Delivered && matches!(j.verify, Verify::Optimistic { .. }), "no delivery under review");
-        j
-    }
-
-    /// The client accepts the delivery: the firm is paid at once.
-    #[payable]
-    pub fn accept_delivery(&mut self, job_id: u64) {
-        near_sdk::assert_one_yocto();
-        let mut j = self.optimistic_delivery(job_id);
-        require!(env::predecessor_account_id() == j.client, "client only");
-        self.pay(&mut j);
-        self.jobs.replace(job_id as u32, j);
-    }
-
-    /// Anyone pays the firm once the review window passed without a dispute.
-    pub fn finalize(&mut self, job_id: u64) {
-        let mut j = self.optimistic_delivery(job_id);
-        require!(now() > j.review_end.unwrap(), "review window still open");
-        self.pay(&mut j);
-        self.jobs.replace(job_id as u32, j);
-        self.reward_keeper();
-    }
-
-    /// The client disputes the delivery within the review window, staking `dispute_bond`. A panel of
-    /// evaluator firms is drawn: solvent, bonded, one per owner, neither the client nor the winner's owner.
-    #[payable]
-    pub fn dispute(&mut self, job_id: u64) {
-        near_sdk::assert_one_yocto();
-        let mut j = self.optimistic_delivery(job_id);
-        let me = env::predecessor_account_id();
-        require!(me == j.client, "client only");
-        require!(now() <= j.review_end.unwrap(), "review window closed");
-        let s0 = self.usage();
-        self.debit(&me, self.config.dispute_bond.0);
-        let panel = self.draw_panel(&j);
-        for b in &panel {
-            self.lock(&b.owner, true);
-        }
-        let vote = if self.config.vote_secs == 0 { 60 } else { self.config.vote_secs.min(MAX_PHASE_SECS) };
-        let commit_end = now() + vote * SEC;
-        let ids: Vec<u32> = panel.iter().map(|b| b.firm_id).collect();
-        self.disputes.insert(job_id, Dispute { panel, commit_end, reveal_end: commit_end + vote * SEC, resolved: false });
-        j.status = JobStatus::Disputed;
-        self.jobs.replace(job_id as u32, j);
-        self.charge(&me, s0);
-        emit("disputed", json!({"job_id": job_id, "panel": ids, "commit_end": commit_end, "reveal_end": commit_end + vote * SEC}));
-    }
-
-    /// ponytail: scans every firm and shuffles with the block's random seed, which a validator can see
-    /// in advance; use a VRF or a commit-reveal draw if panels must resist block producers.
-    fn draw_panel(&self, j: &Job) -> Vec<Ballot> {
-        let winner_owner = j.winner_owner.clone().unwrap();
-        let need = self.config.min_bond.0.max(self.config.eval_stake.0);
-        let mut eligible: Vec<Ballot> = vec![];
-        for id in 0..self.firms.len() {
-            let f = self.firm(id);
-            let bonded = self.bonds.get(&f.owner).copied().unwrap_or(0) >= need;
-            if f.status != FirmStatus::Solvent || !bonded || f.owner == j.client || f.owner == winner_owner || eligible.iter().any(|b| b.owner == f.owner) {
-                continue;
-            }
-            eligible.push(Ballot { firm_id: id, owner: f.owner, hash: None, vote: None });
-        }
-        let size = if self.config.panel_size == 0 { 3 } else { self.config.panel_size as usize };
-        let seed = env::random_seed();
-        let mut panel = vec![];
-        let mut i = 0;
-        while !eligible.is_empty() && panel.len() < size {
-            let k = seed[i % seed.len()] as usize % eligible.len();
-            panel.push(eligible.swap_remove(k));
-            i += 1;
-        }
-        panel
-    }
-
-    fn ballot(d: &Dispute, firm_id: u32) -> usize {
-        d.panel.iter().position(|b| b.firm_id == firm_id).unwrap_or_else(|| env::panic_str("not on the panel"))
-    }
-
-    pub fn commit_vote(&mut self, job_id: u64, firm_id: u32, hash: String) {
-        Self::assert_firm_actor(&self.firm(firm_id));
-        require!(hash.len() == 64, "hash must be hex sha256");
-        let mut d = self.disputes.get(&job_id).cloned().unwrap_or_else(|| env::panic_str("no dispute"));
-        require!(now() < d.commit_end, "commit phase over");
-        let i = Self::ballot(&d, firm_id);
-        require!(d.panel[i].hash.is_none(), "already committed");
-        d.panel[i].hash = Some(hash);
-        self.disputes.insert(job_id, d);
-        emit("vote_committed", json!({"job_id": job_id, "firm_id": firm_id}));
-    }
-
-    pub fn reveal_vote(&mut self, job_id: u64, firm_id: u32, accept: bool, salt: String) {
-        Self::assert_firm_actor(&self.firm(firm_id));
-        let mut d = self.disputes.get(&job_id).cloned().unwrap_or_else(|| env::panic_str("no dispute"));
-        require!(now() >= d.commit_end && now() < d.reveal_end, "not in reveal phase");
-        let i = Self::ballot(&d, firm_id);
-        require!(d.panel[i].vote.is_none(), "already revealed");
-        require!(d.panel[i].hash.as_deref() == Some(vote_hash(accept, &salt).as_str()), "hash mismatch");
-        d.panel[i].vote = Some(accept);
-        self.disputes.insert(job_id, d);
-        emit("vote_revealed", json!({"job_id": job_id, "firm_id": firm_id, "accept": accept}));
-    }
-
-    /// Anyone closes a dispute after the reveal phase. The majority decides; a tie or no vote leaves the
-    /// delivery accepted and refunds the client's bond. Evaluators that voted against the majority or did
-    /// not reveal lose `eval_stake`. The losing side pays the majority: the client's dispute bond if the
-    /// delivery stands, the winner owner's slashed bond if it is rejected (the client then gets its price
-    /// and its bond back).
-    pub fn resolve_dispute(&mut self, job_id: u64) {
-        let mut j = self.job(job_id);
-        require!(j.status == JobStatus::Disputed, "not disputed");
-        let mut d = self.disputes.get(&job_id).cloned().unwrap_or_else(|| env::panic_str("no dispute"));
-        require!(!d.panel.is_empty(), "no panel: the judge decides");
-        require!(now() >= d.reveal_end, "votes still open");
-        d.resolved = true;
-        let yes = d.panel.iter().filter(|b| b.vote == Some(true)).count();
-        let no = d.panel.iter().filter(|b| b.vote == Some(false)).count();
-        let decisive = yes != no;
-        let accept = yes >= no;
-        let mut pot = 0u128;
-        let mut majority: Vec<AccountId> = vec![];
-        for b in &d.panel {
-            self.lock(&b.owner, false);
-            if decisive && b.vote == Some(accept) {
-                majority.push(self.firm(b.firm_id).account);
-            } else if b.vote.is_none() || decisive {
-                let bond = self.bonds.get(&b.owner).copied().unwrap_or(0);
-                let cut = bond.min(self.config.eval_stake.0);
-                self.bonds.insert(b.owner.clone(), bond - cut);
-                pot += cut;
-            }
-        }
-        let bond = self.config.dispute_bond.0;
-        if accept {
-            if decisive {
-                pot += bond;
-            } else {
-                self.credit(&j.client.clone(), bond);
-            }
-            self.pay(&mut j);
-        } else {
-            self.credit(&j.client.clone(), bond);
-            pot += self.reject(&mut j, false);
-        }
-        let share = if majority.is_empty() { 0 } else { pot / majority.len() as u128 };
-        for a in &majority {
-            self.credit(a, share);
-        }
-        self.credit(&self.config.admin.clone(), pot - share * majority.len() as u128);
+        f.edge = I128(f.edge.0 + edge);
+        f.fills += 1;
+        f.volume = U128(f.volume.0 + notional);
+        self.last_price = price;
+        o.status = OrderStatus::Filled;
+        o.firm = Some(fid);
+        o.out = Some(U128(out));
         emit(
-            "dispute_resolved",
-            json!({"job_id": job_id, "accept": accept, "yes": yes, "no": no, "evaluators_paid": majority, "reward_each": U128(share)}),
+            "order_filled",
+            json!({"order_id": id, "firm_id": fid, "side": o.side, "amount_in": o.amount_in, "out": U128(out), "min_out": o.min_out, "reference_out": o.reference_out, "fee": U128(fee), "edge": I128(edge), "price": U128(price)}),
         );
-        self.disputes.insert(job_id, d);
-        self.jobs.replace(job_id as u32, j);
-        self.reward_keeper();
-    }
-
-    /// Anyone can expire a job: undelivered after its deadline (rejected, slashed), or delivered with
-    /// no verdict for JUDGE_TIMEOUT_SECS after the deadline (cancelled, client refunded, no slash).
-    pub fn expire(&mut self, job_id: u64) {
-        let mut j = self.job(job_id);
-        let deadline = j.deadline.unwrap_or(u64::MAX);
-        let dispute = self.disputes.get(&job_id).filter(|_| j.status == JobStatus::Disputed).cloned();
-        let unjudged = (j.status == JobStatus::Delivered && j.verify == Verify::Judge)
-            || (j.status == JobStatus::Disputed && dispute.as_ref().map_or(true, |d| d.panel.is_empty()));
-        // A dispute restarts the judge's clock: a client cannot dispute late, then cancel before the judge
-        // can rule (audit finding 06).
-        let judge_from = dispute.map_or(deadline, |d| d.reveal_end.max(deadline));
-        if j.status == JobStatus::Assigned && now() > deadline {
-            self.reject(&mut j, true);
-        } else if unjudged && now() > judge_from + JUDGE_TIMEOUT_SECS * SEC {
-            if j.status == JobStatus::Disputed {
-                self.credit(&j.client.clone(), self.config.dispute_bond.0);
-            }
-            let (mut f, price) = self.winner_of(&j);
-            f.open_jobs = f.open_jobs.saturating_sub(1);
-            self.save_firm(f);
-            self.credit(&j.client, price);
-            self.lock(&j.winner_owner.clone().unwrap(), false);
-            j.status = JobStatus::Cancelled;
-            emit("verdict_timeout", json!({"job_id": j.id, "refund": U128(price)}));
-        } else {
-            env::panic_str("not expired");
-        }
-        self.jobs.replace(job_id as u32, j);
-    }
-
-    fn pay(&mut self, j: &mut Job) {
-        let (mut f, price) = self.winner_of(j);
-        let fee = price * self.config.job_fee_bps as u128 / BPS;
-        self.credit(&self.config.admin.clone(), fee);
-        let net = price - fee;
-        let div = net * self.config.dividend_bps as u128 / BPS;
-        let dust = Self::distribute(&mut f, div);
-        let to_firm = net - div + dust;
-        self.credit(&f.account.clone(), to_firm);
-        f.delivered += 1;
-        f.open_jobs = f.open_jobs.saturating_sub(1);
-        f.revenue = U128(f.revenue.0 + price);
-        f.dividends = U128(f.dividends.0 + div - dust);
-        self.lock(&j.winner_owner.clone().unwrap(), false);
-        emit("paid", json!({"job_id": j.id, "firm_id": f.id, "price": U128(price), "to_firm": U128(to_firm), "dividends": U128(div - dust), "fee": U128(fee)}));
         self.save_firm(f);
-        j.status = JobStatus::Paid;
-    }
-
-    /// Refund the client and slash the winner owner's bond, to the client or (for a dispute) returned
-    /// to the caller to pay the evaluators.
-    fn reject(&mut self, j: &mut Job, slash_to_client: bool) -> u128 {
-        let (mut f, price) = self.winner_of(j);
-        let owner = j.winner_owner.clone().unwrap();
-        self.credit(&j.client, price);
-        let bond = self.bonds.get(&owner).copied().unwrap_or(0);
-        let slash = bond.min(self.config.slash.0);
-        self.bonds.insert(owner.clone(), bond - slash);
-        if slash_to_client {
-            self.credit(&j.client, slash);
-        }
-        f.rejected += 1;
-        f.open_jobs = f.open_jobs.saturating_sub(1);
-        f.slashed = U128(f.slashed.0 + slash);
-        self.lock(&owner, false);
-        emit("slashed", json!({"job_id": j.id, "firm_id": f.id, "owner": owner, "amount": U128(slash), "refund": U128(price)}));
-        self.save_firm(f);
-        j.status = JobStatus::Rejected;
-        slash
+        self.orders.replace(id as u32, o);
     }
 
     // ---------------------------------------------------------------- epochs & liquidation
@@ -1434,8 +1291,8 @@ impl Tender {
                 self.save_firm(f);
                 continue;
             }
-            let bal = self.balances.get(&f.account).copied().unwrap_or(0);
-            if bal < self.config.treasury_floor.0 {
+            // Net asset value: the stable treasury plus the asset inventory at the last clearing price.
+            if self.nav(&f) < self.config.treasury_floor.0 {
                 f.epochs_below_floor += 1;
                 f.status = FirmStatus::Illiquid;
                 if f.epochs_below_floor >= self.config.epochs_before_liquidation {
@@ -1453,7 +1310,9 @@ impl Tender {
 
     fn start_liquidation(&mut self, f: &mut Firm) {
         let (c, r) = (self.config.liquidation_commit_secs, self.config.liquidation_reveal_secs);
-        let id = self.new_auction(AuctionKind::Liquidation(f.id), false, 1, c, r);
+        // The buyer gets the firm with its asset inventory: it pays at least what that inventory is worth.
+        let reserve = self.value(self.asset_of(&f.account)).max(1);
+        let id = self.new_auction(AuctionKind::Liquidation(f.id), reserve, c, r);
         f.liquidation_auction = Some(id);
         emit("liquidation_started", json!({"firm_id": f.id, "auction_id": id}));
     }
@@ -1463,10 +1322,8 @@ impl Tender {
         let mut f = self.firm(firm_id);
         f.liquidation_auction = None;
         let (Some(buyer_id), Some(price)) = (winner, price) else {
-            // Nobody wants it: wind it up, unless it still owes a job (then a new auction opens next epoch).
-            if f.open_jobs == 0 {
-                self.wind_up(&mut f, "no buyer");
-            }
+            // Nobody wants it: wind it up.
+            self.wind_up(&mut f, "no buyer");
             self.save_firm(f);
             return;
         };
@@ -1532,7 +1389,7 @@ impl Tender {
         let mut f = self.firm(firm_id);
         require!(env::predecessor_account_id() == f.owner, "owner only");
         require!(f.status != FirmStatus::Liquidating && f.status != FirmStatus::Closed, "firm in liquidation or closed");
-        require!(f.open_jobs == 0, "finish or lose the open jobs first");
+        require!(self.locks.get(&f.owner).copied().unwrap_or(0) == 0, "settle the open bids first");
         self.wind_up(&mut f, "closed by its owner");
         self.save_firm(f);
     }
@@ -1549,9 +1406,21 @@ impl Tender {
             self.settle_holding(f, i);
         }
         self.credit(&self.config.admin.clone(), dust);
+        // The asset inventory goes to the shareholders in kind, pro rata (creditors are owed stable only).
+        let asset = self.asset_of(&f.account);
+        let mut given = 0;
+        if asset > 0 {
+            self.debit_t(Token::Asset, &f.account.clone(), asset);
+            for h in f.holdings.clone() {
+                let part = asset * h.shares as u128 / SHARES as u128;
+                self.credit_t(Token::Asset, &h.account, part);
+                given += part;
+            }
+            self.credit_t(Token::Asset, &self.config.admin.clone(), asset - given);
+        }
         f.status = FirmStatus::Closed;
         f.liquidation_auction = None;
-        emit("firm_closed", json!({"firm_id": f.id, "reason": reason, "to_shareholders": U128(rest - dust)}));
+        emit("firm_closed", json!({"firm_id": f.id, "reason": reason, "to_shareholders": U128(rest - dust), "asset_to_shareholders": U128(given)}));
     }
 
     /// The firm contract has no full access key: ownership changes only through this call.
@@ -1603,19 +1472,24 @@ impl Tender {
     pub fn firm_id_of(&self, account_id: AccountId) -> Option<u32> {
         self.firm_by_account.get(&account_id).copied()
     }
-    pub fn get_job(&self, job_id: u64) -> Job {
-        self.job(job_id)
+    pub fn get_order(&self, order_id: u64) -> Order {
+        self.order(order_id)
     }
-    pub fn get_jobs(&self, from: u64, limit: u64) -> Vec<Job> {
-        self.jobs.iter().skip(from as usize).take(limit as usize).cloned().collect()
+    pub fn get_orders(&self, from: u64, limit: u64) -> Vec<Order> {
+        self.orders.iter().skip(from as usize).take(limit as usize).cloned().collect()
+    }
+    pub fn asset_balance_of(&self, account_id: AccountId) -> U128 {
+        U128(self.asset_of(&account_id))
+    }
+    pub fn get_last_price(&self) -> U128 {
+        U128(self.last_price)
+    }
+    pub fn nav_of(&self, firm_id: u32) -> U128 {
+        U128(self.nav(&self.firm(firm_id)))
     }
     pub fn get_auction(&self, auction_id: u64) -> Auction {
         self.auction(auction_id)
     }
-    pub fn get_dispute(&self, job_id: u64) -> Option<Dispute> {
-        self.disputes.get(&job_id).cloned()
-    }
-
     pub fn get_ask(&self, firm_id: u32, seller: AccountId) -> Option<Ask> {
         self.asks.get(&format!("{firm_id}:{seller}")).cloned()
     }
