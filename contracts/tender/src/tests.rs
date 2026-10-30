@@ -542,19 +542,19 @@ fn with_fees() -> T {
 #[test]
 fn anyone_creates_a_firm_and_owns_its_shares() {
     let mut t = T::new();
-    t.as_("investor.near", 2 * 10u128.pow(24));
+    t.as_("investor.near", 3 * 10u128.pow(24));
     let no_code = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         t.c.create_firm(keys(), U128(20 * USDC), U128(USDC), 3600);
     }));
     assert!(no_code.is_err(), "no firm code stored yet");
     t.as_("admin.near", 0);
     t.c.set_firm_code(Base64VecU8(vec![0, 97, 115, 109]));
-    t.as_("investor.near", 10u128.pow(24));
+    t.as_("investor.near", 2 * 10u128.pow(24));
     let cheap = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         t.c.create_firm(keys(), U128(20 * USDC), U128(USDC), 3600);
     }));
-    assert!(cheap.is_err(), "1 NEAR does not cover the account");
-    t.as_("investor.near", 2 * 10u128.pow(24));
+    assert!(cheap.is_err(), "2 NEAR do not cover the code and the agent gas");
+    t.as_("investor.near", 3 * 10u128.pow(24));
     let id = t.c.create_firm(keys(), U128(20 * USDC), U128(USDC), 3600);
     let f = t.c.get_firm(id);
     assert_eq!(id, 5);
@@ -909,4 +909,17 @@ fn a_firm_with_an_open_job_cannot_close() {
     t.as_("o2.near", 1);
     t.c.close_firm(1);
     assert_eq!(t.c.get_firm(1).status, FirmStatus::Closed);
+}
+
+#[test]
+fn owners_publish_their_firm_spec() {
+    let mut t = T::new();
+    let spec = r#"{"name":"Cost Plus Ltd","skills":["translation"],"model":"gpt-oss-120b"}"#;
+    t.as_("x.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.set_firm_profile(1, spec.into()))).is_err(), "owner only");
+    t.as_("o2.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.set_firm_profile(1, "not json".into()))).is_err(), "JSON object only");
+    t.as_("o2.near", 1);
+    t.c.set_firm_profile(1, spec.into());
+    assert_eq!(t.c.get_firm(1).profile.as_deref(), Some(spec));
 }

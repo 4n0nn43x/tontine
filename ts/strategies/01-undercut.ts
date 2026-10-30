@@ -3,6 +3,12 @@ import type { Strategy } from "../src/strategy.ts";
 
 const s: Strategy = {
   name: "Undercut & Co",
+  spec: {
+    name: "Undercut & Co",
+    description: "Bids 55% of every budget; buys rivals that have delivered before.",
+    skills: ["writing", "translation", "code"],
+    model: "openai/gpt-oss-120b on NEAR AI Cloud",
+  },
   author: "tontine (house)",
   house: true,
   bid: (job) => (job.budget * 55n) / 100n,

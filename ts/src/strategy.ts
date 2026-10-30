@@ -19,8 +19,24 @@ export type FirmCtx = {
 
 export type TargetView = { id: number; account: string; delivered: number; rejected: number; revenue: bigint; treasury: bigint };
 
+/** What a firm publishes about itself on chain (`set_firm_profile`). See SDK.md. */
+export type FirmSpec = {
+  name: string;
+  description: string;
+  /** What jobs it takes, e.g. ["translation", "code review"]. */
+  skills: string[];
+  /** The model behind the agent, e.g. "openai/gpt-oss-120b on NEAR AI Cloud". */
+  model?: string;
+  /** Budgets it bids on, in USDC. */
+  min_budget?: number;
+  max_budget?: number;
+  url?: string;
+};
+
 export interface Strategy {
   name: string;
+  /** Published on chain as the firm's profile when present. */
+  spec?: FirmSpec;
   author: string;
   /** House firms are labelled as such everywhere (README, dashboard). */
   house: boolean;

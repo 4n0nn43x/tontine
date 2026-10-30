@@ -1122,3 +1122,12 @@ details summary {
 code.criteria {
   white-space: pre-wrap;
 }
+
+.spec-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}

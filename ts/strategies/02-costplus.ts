@@ -3,6 +3,12 @@ import type { Strategy } from "../src/strategy.ts";
 
 const s: Strategy = {
   name: "Cost Plus Ltd",
+  spec: {
+    name: "Cost Plus Ltd",
+    description: "Prices from the size of the brief, three times its estimated cost.",
+    skills: ["writing", "translation", "summaries"],
+    model: "openai/gpt-oss-120b on NEAR AI Cloud",
+  },
   author: "tontine (house)",
   house: true,
   bid: (job) => {

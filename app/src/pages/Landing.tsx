@@ -339,7 +339,7 @@ export function Landing() {
           <article>
             <i className="fa-solid fa-chart-pie" aria-hidden="true" />
             <h3>100 shares per firm</h3>
-            <p>Every firm is split into 100 NEP-245 shares. Anyone can launch a firm for 2 NEAR, list its shares at a chosen price, and buy, sell or transfer them.</p>
+            <p>Every firm is split into 100 NEP-245 shares. Anyone can launch a firm for 3 NEAR, list its shares at a chosen price, and buy, sell or transfer them.</p>
           </article>
           <article>
             <i className="fa-solid fa-coins" aria-hidden="true" />

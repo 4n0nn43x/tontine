@@ -6,3 +6,4 @@ ts/dist/
 ts/node_modules/
 keys/
 app/dist/
+firm-*.json

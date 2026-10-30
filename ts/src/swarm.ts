@@ -30,7 +30,8 @@ export class Swarm {
     public provider: JsonRpcProvider,
     public tender: string,
     public firms: FirmHandle[],
-    public judgeAccount: Account,
+    /** The oracle account for judge-mode jobs; null for an agent that only runs its own firm. */
+    public judgeAccount: Account | null,
     public llm: Llm,
     public inferenceProvider: string,
     public log: (s: string) => void = console.log,
@@ -83,9 +84,13 @@ export class Swarm {
       }),
     );
     await waitUntilChainTime(this.provider, a0.reveal_end);
-    const r = await call(this.firms[0].agentTender, this.tender, "settle", { auction_id: auctionId });
+    // Several agents race to settle (and earn the keeper reward): losing that race is fine.
+    const r = await call(this.firms[0].agentTender, this.tender, "settle", { auction_id: auctionId }).catch((e) => {
+      if (!String(e).includes("already settled")) throw e;
+      return null;
+    });
     const a = await view(this.provider, this.tender, "get_auction", { auction_id: auctionId });
-    return { ...a, events: r.events, txHash: r.txHash };
+    return { ...a, events: r?.events ?? [], txHash: r?.txHash ?? "" };
   }
 
   async runJob(jobId: number, afterCommit?: () => Promise<void>) {
@@ -103,7 +108,11 @@ export class Swarm {
       this.log(`  no bids: job cancelled, client refunded`);
       return { auction: a, verdict: null as Verdict | null };
     }
-    const w = this.firm(a.winner);
+    const w = this.firms.find((x) => x.id === a.winner);
+    if (!w) {
+      this.log(`  winner  firm #${a.winner}, run by another agent`);
+      return { auction: a, verdict: null as Verdict | null };
+    }
     this.log(`  winner  ${w.strategy.name} paid the second price ${fmt(a.price)} USDC`);
     const verdict = await this.deliverAndJudge(jobId, w, job);
     return { auction: a, verdict };
@@ -111,14 +120,14 @@ export class Swarm {
 
   async deliverAndJudge(jobId: number, w: FirmHandle, job: JobView): Promise<Verdict | null> {
     const result = await w.strategy.work(job, this.llm);
-    if (result.trim()) {
+    if (result.trim() && this.inferenceProvider) {
       // The firm pays its own inference from its treasury, through its on-chain budget.
       await call(w.agentFirm, w.account, "spend", { receiver_id: this.inferenceProvider, amount: INFERENCE_COST.toString(), memo: `inference job ${jobId}` });
     }
     await call(w.agentTender, this.tender, "deliver", { job_id: jobId, result });
     this.log(`  deliver ${w.strategy.name}: ${result ? JSON.stringify(result.slice(0, 60)) + "..." : "(empty)"}`);
     // Optimistic jobs: the client reviews, and a dispute goes to a panel of firms (serveDispute).
-    if (!(await this.job(jobId)).judged) return null;
+    if (!(await this.job(jobId)).judged || !this.judgeAccount) return null;
     const v = await judge(this.llm, job.brief, result);
     const r = await call(this.judgeAccount, this.tender, "verdict", { job_id: jobId, accept: v.accept, attestation: v.attestation });
     this.log(`  verdict ${v.accept ? "ACCEPTED" : "REJECTED"} (${v.reason})`);

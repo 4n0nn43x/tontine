@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge, Card, Empty, FirmChip, Kpi, TxButton } from "../components/ui";
-import { faucet, getConfig } from "../lib/api";
+import { specOf, faucet, getConfig } from "../lib/api";
 import { near, toBase, usdc } from "../lib/format";
 import { useAppState, useBalances, useWallet } from "../lib/hooks";
 import { createWallet, depositToTender, tenderCall, view, withdrawToWallet } from "../lib/near";
@@ -135,7 +135,7 @@ export function Portfolio() {
                 {positions.map(({ f, h }, i) => (
                   <tr key={f.id}>
                     <td>
-                      <FirmChip id={f.id} name={f.strategy?.name ?? `Firm #${f.id}`} index={i} />
+                      <FirmChip id={f.id} name={specOf(f)?.name ?? f.strategy?.name ?? `Firm #${f.id}`} index={i} />
                     </td>
                     <td className="num">{h!.shares}</td>
                     <td className="num">{pending[f.id] !== undefined ? usdc(pending[f.id]) : "…"}</td>

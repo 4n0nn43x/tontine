@@ -203,7 +203,7 @@ async function main() {
       T,
       "create_firm",
       { agent_keys: openKeys, budget: USDC(5).toString(), max_per_call: USDC(1).toString(), epoch_secs: 3600 },
-      nearToYocto("2"),
+      nearToYocto("3"),
       TGAS(250),
     );
     const openFirm = await view(provider, T, "get_firm", { firm_id: created.value });

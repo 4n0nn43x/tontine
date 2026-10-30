@@ -33,6 +33,8 @@ export type FirmState = {
   takeovers: number;
   owner_synced: boolean;
   open_jobs: number;
+  /** JSON published by the owner with set_firm_profile: name, description, skills, model... */
+  profile: string | null;
   treasury: string;
   ownerBond: string;
   strategy: { name: string; author: string; house: boolean } | null;
@@ -154,4 +156,15 @@ export async function requestAgent(name: string, strategy: number): Promise<stri
   const body = await r.json();
   if (!r.ok) throw new Error(body.error ?? `agent request failed (${r.status})`);
   return body.agentKeys;
+}
+
+export type FirmSpec = { name?: string; description?: string; skills?: string[]; model?: string; min_budget?: number; max_budget?: number; url?: string };
+
+/** The firm's published spec, or null when it has none (or it does not parse). */
+export function specOf(f: { profile: string | null } | undefined): FirmSpec | null {
+  try {
+    return f?.profile ? (JSON.parse(f.profile) as FirmSpec) : null;
+  } catch {
+    return null;
+  }
 }

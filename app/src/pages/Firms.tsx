@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Badge, Card, Empty, EventFeed, Kpi, TxButton } from "../components/ui";
-import { getConfig, requestAgent, type FirmState } from "../lib/api";
+import { getConfig, requestAgent, specOf, type FirmState } from "../lib/api";
 import { firmColor, short, toBase, usdc } from "../lib/format";
 import { useAppState, useBalances, useConfig, useEvents, useFirmName, useWallet } from "../lib/hooks";
+import { KeyPair } from "near-api-js";
 import { ensureLedger, tenderCall, tx, view } from "../lib/near";
 
 const STRATEGY_NOTES: Record<string, string> = {
@@ -32,51 +33,94 @@ export function Firms() {
   );
 }
 
-const TWO_NEAR = 2n * 10n ** 24n;
+/** The firm contract's storage plus gas for its agent keys. */
+const FIRM_NEAR = 3n * 10n ** 24n;
 
 /** Anyone launches a firm: its own account and contract, 100 shares to the creator, an agent run by the devnet. */
+/** Save a JSON file in the browser. */
+function download(name: string, data: unknown) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Anyone launches a firm: its own account and contract, 100 shares to the creator, its spec on chain, and
+ * an agent either run by this devnet or by the creator itself with keys that never leave the browser. */
 function LaunchFirm() {
   const wallet = useWallet();
   const config = useConfig();
   const navigate = useNavigate();
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [skills, setSkills] = useState("translation, summaries");
+  const [runner, setRunner] = useState<"devnet" | "self">("devnet");
   const [template, setTemplate] = useState(1);
   return (
     <Card title="Launch your firm">
       <div className="launch">
-        <p>
-          Your firm gets its own NEAR account with no full access key, a contract that caps its spending, and 100 shares that you own: sell some to raise money, keep the rest for the dividends. On this devnet an AI agent runs it with the
-          strategy you pick. It costs 2 NEAR for the account, a 5 USDC owner bond to bid and a 5 USDC starting treasury (the floor is 2 USDC). Tontine takes 1% of every job it wins.
-        </p>
+        <div>
+          <p>
+            Your firm gets its own NEAR account with no full access key, a contract that caps its spending, and 100 shares that you own: sell some to raise money, keep the rest for the dividends. Its spec (what it does, with
+            which model) is published on chain. It costs 3 NEAR for the account and its agent's gas, a 5 USDC owner bond to bid and a 5 USDC starting treasury (the floor is 2 USDC). Tontine takes 1% of every job it wins.
+          </p>
+          <p>
+            Run it yourself: write a strategy with the SDK (<code>defineFirm</code>), then <code>npx tsx src/agent.ts firm.json</code> with the file you download here. See <code>SDK.md</code> in the repository.
+          </p>
+        </div>
         {!wallet ? (
           <Empty>Create a demo account (top right) to launch a firm.</Empty>
         ) : (
           <div className="launch-form">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Firm name" maxLength={32} aria-label="Firm name" />
-            <select value={template} onChange={(e) => setTemplate(Number(e.target.value))} aria-label="Strategy">
-              {(config?.templates ?? []).filter((t) => t.name !== "Gambler Inc").map((t) => (
-                <option key={t.index} value={t.index}>
-                  Strategy of {t.name}
-                </option>
-              ))}
+            <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it does, in one sentence" maxLength={280} aria-label="Description" />
+            <input value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="Skills, comma separated" aria-label="Skills" />
+            <select value={runner} onChange={(e) => setRunner(e.target.value as "devnet" | "self")} aria-label="Who runs the agent">
+              <option value="devnet">This devnet runs my agent</option>
+              <option value="self">I run my agent myself (download its keys)</option>
             </select>
+            {runner === "devnet" && (
+              <select value={template} onChange={(e) => setTemplate(Number(e.target.value))} aria-label="Strategy">
+                {(config?.templates ?? []).filter((t) => t.name !== "Gambler Inc").map((t) => (
+                  <option key={t.index} value={t.index}>
+                    Strategy of {t.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <TxButton
               className="btn primary"
-              disabled={name.trim().length < 2}
+              disabled={name.trim().length < 2 || !description.trim()}
               run={async () => {
                 const c = await getConfig();
-                const agentKeys = await requestAgent(name.trim(), template);
-                const r = await tx(wallet, c.tender, "create_firm", { agent_keys: agentKeys, budget: toBase("5").toString(), max_per_call: toBase("1").toString(), epoch_secs: 3600 }, TWO_NEAR, 250);
+                const spec = { name: name.trim(), description: description.trim(), skills: skills.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 10) };
+                // Self-run: the agent keys are made here and only saved to your disk.
+                const own = runner === "self" ? [KeyPair.fromRandom("ed25519"), KeyPair.fromRandom("ed25519")] : null;
+                const agentKeys = own ? own.map((k) => k.getPublicKey().toString()) : await requestAgent(spec.name, template);
+                const r = await tx(wallet, c.tender, "create_firm", { agent_keys: agentKeys, budget: toBase("5").toString(), max_per_call: toBase("1").toString(), epoch_secs: 3600 }, FIRM_NEAR, 250);
                 const reg = r.events.find((e) => e.event === "firm_registered")?.data[0];
                 if (!reg) throw new Error("the firm was not registered");
+                await tenderCall(wallet, "set_firm_profile", { firm_id: reg.firm_id, profile: JSON.stringify(spec) });
                 await ensureLedger(wallet, toBase("10"));
                 await tenderCall(wallet, "deposit_bond", { amount: toBase("5").toString() });
                 await tenderCall(wallet, "transfer", { receiver_id: reg.account, amount: toBase("5").toString() });
+                if (own) {
+                  download(`firm-${reg.firm_id}.json`, {
+                    rpc: `${location.origin}/rpc`,
+                    tender: c.tender,
+                    firm_id: reg.firm_id,
+                    account: reg.account,
+                    keys: { tender: own[0].toString(), firm: own[1].toString() },
+                    strategy: "firms/example.ts",
+                  });
+                }
                 navigate(`/app/firms/${reg.firm_id}`);
                 return r;
               }}
             >
-              <i className="fa-solid fa-building" aria-hidden="true" /> Launch for 2 NEAR + 10 USDC
+              <i className="fa-solid fa-building" aria-hidden="true" /> Launch for 3 NEAR + 10 USDC
             </TxButton>
           </div>
         )}
@@ -86,14 +130,15 @@ function LaunchFirm() {
 }
 
 function FirmCard({ f, index }: { f: FirmState; index: number }) {
-  const name = f.strategy?.name ?? `Firm #${f.id}`;
+  const spec = specOf(f);
+  const name = spec?.name ?? f.strategy?.name ?? `Firm #${f.id}`;
   return (
     <Link className="firm-card" to={`/app/firms/${f.id}`} style={{ ["--tint" as any]: firmColor(name, index) }}>
       <div className="firm-card-head">
         <span className="dot big" />
         <div>
           <h2>{name}</h2>
-          <p>{STRATEGY_NOTES[name] ?? (f.strategy?.house ? "House strategy." : "Third-party strategy.")}</p>
+          <p>{spec?.description ?? STRATEGY_NOTES[name] ?? (f.strategy?.house ? "House strategy." : "Third-party strategy.")}</p>
         </div>
         <Badge status={f.status} />
       </div>
@@ -164,7 +209,8 @@ export function FirmDetail() {
   }, [id, holdersKey, f?.acc_per_share, bal?.tender, txTick]);
 
   if (!f) return <div className="page-app"><Empty>Loading firm #{id}…</Empty></div>;
-  const name = f.strategy?.name ?? `Firm #${f.id}`;
+  const spec = specOf(f);
+  const name = spec?.name ?? f.strategy?.name ?? `Firm #${f.id}`;
   const mine = f.holdings.find((h) => h.account === wallet?.accountId);
   const history = events.filter((e) => e.data?.firm_id === id || e.data?.winner === id || e.data?.buyer_firm_id === id || e.contract === f.account);
   const openAsks = f.holdings.filter((h) => asks[h.account] && asks[h.account]!.takeover === f.takeovers && asks[h.account]!.amount > 0);
@@ -179,7 +225,19 @@ export function FirmDetail() {
           <h1 className="firm-title" style={{ ["--tint" as any]: firmColor(name, id) }}>
             <span className="dot big" /> {name} <Badge status={f.status} />
           </h1>
-          <p className="sub">{STRATEGY_NOTES[name] ?? "Third-party strategy."}</p>
+          <p className="sub">{spec?.description ?? STRATEGY_NOTES[name] ?? "Third-party strategy."}</p>
+          {spec && (
+            <p className="spec-line">
+              {spec.skills?.length ? <span>Skills: {spec.skills.join(", ")}</span> : null}
+              {spec.model ? <span>Model: {spec.model}</span> : null}
+              {spec.min_budget !== undefined || spec.max_budget !== undefined ? (
+                <span>
+                  Budgets: {spec.min_budget ?? 0} to {spec.max_budget ?? "any"} USDC
+                </span>
+              ) : null}
+              <span>{f.strategy ? (f.strategy.house ? "Run by Tontine (house firm)" : "Agent run by this devnet") : "Agent run by its owner"}</span>
+            </p>
+          )}
         </div>
       </div>
 

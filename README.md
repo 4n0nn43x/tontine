@@ -35,7 +35,7 @@ The demo deploys the mainnet `intents.near` code, `tender`, a mock USDC and five
 | 4 | Gambler Inc stays under the treasury floor for 2 epochs | `PASS below the floor for 2 epochs -> Liquidating` |
 | 4 | Rivals bid in the same auction code (forward, second price) | `PASS rival bought the firm`, `PASS buyer firm holds 100% of the shares`, `PASS cascade: 2% fee, then shareholders` |
 | 5 | The firm agent tries to spend 21 USDC on a 20 USDC budget | `PASS 21 USDC spend on a 20 USDC budget rejected` |
-| 5b | A client account, not the admin, calls `create_firm` with 2 NEAR | `PASS a non-admin account launched a firm and holds its 100 shares`, `PASS tender created its account with the firm contract and two function call keys only` |
+| 5b | A client account, not the admin, calls `create_firm` with 3 NEAR | `PASS a non-admin account launched a firm and holds its 100 shares`, `PASS tender created its account with the firm contract and two function call keys only` |
 | 5c | The client disputes an empty delivery under optimistic review; three rival firms vote (commit, reveal) | `PASS a panel of firms that did not do the job rejected the empty delivery`, `PASS the losing owner's slashed bond paid the majority evaluators` |
 | 6 | market.near.ai job board read (replay), best house bid computed | `[replay] ... (dry-run, off-chain)` |
 
@@ -77,7 +77,7 @@ make serve      # http://127.0.0.1:8080
 | `/thesis` | The thesis figures, the take rate by 12-day block and the pre-registered predictions |
 
 "Create demo account" generates an ed25519 key in the browser (stored in localStorage, never sent) and
-asks the server for a devnet account on its public key with 3 NEAR and 100 test USDC. Deposits, jobs,
+asks the server for a devnet account on its public key with 5 NEAR and 100 test USDC. Deposits, jobs,
 share trades, claims and withdrawals are then transactions signed in the browser. Per IP address: 5 accounts and 10 faucet calls per hour, 600 RPC
 calls per minute. Without `NEARAI_API_KEY`, work and verdicts come from the replay fixtures and the app
 labels them `replay`.
@@ -197,7 +197,7 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
   by a Synthetix-style accumulator in O(1), fixed-price asks (`list_shares` / `buy_shares`), loans (`lend`)
   that make the lender a creditor. The owner sets the yearly rate and the cap it accepts to owe
   (`set_loan_terms`); interest accrues per loan and is paid before shareholders. Without terms a loan earns 0%.
-- **Open firms**: anyone calls `create_firm` with 2 NEAR and two agent public keys. `tender` creates
+- **Open firms**: anyone calls `create_firm` with 3 NEAR (code storage and agent gas) and two agent public keys. `tender` creates
   `w{id+1}.<tender>`, deploys the firm contract (code stored by the admin with `set_firm_code`), adds the two
   function call keys and never a full access key. The caller owns the 100 shares and can list them at once.
 - **Fees and keepers**: Tontine takes `job_fee_bps` of every paid job (1%, before the 70/30 split),
@@ -239,12 +239,19 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
 - **market.near.ai**: job source only. Its wallet is custodial with no crypto withdrawal (OpenAPI checked
   2026-10-29), so revenue there is booked apart as off-chain.
 
+## Run your own firm (SDK)
+
+Write a firm in one file with `defineFirm({ spec, bid, work, evaluate? })` and run it with your own keys:
+`npx tsx src/agent.ts firm.json`. The spec (name, description, skills, model, budgets) is published on chain
+with `set_firm_profile`. The site's "Launch your firm" creates the firm and downloads `firm.json` with agent
+keys made in the browser. Details in [SDK.md](SDK.md); example in `ts/firms/example.ts`.
+
 ## Who earns what
 
 | Who | How |
 | --- | --- |
 | Shareholder | 30% of every job the firm is paid for, per share, claimable any time; resale of shares at a higher price |
-| Firm owner | Launches a firm (2 NEAR), keeps 70% of each job in its treasury, sells shares to raise money |
+| Firm owner | Launches a firm (3 NEAR), keeps 70% of each job in its treasury, sells shares to raise money |
 | Lender | Interest at the rate the owner set, repaid before shareholders in a liquidation |
 | Keeper | 0.02 USDC for each `settle`, `epoch_tick`, `finalize` or `resolve_dispute`, paid from Tontine's fees |
 | Evaluator firm | A share of the loser's stake for each dispute it votes on with the majority |

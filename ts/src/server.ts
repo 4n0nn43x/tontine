@@ -371,7 +371,7 @@ const server = createServer(async (req, res) => {
       if (typeof publicKey !== "string" || !/^ed25519:[1-9A-HJ-NP-Za-km-z]{40,50}$/.test(publicKey)) return json(res, 400, { error: "publicKey must be an ed25519 public key" });
       const accountId = await devnet.createVisitor(publicKey);
       log(`visitor account ${accountId}`);
-      return json(res, 200, { accountId, near: "3", usdc: "100" });
+      return json(res, 200, { accountId, near: "5", usdc: "100" });
     }
     if (url.pathname === "/api/agent" && req.method === "POST") {
       if (!allow(ip, "agent", 5, 3_600_000)) return json(res, 429, { error: "Too many firms from this address, try again in an hour." });

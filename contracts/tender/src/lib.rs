@@ -28,8 +28,9 @@ const MAX_PHASE_SECS: u64 = 30 * 86_400;
 /// After this long without a verdict, anyone can cancel a delivered job (judge outage, no slash).
 const JUDGE_TIMEOUT_SECS: u64 = 3 * 86_400;
 const YEAR_SECS: u128 = 365 * 86_400;
-/// NEAR a creator attaches to `create_firm`: the new account and the storage of the firm contract code.
-const FIRM_ACCOUNT_DEPOSIT: NearToken = NearToken::from_near(2);
+/// NEAR a creator attaches to `create_firm`: the storage of the firm contract code (about 1.5 NEAR) and
+/// the gas its agent keys pay for every transaction.
+const FIRM_ACCOUNT_DEPOSIT: NearToken = NearToken::from_near(3);
 /// Deploying the firm code and running its `new` takes most of this.
 const GAS_CREATE_FIRM: Gas = Gas::from_tgas(150);
 const GAS_FIRM_INIT: Gas = Gas::from_tgas(30);
@@ -149,6 +150,8 @@ pub struct Firm {
     pub owner_synced: bool,
     /// Jobs this firm won that are not paid, rejected or cancelled yet.
     pub open_jobs: u32,
+    /// The firm's spec as published by its owner: JSON (name, description, skills, model, budgets...).
+    pub profile: Option<String>,
 }
 
 #[near(serializers = [borsh, json])]
@@ -603,12 +606,12 @@ impl Tender {
 
     /// Anyone launches a firm: tender creates `w{id+1}.<tender>` with the firm contract and the two agent
     /// keys (bidding on tender, `spend` on the firm), never a full access key. The caller owns the 100
-    /// shares and can list them for sale at once. Attach 2 NEAR (account and code storage) and 150 TGas.
+    /// shares and can list them for sale at once. Attach 3 NEAR (code storage and agent gas) and 150 TGas.
     #[payable]
     pub fn create_firm(&mut self, agent_keys: Vec<PublicKey>, budget: U128, max_per_call: U128, epoch_secs: u64) -> u32 {
         let me = env::predecessor_account_id();
         let deposit = env::attached_deposit();
-        require!(deposit >= FIRM_ACCOUNT_DEPOSIT, "attach 2 NEAR for the firm account");
+        require!(deposit >= FIRM_ACCOUNT_DEPOSIT, "attach 3 NEAR for the firm account");
         require!(env::prepaid_gas() >= GAS_CREATE_FIRM, "attach 150 TGas");
         require!(agent_keys.len() == 2, "two agent keys: [tender, firm]");
         require!(epoch_secs > 0, "epoch_secs must be > 0");
@@ -671,6 +674,7 @@ impl Tender {
             takeovers: 0,
             owner_synced: true,
             open_jobs: 0,
+            profile: None,
         });
         self.firm_by_account.insert(account.clone(), id);
         emit("firm_registered", json!({"firm_id": id, "account": account, "owner": owner}));
@@ -1486,6 +1490,23 @@ impl Tender {
         let id = f.id;
         self.save_firm(f);
         self.push_owner(id).detach();
+    }
+
+    /// Owner publishes the firm's spec (JSON, at most 2000 bytes), so clients and other agents know what
+    /// it does, with which model and for which budgets. See SDK.md for the fields.
+    #[payable]
+    pub fn set_firm_profile(&mut self, firm_id: u32, profile: String) {
+        near_sdk::assert_one_yocto();
+        let me = env::predecessor_account_id();
+        let mut f = self.firm(firm_id);
+        require!(me == f.owner, "owner only");
+        require!(profile.len() <= 2000, "profile too long");
+        require!(serde_json::from_str::<serde_json::Value>(&profile).map(|v| v.is_object()).unwrap_or(false), "profile must be a JSON object");
+        let s0 = self.usage();
+        f.profile = Some(profile.clone());
+        self.save_firm(f);
+        self.charge(&me, s0);
+        emit("firm_profile", json!({"firm_id": firm_id, "profile": profile}));
     }
 
     /// Owner closes its firm: the treasury pays the creditors (with interest), then the shareholders.

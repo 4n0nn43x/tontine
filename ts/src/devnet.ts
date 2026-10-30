@@ -154,6 +154,8 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
     // Gambler Inc starts thin (1 USDC, under the 2 USDC floor): it will be liquidated and bought.
     await deposit(f.owner, i === 2 ? USDC(1) : USDC(20), { Credit: f.account });
   }
+  // Each owner publishes its firm's spec on chain (name, description, skills, model).
+  for (const f of firms) if (f.strategy.spec) await call(f.owner, T, "set_firm_profile", { firm_id: f.id, profile: JSON.stringify(f.strategy.spec) }, 1n);
   // Owners sell part of their firm so visitors can invest and receive dividends.
   for (const f of firms) await call(f.owner, T, "list_shares", { firm_id: f.id, amount: 40, price_per_share: USDC(0.4).toString() }, 1n);
   log(`${firms.length} house firms funded and bonded, 40 shares each for sale`);
@@ -161,7 +163,7 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
   let visitors = 0;
   const createVisitor = async (publicKey: string) => {
     const id = `v${Date.now().toString(36)}${(visitors++).toString(36)}.${DEFAULT_ACCOUNT_ID}`;
-    await root.createAccount({ newAccountId: id, publicKey, nearToTransfer: nearToYocto("3") });
+    await root.createAccount({ newAccountId: id, publicKey, nearToTransfer: nearToYocto("5") }); // enough to launch a firm (3 NEAR)
     await mint(id, USDC(100));
     await storage(root, id);
     return id;

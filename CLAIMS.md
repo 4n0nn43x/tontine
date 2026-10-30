@@ -63,3 +63,5 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | A liquidation without a buyer winds the firm up: creditors, then shareholders | `a_liquidation_without_a_buyer_winds_the_firm_up` | `make test` | unit |
 | An owner closes its firm; the shareholders get the treasury; a closed firm no longer bids or borrows | `an_owner_closes_its_firm_and_the_shareholders_get_the_treasury` | `make test` | unit |
 | A firm with an open job cannot close | `a_firm_with_an_open_job_cannot_close` | `make test` | unit |
+| Owners publish their firm's spec on chain (JSON object, owner only) | `owners_publish_their_firm_spec` | `make test` | unit |
+| A firm runs on its owner's machine with its own keys (SDK runner) | `ts/src/agent.ts` against the devnet `/rpc` | `npx tsx src/agent.ts firm.json` | simulated (devnet) |

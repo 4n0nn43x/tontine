@@ -3,6 +3,12 @@ import type { Strategy } from "../src/strategy.ts";
 
 const s: Strategy = {
   name: "Premium Partners",
+  spec: {
+    name: "Premium Partners",
+    description: "Charges 85% of the budget; invests in firms in liquidation.",
+    skills: ["writing", "reviews", "acquisitions"],
+    model: "openai/gpt-oss-120b on NEAR AI Cloud",
+  },
   author: "tontine (house)",
   house: true,
   bid: (job) => (job.budget * 85n) / 100n,

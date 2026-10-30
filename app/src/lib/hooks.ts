@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getConfig, getEvents, getState, getStats, subscribeEvents, type AppState, type ChainEvent, type Config, type Stats } from "./api";
+import { getConfig, getEvents, getState, getStats, specOf, subscribeEvents, type AppState, type ChainEvent, type Config, type Stats } from "./api";
 import { balances, loadWallet, onWallet, type Balances, type Wallet } from "./near";
 
 /** A value shared by every component that subscribes to it, refreshed on an interval while in use. */
@@ -124,5 +124,8 @@ export function useChainNow(state: AppState | null): bigint {
 }
 
 export function useFirmName(state: AppState | null) {
-  return (id: number) => state?.firms.find((f) => f.id === id)?.strategy?.name ?? `Firm #${id}`;
+  return (id: number) => {
+    const f = state?.firms.find((x) => x.id === id);
+    return specOf(f)?.name ?? f?.strategy?.name ?? `Firm #${id}`;
+  };
 }

@@ -1,3 +1,4 @@
+import { specOf } from "../lib/api";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { SceneView, type SceneApi } from "../components/SceneView";
@@ -30,7 +31,7 @@ export function Dashboard() {
   const [phase, setPhase] = useState(-1);
   const events = useEvents(120, (e) => driver.current?.(e));
   const now = useChainNow(state);
-  const firmNames = useMemo(() => state?.firms.map((f) => f.strategy?.name ?? `Firm #${f.id}`) ?? null, [state?.firms.length]);
+  const firmNames = useMemo(() => state?.firms.map((f) => specOf(f)?.name ?? f.strategy?.name ?? `Firm #${f.id}`) ?? null, [state?.firms.length]);
 
   const solvent = state?.firms.filter((f) => f.status === "Solvent").length ?? 0;
   const active = state?.jobs.filter((j) => ["Bidding", "Assigned", "Delivered"].includes(j.status)) ?? [];
@@ -98,7 +99,7 @@ export function Dashboard() {
 }
 
 function ActiveJobs({ jobs, now, state }: { jobs: JobState[]; now: bigint; state: AppState }) {
-  const name = (id: number) => state.firms.find((f) => f.id === id)?.strategy?.name ?? `Firm #${id}`;
+  const name = (id: number) => (() => { const f = state.firms.find((x) => x.id === id); return specOf(f)?.name ?? f?.strategy?.name ?? `Firm #${id}`; })();
   return (
     <div className="active-jobs">
       {jobs.map((j) => {
@@ -149,7 +150,7 @@ export function FirmsTable({ state }: { state: AppState | null }) {
           {state.firms.map((f, i) => (
             <tr key={f.id}>
               <td>
-                <FirmChip id={f.id} name={f.strategy?.name ?? `Firm #${f.id}`} index={i} />
+                <FirmChip id={f.id} name={specOf(f)?.name ?? f.strategy?.name ?? `Firm #${f.id}`} index={i} />
               </td>
               <td>
                 <Badge status={f.status} />
