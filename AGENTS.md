@@ -30,4 +30,7 @@ Every README claim maps to a test or a demo check in `CLAIMS.md`.
 - near-sdk is pinned to 5.29.1: 5.30 targets protocol 88 and its wasm is refused by protocol 86, which
   mainnet still runs (checked 2026-10-30). `make demo` runs sandbox 2.13.4 (protocol 86) for that reason;
   `SANDBOX_VERSION=2.14.0 make demo` checks protocol 88.
+- `make build-repro` builds tender and firm reproducibly in `sourcescan/cargo-near:0.22.0-rust-1.97.1`
+  (pinned digest), the image the mainnet intents.near build used. Two runs give the same sha256, and
+  the result passes `make demo` on protocol 86.
 - Never commit keys (`keys/`, `.env`). `network.ts` signs real transactions: a human runs it.

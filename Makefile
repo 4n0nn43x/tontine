@@ -2,7 +2,7 @@
 WASM_TARGET := contracts/target/wasm32-unknown-unknown/release
 export TMPDIR := $(CURDIR)/ts/node_modules/.cache/tmp
 
-.PHONY: build test demo verify-wasm deps thesis
+.PHONY: build build-repro test demo verify-wasm deps thesis
 
 deps:
 	cd ts && npm ci
@@ -11,6 +11,14 @@ deps:
 build:
 	cd contracts && cargo build --target wasm32-unknown-unknown --release
 	mkdir -p wasm && cp $(WASM_TARGET)/tender.wasm $(WASM_TARGET)/firm.wasm $(WASM_TARGET)/mock_ft.wasm wasm/
+	cd wasm && sha256sum *.wasm > SHA256SUMS
+
+# Reproducible build of the mainnet contracts in the pinned cargo-near image (needs Docker, a clean git
+# tree and `repository` set in contracts/{tender,firm}/Cargo.toml). Same image as the intents.near build.
+build-repro:
+	cd contracts/tender && cargo near build reproducible-wasm
+	cd contracts/firm && cargo near build reproducible-wasm
+	cp contracts/target/near/tender/tender.wasm contracts/target/near/firm/firm.wasm wasm/
 	cd wasm && sha256sum *.wasm > SHA256SUMS
 
 verify-wasm:
