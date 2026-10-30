@@ -225,14 +225,15 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         setStatus(f, "idle");
       }
     },
-    job({ id, budget, brief }) {
+    order({ id, side, amount, min }) {
       job.id = id;
-      job.label = `JOB #${id} · ${budget} USDC`;
+      job.label = `ORDER #${id} · ${side === "Buy" ? "BUY NEAR" : "SELL NEAR"} · ${amount}`;
       job.target = 1;
       job.x = -0.15;
       job.tx = 0.5;
       onPhase?.(0);
-      log(`<b>job #${id}</b> · ${budget} USDC · ${brief}`);
+      log(`<b>order #${id}</b> · ${side === "Buy" ? "buy" : "sell"} NEAR · ${amount}`);
+      if (min) log(`min ${min}, the 1Click quote`);
     },
     commit({ firm, target }) {
       const f = byName.get(firm);
@@ -252,39 +253,25 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       if (job.target) onPhase?.(2);
       log(`${firm} reveals <b>${price}</b>`);
     },
-    win({ firm, price }) {
+    win({ firm, price, note }) {
       const f = byName.get(firm);
       if (!f) return;
       f.pulse = 1.6;
       f.flash = 1;
       f.flashColor = GREEN;
-      say(f, `wins · pays ${price}`, GREEN, 3);
-      setStatus(f, "won the job");
+      // The winner's windows light up, floor by floor, until the fill lands.
+      f.state = "working";
+      f.lit = 0.95;
+      say(f, `wins · delivers ${price}`, GREEN, 3);
+      setStatus(f, "won the order");
       fly("beam", () => jobPos(), () => roof(f), { color: GREEN, dur: 0.9, arc: 0 });
-      log(`<b>${firm}</b> wins at the 2nd price ${price}`);
+      log(`<b>${firm}</b> wins · 2nd best ${price}`);
+      if (note) log(note);
     },
-    work({ firm, empty }) {
+    fill({ firm, price, edge, dividends }) {
       const f = byName.get(firm);
       if (!f) return;
-      f.state = empty ? "idle" : "working";
-      f.lit = empty ? 0.2 : 0.95;
-      setStatus(f, empty ? "delivers nothing" : "working");
-      log(empty ? `${firm} delivers <b>nothing</b>` : `${firm} delivers the work`);
-    },
-    verdict({ firm, accept }) {
-      const f = byName.get(firm);
-      if (!f) return;
-      f.flash = 1;
-      f.flashColor = accept ? GREEN : RED;
-      say(f, accept ? "accepted" : "rejected", accept ? GREEN : RED, 2.2);
-      onPhase?.(accept ? 3 : 4);
-      if (accept) log(`judge · <b>accepted</b>`);
-      else log(`judge · <b>rejected</b>`, "bad");
-    },
-    pay({ firm, price, dividends }) {
-      const f = byName.get(firm);
-      if (!f) return;
-      // The price comes down from the client's job to the firm, then 30% spills out to the holders.
+      // What the client paid comes down from the order to the firm, then 30% of the edge spills out to the holders.
       for (let i = 0; i < 9; i++) fly("coin", () => jobPos(), () => roof(f), { delay: i * 0.08, dur: 1, arc: 14 });
       for (let i = 0; i < 12; i++) {
         const dx = (i - 6) * 3.5;
@@ -292,9 +279,10 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       }
       f.lit = 0.6;
       f.state = "idle";
-      setStatus(f, `paid ${price}`);
+      setStatus(f, `filled ${price}`);
+      onPhase?.(3);
       setTimeout(() => say(f, `+${dividends} to holders`, AMBER, 2.6), reducedMotion ? 0 : 1100);
-      log(`paid ${price} · <b>${dividends} to shareholders</b>`);
+      log(`edge ${edge} USDC · <b>${dividends} to holders</b>`);
     },
     slash({ firm, bond }) {
       const f = byName.get(firm);
@@ -305,14 +293,15 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       for (let i = 0; i < 6; i++) fly("coin", () => roof(f), () => jobPos(), { delay: i * 0.1, color: RED, dur: 1.1 });
       say(f, `bond −${bond}`, RED, 2.6);
       setStatus(f, "bond slashed");
+      onPhase?.(4);
       log(`owner bond <b>−${bond}</b> to the client`, "bad");
     },
-    jobEnd() {
+    orderEnd() {
       job.target = 0;
       job.tx = 1.2;
       for (const f of firms) if (f.state === "working") f.state = "idle";
     },
-    epoch({ firm, n, liquidating }) {
+    epoch({ firm, n, of = 3, liquidating }) {
       const f = byName.get(firm);
       if (!f) return;
       f.lit = liquidating ? 0.04 : 0.12;
@@ -320,10 +309,10 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         f.forSale = true;
         onPhase?.(5);
       }
-      setStatus(f, liquidating ? "for sale" : `under the floor ${n}/2`);
-      log(liquidating ? `${firm} · <b>liquidating</b>` : `${firm} under the floor ${n}/2`, "bad");
+      setStatus(f, liquidating ? "for sale" : `cash under the floor ${n}/${of}`);
+      log(liquidating ? `${firm} · <b>liquidating</b>` : `${firm} · cash under the floor ${n}/${of}`, "bad");
     },
-    takeover({ buyer, target, price, fee, holders }) {
+    takeover({ buyer, target, price, fee, holders, near }) {
       const t = byName.get(target);
       const bu = byName.get(buyer);
       if (!t) return;
@@ -341,7 +330,8 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       setStatus(t, `owned by ${buyer}`);
       onPhase?.(6);
       log(`<b>${buyer}</b> buys ${target} · ${price}`);
-      log(`fee ${fee} · old shareholders <b>+${holders}</b>`);
+      log(`fee ${fee} · old holders <b>+${holders}</b>`);
+      if (near) log(`old holders <b>+${near} NEAR</b>, in kind`);
     },
     close({ firm }) {
       const f = byName.get(firm);
@@ -360,16 +350,16 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       fly("key", () => roof(t), () => ({ x: roof(t).x + 14, y: roof(t).y - 26 }), { color: RED, dur: 1.6, arc: 4 });
       log(`${target} · old agent keys deleted`);
     },
-    budget({ firm, spend, budget }) {
+    refused({ firm, label, line }) {
       const f = byName.get(firm);
       if (!f) return;
       f.flash = 1;
       f.flashColor = RED;
-      say(f, `spend ${spend} > ${budget} · refused`, RED, 3);
-      log(`spend ${spend} on a ${budget} budget · <b>refused</b>`, "bad");
+      say(f, label, RED, 3);
+      log(line, "bad");
     },
-    done() {
-      log(`<b>21/21</b> checks pass · replay restarts`);
+    done({ checks }) {
+      log(`<b>${checks}</b> checks pass · replay restarts`);
     },
   };
 
@@ -390,10 +380,9 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   // ------------------------------------------------------------------ agents (dashboard only)
 
   // In live mode each firm sends a small agent down to the market hall in the street. Its bubble only
-  // says what the chain says: a sealed bid, the revealed price, the verdict, the payment, a takeover.
+  // says what the chain says: a sealed bid, the revealed quote, the fill, a slash, a takeover.
   const agents = mode === "live" ? firms.map((f) => ({ f, x: null, tx: null, color: f.color, bubble: "", bubbleColor: "#fff", until: 0, carry: false, walking: false })) : [];
   const hall = { flash: 0 };
-  let jobInfo = { budget: 0, brief: "" };
   const agentOf = (name) => agents.find((g) => g.f.name === name);
   const door = (f) => f.box.x + f.box.w / 2;
   const hallX = () => W / 2;
@@ -408,23 +397,18 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   function agentAct(s) {
     const g = s.firm ? agentOf(s.firm) : null;
     switch (s.do) {
-      case "job":
-        jobInfo = { budget: parseFloat(s.budget), brief: String(s.brief ?? "") };
+      case "order":
         hall.flash = 1.5;
         break;
       case "commit":
         if (!g) break;
-        g.liquidation = !!s.target; // a bid for a firm, not for the job: no budget to compare with
         if (s.target && byName.get(s.target)) g.tx = door(byName.get(s.target)) - 5;
         else goHall(g);
         speak(g, s.target ? `sealed bid for ${s.target}` : "sealed bid", g.f.color);
         break;
-      case "reveal": {
-        if (!g) break;
-        const pct = jobInfo.budget && !g.liquidation ? ` · ${Math.round((parseFloat(s.price) / jobInfo.budget) * 100)}% of budget` : "";
-        speak(g, `${s.price} USDC${pct}`);
+      case "reveal":
+        if (g) speak(g, s.note ? `${s.price} · ${s.note}` : s.price);
         break;
-      }
       case "win":
         for (const o of agents) {
           if (o === g || o.tx === null || Math.abs(o.tx - hallX()) > 40) continue;
@@ -434,19 +418,16 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         if (g) {
           g.carry = true;
           goHome(g);
-          speak(g, `won · paid the 2nd price ${s.price}`, GREEN);
+          speak(g, `won · delivers the 2nd best ${s.price}`, GREEN);
         }
         break;
-      case "work":
-        if (g) speak(g, s.empty ? "delivered nothing" : `working: ${jobInfo.brief.slice(0, 34)}`, s.empty ? RED : "#fff", 5);
-        break;
-      case "verdict":
-        if (g) speak(g, s.accept ? "judge: accepted" : "judge: rejected", s.accept ? GREEN : RED);
-        break;
-      case "pay":
+      case "fill":
         if (!g) break;
         g.carry = false;
-        speak(g, `+${s.firmShare} treasury · +${s.dividends} holders`, AMBER, 5);
+        speak(g, `edge ${s.edge} · +${s.dividends} to holders`, AMBER, 5);
+        break;
+      case "refused":
+        if (g) speak(g, s.label, RED);
         break;
       case "slash":
         if (!g) break;
@@ -454,7 +435,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         speak(g, `bond −${s.bond}`, RED);
         break;
       case "epoch":
-        if (g) speak(g, s.liquidating ? "for sale" : "treasury under the floor", RED, 5);
+        if (g) speak(g, s.liquidating ? "for sale" : "cash under the floor", RED, 5);
         break;
       case "takeover": {
         const t = agentOf(s.target);
@@ -475,7 +456,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         if (t) speak(t, "old keys deleted", RED);
         break;
       }
-      case "jobEnd":
+      case "orderEnd":
         for (const o of agents) goHome(o);
         break;
     }
@@ -723,7 +704,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     if (job.on < 0.02 && job.x > 1.1) return;
     const p = jobPos();
     a.globalAlpha = Math.min(1, job.on * 1.5 + 0.2);
-    // A small airship carries the job across the sky.
+    // A small airship carries the order across the sky.
     a.fillStyle = "#e9d8ff";
     a.fillRect(Math.round(p.x - 9), Math.round(p.y - 3), 18, 6);
     a.fillRect(Math.round(p.x - 7), Math.round(p.y - 4), 14, 8);
@@ -795,7 +776,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
 
   function drawLabels() {
     const live = mode === "live";
-    // On a phone the towers are too close for names in the hero view: only the job and the arena show text.
+    // On a phone the towers are too close for names in the hero view: only the order and the arena show text.
     const crowded = W * 4 < 900 && !live && explore < 0.5;
     if (crowded) {
       if (job.on > 0.05 && job.label) text(job.label, jobPos().x, jobPos().y - 7, "#fff", 12, "center", Math.min(1, job.on));

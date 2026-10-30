@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getConfig, getEvents, getState, getStats, specOf, subscribeEvents, type AppState, type ChainEvent, type Config, type Stats } from "./api";
+import { getConfig, getDecisions, getEvents, getState, getStats, nameOf, subscribeEvents, type AppState, type ChainEvent, type Config, type Decision, type Stats } from "./api";
 import { balances, loadWallet, onWallet, type Balances, type Wallet } from "./near";
 
 /** A value shared by every component that subscribes to it, refreshed on an interval while in use. */
@@ -37,6 +37,7 @@ function sharedPoll<T>(fetcher: () => Promise<T>, ms: number) {
 
 export const useAppState = sharedPoll<AppState>(getState, 2000);
 export const useStats = sharedPoll<Stats>(getStats, 4000);
+export const useDecisions = sharedPoll<Decision[]>(getDecisions, 10000);
 
 export function useConfig(): Config | null {
   const [c, setC] = useState<Config | null>(null);
@@ -124,8 +125,5 @@ export function useChainNow(state: AppState | null): bigint {
 }
 
 export function useFirmName(state: AppState | null) {
-  return (id: number) => {
-    const f = state?.firms.find((x) => x.id === id);
-    return specOf(f)?.name ?? f?.strategy?.name ?? `Firm #${id}`;
-  };
+  return (id: number) => nameOf(state?.firms.find((x) => x.id === id), id);
 }

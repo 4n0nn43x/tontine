@@ -606,15 +606,15 @@
   box-shadow: 0 0 16px var(--tint, #fff);
 }
 
-/* ------------------------------------------------------------------ jobs */
+/* ------------------------------------------------------------------ orders */
 
-.active-jobs {
+.active-orders {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.job-row {
+.order-row {
   display: grid;
   grid-template-columns: 48px minmax(0, 1.5fr) 110px minmax(0, 1.4fr) 96px;
   align-items: center;
@@ -628,26 +628,26 @@
   transition: border-color 0.2s ease;
 }
 
-.job-row:hover {
+.order-row:hover {
   border-color: var(--line-2);
 }
 
-.job-id {
+.order-id {
   color: var(--muted);
   font-family: var(--font-mono);
 }
 
-.job-brief {
+.order-what {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.job-budget {
+.order-amount {
   font-variant-numeric: tabular-nums;
 }
 
-.job-phase {
+.order-phase {
   color: var(--soft);
   font-size: 13px;
 }
@@ -678,21 +678,45 @@
   color: var(--bad);
 }
 
-.deliverable,
-.attestation {
-  max-height: 320px;
-  margin: 0 0 16px;
-  padding: 14px;
-  overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #07070a;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: #d6d3df;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.facts dd.good,
+.result.good b {
+  color: var(--good);
+}
+
+.result {
+  margin: 0;
+  color: var(--soft);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.card-note {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ charts (lightweight-charts) */
+
+.chart {
+  position: relative;
+  margin: 0 0 12px;
+}
+
+.chart-box {
+  position: absolute;
+  inset: 0;
+}
+
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  pointer-events: none;
 }
 
 /* ------------------------------------------------------------------ forms */
@@ -981,13 +1005,13 @@ details summary {
   .feed-card {
     max-height: 520px;
   }
-  .job-row {
+  .order-row {
     grid-template-columns: 40px minmax(0, 1fr) 90px;
   }
-  .job-phase {
+  .order-phase {
     grid-column: 2 / -1;
   }
-  .job-row .badge {
+  .order-row .badge {
     grid-column: 1 / 2;
     grid-row: 2;
   }
@@ -1098,29 +1122,53 @@ details summary {
   }
 }
 
-/* ------------------------------------------------------------------ review and disputes */
+/* ------------------------------------------------------------------ trade and policy forms */
 
-.review {
-  margin: 18px 0;
-  padding: 16px;
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
   border: 1px solid var(--line-2);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-2);
 }
 
-.review p {
-  margin: 0 0 12px;
+.segmented button {
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
   color: var(--soft);
+  font: inherit;
   font-size: 14px;
-  line-height: 1.55;
+  cursor: pointer;
 }
 
-.review .inline {
+.segmented button.on {
+  background: var(--pill-dark);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.facts.quote {
+  margin: 0;
+}
+
+.inline.wrap {
   flex-wrap: wrap;
 }
 
-code.criteria {
-  white-space: pre-wrap;
+.inline .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--soft);
+  font-size: 14px;
+}
+
+.inline .check input {
+  width: auto;
 }
 
 .spec-line {

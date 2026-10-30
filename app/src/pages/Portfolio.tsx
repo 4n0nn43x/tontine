@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge, Card, Empty, FirmChip, Kpi, TxButton } from "../components/ui";
-import { specOf, faucet, getConfig } from "../lib/api";
-import { near, toBase, usdc } from "../lib/format";
+import { Badge, Card, Empty, FirmChip, TxButton } from "../components/ui";
+import { nameOf, faucet, getConfig } from "../lib/api";
+import { bpOver, bpText, gotText, near, paidText, toBase, usdc } from "../lib/format";
 import { useAppState, useBalances, useWallet } from "../lib/hooks";
-import { createWallet, depositToTender, tenderCall, view, withdrawToWallet } from "../lib/near";
+import { createWallet, depositToTender, tenderCall, view, withdrawToWallet, type TokenName } from "../lib/near";
 
 export function Portfolio() {
   const wallet = useWallet();
   const bal = useBalances(wallet?.accountId, 3000);
   const { data: state } = useAppState();
   const [amount, setAmount] = useState("10");
+  const [token, setToken] = useState<TokenName>("usdc");
   const [pending, setPending] = useState<Record<number, string>>({});
   const [listAmount, setListAmount] = useState<Record<number, string>>({});
   const [listPrice, setListPrice] = useState<Record<number, string>>({});
@@ -37,11 +38,11 @@ export function Portfolio() {
         <div className="page-head">
           <div>
             <h1>Portfolio</h1>
-            <p className="sub">Your USDC, your shares in AI firms and the dividends they pay you.</p>
+            <p className="sub">Your USDC and NEAR, your orders, your shares in AI firms and the dividends they pay you.</p>
           </div>
         </div>
         <Card title="No account yet">
-          <p>Create a demo account on the Tontine devnet: 100 test USDC, a key generated in your browser, nothing to install.</p>
+          <p>Create a demo account on the Tontine devnet: 100 test USDC and 20 test wNEAR, a key generated in your browser, nothing to install.</p>
           <TxButton className="btn primary" run={() => createWallet()}>
             <i className="fa-solid fa-wallet" aria-hidden="true" /> Create demo account
           </TxButton>
@@ -53,12 +54,13 @@ export function Portfolio() {
   let base = 0n;
   let amountOk = true;
   try {
-    base = toBase(amount);
+    base = toBase(amount, token === "usdc" ? 6 : 24);
     amountOk = base > 0n;
   } catch {
     amountOk = false;
   }
-  const myJobs = state?.jobs.filter((j) => j.client === wallet.accountId) ?? [];
+  const myOrders = state?.orders.filter((o) => o.client === wallet.accountId) ?? [];
+  const unit = token === "usdc" ? "USDC" : "wNEAR";
 
   return (
     <div className="page-app">
@@ -69,50 +71,99 @@ export function Portfolio() {
         </div>
       </div>
 
-      <div className="kpis">
-        <Kpi label="Wallet" value={bal ? usdc(bal.wallet) : "…"} unit="USDC" hint="test USDC (mock token)" />
-        <Kpi label="In NEAR Intents" value={bal ? usdc(bal.intents) : "…"} unit="USDC" hint="intents.near, mainnet code" />
-        <Kpi label="In Tontine" value={bal ? usdc(bal.tender) : "…"} unit="USDC" hint="your tender ledger balance" />
-        <Kpi label="Gas" value={bal ? near(bal.near) : "…"} unit="NEAR" hint={bal ? `storage prepaid: ${near(bal.storage)} NEAR` : ""} />
-      </div>
-
       <div className="grid-2">
-        <Card title="Move USDC">
+        <Card title="Balances">
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Token</th>
+                  <th className="num">Wallet</th>
+                  <th className="num">In NEAR Intents</th>
+                  <th className="num">In Tontine</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>USDC</td>
+                  <td className="num">{bal ? usdc(bal.usdc.wallet) : "…"}</td>
+                  <td className="num">{bal ? usdc(bal.usdc.intents) : "…"}</td>
+                  <td className="num">{bal ? usdc(bal.usdc.tender) : "…"}</td>
+                </tr>
+                <tr>
+                  <td>wNEAR</td>
+                  <td className="num">{bal ? near(bal.wnear.wallet) : "…"}</td>
+                  <td className="num">{bal ? near(bal.wnear.intents) : "…"}</td>
+                  <td className="num">{bal ? near(bal.wnear.tender) : "…"}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="fine">
+            Test tokens (mock USDC and wNEAR contracts) held through <code>intents.near</code>, the mainnet code. Gas: {bal ? near(bal.near, 2) : "…"} NEAR, storage prepaid in Tontine: {bal ? near(bal.storage, 2) : "…"} NEAR. What an order fills to you lands in Tontine.
+          </p>
+        </Card>
+
+        <Card title="Move tokens">
           <div className="inline">
-            <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount in USDC" />
-            <span>USDC</span>
+            <select value={token} onChange={(e) => setToken(e.target.value as TokenName)} aria-label="Token">
+              <option value="usdc">USDC</option>
+              <option value="wnear">wNEAR</option>
+            </select>
+            <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label={`Amount in ${unit}`} />
+            <span>{unit}</span>
           </div>
           <div className="actions-row">
-            <TxButton className="btn primary" disabled={!amountOk} run={() => depositToTender(wallet, base)}>
+            <TxButton className="btn primary" disabled={!amountOk} run={() => depositToTender(wallet, base, undefined, token)}>
               <i className="fa-solid fa-arrow-down" aria-hidden="true" /> Deposit into Tontine
             </TxButton>
-            <TxButton className="btn" disabled={!amountOk} run={() => withdrawToWallet(wallet, base)}>
+            <TxButton className="btn" disabled={!amountOk} run={() => withdrawToWallet(wallet, base, token)}>
               <i className="fa-solid fa-arrow-up" aria-hidden="true" /> Withdraw to wallet
             </TxButton>
             <TxButton className="btn" run={() => faucet(wallet.accountId)}>
-              <i className="fa-solid fa-faucet-drip" aria-hidden="true" /> Get 100 test USDC
+              <i className="fa-solid fa-faucet-drip" aria-hidden="true" /> Get 100 USDC and 20 wNEAR
             </TxButton>
           </div>
           <p className="fine">Deposits take the mainnet path: wallet, then NEAR Intents (<code>ft_transfer_call</code>), then tender (<code>mt_transfer_call</code>). Withdrawals go back the same way.</p>
         </Card>
-
-        <Card title="Your jobs" action={<Link to="/app/post">Post a job</Link>}>
-          {myJobs.length ? (
-            <ul className="plain">
-              {myJobs.map((j) => (
-                <li key={j.id}>
-                  <Link to={`/app/jobs/${j.id}`}>
-                    #{j.id} {j.brief.length > 60 ? `${j.brief.slice(0, 59)}…` : j.brief}
-                  </Link>{" "}
-                  <Badge status={j.status} />
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <Empty>You have not posted a job yet.</Empty>
-          )}
-        </Card>
       </div>
+
+      <Card title="Your orders" action={<Link to="/app/trade">Trade NEAR</Link>}>
+        {myOrders.length ? (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Side</th>
+                  <th className="num">Paid</th>
+                  <th>Status</th>
+                  <th className="num">Got</th>
+                  <th className="num">Vs 1Click</th>
+                </tr>
+              </thead>
+              <tbody>
+                {myOrders.map((o) => (
+                  <tr key={o.id}>
+                    <td>
+                      <Link to={`/app/orders/${o.id}`}>#{o.id}</Link>
+                    </td>
+                    <td>{o.side === "Buy" ? "Buy NEAR" : "Sell NEAR"}</td>
+                    <td className="num">{paidText(o.side, o.amount_in)}</td>
+                    <td>
+                      <Badge status={o.status} />
+                    </td>
+                    <td className="num">{o.out ? gotText(o.side, o.out) : "–"}</td>
+                    <td className="num">{bpText(bpOver(o.out, o.reference_out))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty>No order of yours among the latest {state?.orders.length ?? 0}.</Empty>
+        )}
+      </Card>
 
       <Card title="Your shares">
         {!positions.length ? (
@@ -135,10 +186,10 @@ export function Portfolio() {
                 {positions.map(({ f, h }, i) => (
                   <tr key={f.id}>
                     <td>
-                      <FirmChip id={f.id} name={specOf(f)?.name ?? f.strategy?.name ?? `Firm #${f.id}`} index={i} />
+                      <FirmChip id={f.id} name={nameOf(f)} index={i} />
                     </td>
                     <td className="num">{h!.shares}</td>
-                    <td className="num">{pending[f.id] !== undefined ? usdc(pending[f.id]) : "…"}</td>
+                    <td className="num">{pending[f.id] !== undefined ? usdc(pending[f.id], 4) : "…"}</td>
                     <td>
                       <TxButton className="btn small" disabled={!pending[f.id] || pending[f.id] === "0"} run={() => tenderCall(wallet, "claim_dividends", { firm_id: f.id })}>
                         Claim

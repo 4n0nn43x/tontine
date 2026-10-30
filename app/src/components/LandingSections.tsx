@@ -33,6 +33,7 @@ type Card = { kicker: string; title: ReactNode; text: string; points: [string, s
 
 const mono = { fontFamily: "ui-monospace, Menlo, monospace" };
 
+// Figures from a real `make demo` run: order #0, a client buys NEAR with 40 USDC (NEAR replayed at 5.347 USD).
 const PANELS = {
   escrow: (
     <svg viewBox="0 0 520 260" className="draw" role="img" aria-label="Client, NEAR Intents and the tender escrow">
@@ -55,10 +56,10 @@ const PANELS = {
       <path d="M320 130 H370" className="wire" />
       <path d="M430 168 V214 H90 V168" className="wire dash" />
       <text x="260" y="236" textAnchor="middle" className="t-dim" style={mono}>
-        unspent budget comes back to the client
+        NEAR to the client, or a full refund
       </text>
       <text x="260" y="60" textAnchor="middle" className="t-accent" style={mono}>
-        $ mt_transfer_call(tender, {"{"}PostJob{"}"})
+        $ mt_transfer_call(tender, {"{"}PostOrder{"}"})
       </text>
       <circle r="4" className="pulse">
         <animateMotion dur="3.2s" repeatCount="indefinite" path="M150 130 H200 M320 130 H370" />
@@ -66,64 +67,64 @@ const PANELS = {
     </svg>
   ),
   sealed: (
-    <svg viewBox="0 0 400 260" className="draw" role="img" aria-label="Sealed bids, then reveals">
+    <svg viewBox="0 0 400 260" className="draw" role="img" aria-label="Sealed quotes, then reveals">
       {[
-        ["Undercut & Co", "0x9f3a…c41e", "3.30"],
-        ["Cost Plus Ltd", "0x51d0…77ab", "3.44"],
-        ["Sniper Holdings", "0xe2c8…0b19", "4.20"],
-        ["Premium Partners", "0x07fb…9d62", "5.10"],
-      ].map(([n, h, v], i) => (
+        ["Undercut & Co", "7.4778"],
+        ["Cost Plus Ltd", "7.4763"],
+        ["Atlas AI", "7.4726"],
+        ["1Click minimum", "7.4621"],
+      ].map(([n, v], i) => (
         <g key={n} transform={`translate(24 ${34 + i * 52})`}>
           <rect width="352" height="40" rx="9" className="node" />
           <text x="16" y="25" className="t-strong" style={{ ...mono, fontSize: 11 }}>
             {n}
           </text>
-          <text x="196" y="25" className="t-dim" style={{ ...mono, fontSize: 11 }}>
-            {h}
+          <text x="160" y="25" className="t-dim" style={{ ...mono, fontSize: 11 }}>
+            {i < 3 ? "sha256(…)" : "reserve"}
           </text>
           <text x="336" y="25" textAnchor="end" className={`t-accent reveal-num n${i}`} style={{ ...mono, fontSize: 11 }}>
-            {v}
+            {v} NEAR
           </text>
         </g>
       ))}
     </svg>
   ),
   price: (
-    <svg viewBox="0 0 400 260" className="draw" role="img" aria-label="The lowest bid wins and is paid the second-lowest">
+    <svg viewBox="0 0 400 260" className="draw" role="img" aria-label="The best quote wins and delivers the second best">
       {[
-        ["3.30", 132, "wins"],
-        ["3.44", 138, "pays this"],
-        ["4.20", 168, ""],
-        ["5.10", 204, ""],
+        ["7.4778", 235, "wins"],
+        ["7.4763", 219, "delivered"],
+        ["7.4726", 179, ""],
+        ["7.4621", 63, "1Click"],
       ].map(([v, w, tag], i) => (
         <g key={v as string} transform={`translate(28 ${40 + i * 48})`}>
-          <rect width={(w as number) * 1.3} height="26" rx="6" className={i === 0 ? "bar win" : i === 1 ? "bar second" : "bar"} />
-          <text x={(w as number) * 1.3 + 12} y="18" className="t-strong" style={mono}>
-            {v} USDC
+          <rect width={w as number} height="26" rx="6" className={i === 0 ? "bar win" : i === 1 ? "bar second" : "bar"} />
+          <text x={(w as number) + 10} y="18" className="t-strong" style={mono}>
+            {v}
           </text>
           {tag && (
-            <text x="344" y="18" textAnchor="end" className={i === 0 ? "t-good" : "t-accent"} style={mono}>
+            <text x="344" y="18" textAnchor="end" className={i === 0 ? "t-good" : i === 1 ? "t-accent" : "t-dim"} style={mono}>
               {tag}
             </text>
           )}
         </g>
       ))}
-      <path d="M207 30 V236" className="wire dash" />
-      <text x="212" y="250" className="t-dim" style={mono}>
-        2nd price
+      <path d="M247 30 V236" className="wire dash" />
+      <text x="140" y="250" className="t-dim" style={mono}>
+        2nd best · +19.0 bp vs 1Click
       </text>
     </svg>
   ),
   dividends: (
-    <svg viewBox="0 0 520 260" className="draw" role="img" aria-label="70% to the treasury, 30% to the shareholders">
+    <svg viewBox="0 0 520 260" className="draw" role="img" aria-label="70% of the edge stays in the firm, 30% to the shareholders">
       <text x="30" y="46" className="t-accent" style={mono}>
-        verdict(job, accept) · 3.44 USDC
+        order_filled · edge 0.0160 USDC
       </text>
       <rect x="30" y="64" width="460" height="30" rx="8" className="node" />
       <rect x="30" y="64" width="322" height="30" rx="8" className="bar" />
       <rect x="352" y="64" width="138" height="30" rx="8" className="bar win" />
       <text x="40" y="84" className="t-strong" style={mono}>
-        70% treasury
+        70% stays in the firm
       </text>
       <text x="362" y="84" className="t-strong" style={mono}>
         30% holders
@@ -146,31 +147,31 @@ const CARDS: Card[] = [
         <em>Escrow</em> on chain
       </>
     ),
-    text: "A client pays in USDC through NEAR Intents. The budget sits in the tender contract and opens an auction.",
-    points: ["Two transactions, both on the mainnet Intents path.", "Budget locked until a verdict or a refund.", "No account with the firms, no invoice."],
+    text: "A client posts a NEAR/USDC order through NEAR Intents. What it pays sits in the tender contract, with a minimum set at what NEAR Intents 1Click would give.",
+    points: ["Two transactions, both on the mainnet Intents path.", "Refunded in full if no quote beats the minimum.", "No account with the firms, no invoice."],
     panel: PANELS.escrow,
     wide: "left",
   },
   {
-    kicker: "02 · Bid",
+    kicker: "02 · Quote",
     title: (
       <>
-        <em>Sealed</em> bids
+        <em>Sealed</em> quotes
       </>
     ),
-    text: "Every firm commits a hash of its price, then reveals it.",
-    points: ["sha256 of amount and salt.", "One bid per owner, backed by a bond.", "No shill bidding, no peeking."],
+    text: "Every firm commits a hash of what it would deliver, then reveals it.",
+    points: ["sha256 of amount and salt.", "One quote per owner, backed by a bond.", "A quote never revealed costs the bond."],
     panel: PANELS.sealed,
   },
   {
-    kicker: "03 · Settle",
+    kicker: "03 · Fill",
     title: (
       <>
-        The <em>second</em> price
+        The <em>second</em> best
       </>
     ),
-    text: "The lowest bid wins and is paid the second-lowest price.",
-    points: ["Bidding your true cost is the best strategy.", "Alone in the auction: paid the budget.", "Settled by anyone, on chain."],
+    text: "The best quote wins and delivers the second best, in the settle transaction.",
+    points: ["Quoting your true price is the best strategy.", "Alone in the auction: delivers the minimum.", "Both sides move at once, settled by anyone."],
     panel: PANELS.price,
   },
   {
@@ -180,8 +181,8 @@ const CARDS: Card[] = [
         <em>Dividends</em> to holders
       </>
     ),
-    text: "The client accepts the delivery, or disputes it and a panel of rival firms votes with stakes. Once paid, 70% goes to the firm's treasury, 30% to its shareholders.",
-    points: ["Criteria are fixed when the job is posted.", "Silence pays the firm; the loser of a dispute pays the evaluators.", "Holders claim whenever they want."],
+    text: "A fill's edge is what the firm gained, valued at the previous clearing price. 30% of a positive edge goes to the firm's shareholders at once; the rest stays in its treasury.",
+    points: ["No judge: the fill is the delivery.", "The owner's policy bounds every quote on chain.", "Holders claim whenever they want."],
     panel: PANELS.dividends,
     wide: "right",
   },
@@ -191,7 +192,7 @@ export function HowSection() {
   const ref = useReveal<HTMLElement>();
   return (
     <section id="how" className="section lab" ref={ref}>
-      <p className="eyebrow reveal">How a job settles</p>
+      <p className="eyebrow reveal">How an order fills</p>
       <h2 className="section-title reveal">A market where AI firms compete, and lose</h2>
       <div className="bento">
         {CARDS.map((c, i) => (
@@ -218,9 +219,9 @@ export function HowSection() {
 }
 
 const FAILS = [
-  ["fa-box-open", "Empty delivery", "fa-rotate-left", "Client refunded, bond slashed"],
-  ["fa-arrow-trend-down", "Treasury under the floor", "fa-gavel", "Firm put up for sale"],
-  ["fa-handshake", "Liquidation auction", "fa-key", "Rival owns 100%, old keys deleted"],
+  ["fa-eye-slash", "Quote never revealed", "fa-scissors", "Owner bond pays the client"],
+  ["fa-arrow-trend-down", "Cash under the floor", "fa-gavel", "Firm put up for sale"],
+  ["fa-handshake", "Liquidation auction", "fa-key", "Rival owns 100%, NEAR to old holders"],
 ] as const;
 
 export function FailSection() {
@@ -229,9 +230,9 @@ export function FailSection() {
     <section className="section fail-split" ref={ref}>
       <div className="fail-copy">
         <p className="eyebrow reveal">And when a firm fails</p>
-        <h2 className="section-title reveal">Bad work costs the owner, not the client</h2>
+        <h2 className="section-title reveal">A failing firm costs its owner, not the client</h2>
         <p className="lead reveal">
-          A disputed delivery goes to three rival firms that vote in secret against the client's criteria; if they reject it, the client is refunded and the owner's bond pays them. A treasury that stays under the floor for three epochs puts the firm up for sale, in the same auction code. Creditors are paid first, then shareholders.
+          A quote sealed and never revealed costs the owner's bond, paid to the client. A hijacked agent cannot dump the inventory: in <code>make demo</code> its 50%-off quote is refused by the owner's price band, on chain. A firm whose cash stays under the floor is put up for sale in the same auction code: Gambler Inc spent its cash on NEAR and Premium Partners bought it for 1 USDC. Creditors are paid first, then shareholders, and the NEAR goes to them in kind: 7.9988 NEAR to its shareholder.
         </p>
       </div>
       <div className="flow-card reveal" aria-label="What happens when a firm fails">
@@ -260,7 +261,7 @@ export function FailSection() {
             </span>
           ))}
         </div>
-        <span className="flow-caption">tender contract · same auction code for jobs and firms</span>
+        <span className="flow-caption">tender contract · same auction code for orders and firms</span>
       </div>
     </section>
   );

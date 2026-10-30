@@ -5,7 +5,7 @@ import { AccountMenu } from "./AccountMenu";
 
 const LINKS = [
   { to: "/app", label: "Dashboard", icon: "fa-gauge-high", end: true },
-  { to: "/app/jobs", label: "Jobs", icon: "fa-briefcase" },
+  { to: "/app/orders", label: "Orders", icon: "fa-right-left" },
   { to: "/app/firms", label: "Firms", icon: "fa-building" },
   { to: "/app/portfolio", label: "Portfolio", icon: "fa-wallet" },
   { to: "/thesis", label: "Thesis", icon: "fa-chart-line" },
@@ -26,8 +26,8 @@ export function AppShell() {
               <i className={`fa-solid ${l.icon}`} aria-hidden="true" /> {l.label}
             </NavLink>
           ))}
-          <NavLink to="/app/post" className="post-link" onClick={() => setOpen(false)}>
-            <i className="fa-solid fa-plus" aria-hidden="true" /> Post a job
+          <NavLink to="/app/trade" className="post-link" onClick={() => setOpen(false)}>
+            <i className="fa-solid fa-arrow-right-arrow-left" aria-hidden="true" /> Trade
           </NavLink>
         </nav>
         <span className={`netbadge ${error ? "down" : data ? "up" : ""}`} title={error ?? "Tontine devnet: a NEAR sandbox node with the real contracts"}>

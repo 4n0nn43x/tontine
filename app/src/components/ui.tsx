@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import type { ChainEvent } from "../lib/api";
+import type { ChainEvent, Side } from "../lib/api";
 import { ago, describe, firmColor } from "../lib/format";
-import { announceTx } from "../lib/hooks";
+import { announceTx, useAppState } from "../lib/hooks";
 
 export function Card({ title, action, children, className = "" }: { title?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
@@ -37,13 +37,9 @@ const STATUS_TONE: Record<string, string> = {
   Solvent: "good",
   Illiquid: "warn",
   Liquidating: "bad",
-  Bidding: "accent",
-  Assigned: "accent",
-  Delivered: "accent",
-  Paid: "good",
-  Rejected: "bad",
-  Cancelled: "",
-  Disputed: "warn",
+  Open: "accent",
+  Filled: "good",
+  Refunded: "",
   Closed: "",
 };
 
@@ -110,8 +106,12 @@ export function TxButton({ run, children, className = "btn", disabled, onDone }:
 }
 
 export function EventFeed({ events, firm, limit = 30, compact = false }: { events: ChainEvent[]; firm: (id: number) => string; limit?: number; compact?: boolean }) {
+  const { data: state } = useAppState();
+  // An auction's amounts are in the token its order delivers: NEAR for a buy, USDC for a sell.
+  const sides = new Map<number, Side>(state?.orders.map((o) => [o.auction, o.side]));
+  for (const e of events) if (e.event === "order_posted") sides.set(e.data.auction_id, e.data.side);
   const rows = events
-    .map((e) => ({ e, d: describe(e, firm) }))
+    .map((e) => ({ e, d: describe(e, firm, (a) => sides.get(a)) }))
     .filter((x) => x.d)
     .slice(-limit)
     .reverse();
@@ -122,7 +122,7 @@ export function EventFeed({ events, firm, limit = 30, compact = false }: { event
         <li key={e.id} className={d!.tone}>
           <i className={`fa-solid ${d!.icon}`} aria-hidden="true" />
           <span className="feed-text">
-            {d!.jobId !== undefined ? <Link to={`/app/jobs/${d!.jobId}`}>{d!.text}</Link> : d!.text}
+            {d!.orderId !== undefined ? <Link to={`/app/orders/${d!.orderId}`}>{d!.text}</Link> : d!.text}
           </span>
           <time dateTime={new Date(e.time).toISOString()}>{ago(e.time)}</time>
         </li>

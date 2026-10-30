@@ -1,56 +1,68 @@
-// Turns chain events into the scene's story steps, so the 3D swarm shows what really happens on chain.
-import type { ChainEvent } from "./api";
-import { usdc } from "./format";
+// Turns chain events into the scene's story steps, so the city shows what really happens on chain.
+import { getConfig, type ChainEvent, type Side } from "./api";
+import { auctionAmount, bpOver, bpText, gotText, near, paidText, usdc } from "./format";
 
 type Scene = { act(step: Record<string, unknown>): void };
 
 export function liveDriver(scene: Scene, firmName: (id: number) => string) {
   const auctionTarget = new Map<number, number>(); // liquidation auction id -> firm id
+  const orders = new Map<number, { side: Side; ref: string | null }>(); // order auction id -> its side and 1Click reference
   const later = (ms: number, step: Record<string, unknown>) => setTimeout(() => scene.act(step), ms);
+  let dividendBps = 0;
+  getConfig().then((c) => (dividendBps = Number(c.tenderConfig?.dividend_bps ?? 0)), () => {});
 
   return (e: ChainEvent) => {
     if (e.standard !== "tontine") return;
     const d = e.data ?? {};
     switch (e.event) {
-      case "job_posted":
-        scene.act({ do: "job", id: d.job_id, budget: usdc(d.budget), brief: String(d.brief ?? "").slice(0, 48) });
+      case "order_posted":
+        orders.set(d.auction_id, { side: d.side, ref: d.reference_out ?? null });
+        scene.act({ do: "order", id: d.order_id, side: d.side, amount: paidText(d.side, d.amount_in), min: gotText(d.side, d.min_out) });
         break;
       case "liquidation_started":
         auctionTarget.set(d.auction_id, d.firm_id);
-        scene.act({ do: "epoch", firm: firmName(d.firm_id), n: 2, liquidating: true });
+        scene.act({ do: "epoch", firm: firmName(d.firm_id), liquidating: true });
         break;
       case "bid_committed": {
         const target = auctionTarget.get(d.auction_id);
         scene.act({ do: "commit", firm: firmName(d.firm_id), target: target === undefined ? undefined : firmName(target) });
         break;
       }
-      case "bid_revealed":
-        scene.act({ do: "reveal", firm: firmName(d.firm_id), price: usdc(d.amount) });
+      case "bid_revealed": {
+        const o = orders.get(d.auction_id);
+        const vs = o ? bpOver(d.amount, o.ref) : null;
+        scene.act({ do: "reveal", firm: firmName(d.firm_id), price: auctionAmount(d.amount, o?.side), note: vs === null ? undefined : `${bpText(vs)} vs 1Click` });
         break;
+      }
       case "auction_settled":
-        if (d.winner !== null && !auctionTarget.has(d.auction_id)) {
-          scene.act({ do: "win", firm: firmName(d.winner), price: usdc(d.price) });
-          later(900, { do: "work", firm: firmName(d.winner) });
-        }
+        if (d.winner !== null && !auctionTarget.has(d.auction_id)) scene.act({ do: "win", firm: firmName(d.winner), price: auctionAmount(d.price, orders.get(d.auction_id)?.side) });
         break;
-      case "delivered":
-        if (!d.result) scene.act({ do: "work", firm: firmName(d.firm_id), empty: true });
+      case "order_filled": {
+        const edge = BigInt(d.edge ?? 0);
+        const dividends = edge > 0n ? (edge * BigInt(dividendBps)) / 10_000n : 0n;
+        scene.act({ do: "fill", firm: firmName(d.firm_id), price: gotText(d.side, d.out), edge: usdc(edge, 4), dividends: usdc(dividends, 4) });
+        later(2600, { do: "orderEnd" });
         break;
-      case "paid":
-        scene.act({ do: "verdict", firm: firmName(d.firm_id), accept: true });
-        scene.act({ do: "pay", firm: firmName(d.firm_id), price: usdc(d.price), firmShare: usdc(d.to_firm), dividends: usdc(d.dividends) });
-        later(2600, { do: "jobEnd" });
+      }
+      case "order_refunded":
+        later(1200, { do: "orderEnd" });
         break;
       case "slashed":
-        scene.act({ do: "verdict", firm: firmName(d.firm_id), accept: false });
         scene.act({ do: "slash", firm: firmName(d.firm_id), bond: usdc(d.amount) });
-        later(2600, { do: "jobEnd" });
         break;
       case "firm_closed":
         scene.act({ do: "close", firm: firmName(d.firm_id) });
         break;
       case "liquidated":
-        scene.act({ do: "takeover", buyer: firmName(d.buyer_firm_id), target: firmName(d.firm_id), price: usdc(d.price), fee: usdc(d.fee), holders: usdc(d.to_shareholders) });
+        scene.act({
+          do: "takeover",
+          buyer: firmName(d.buyer_firm_id),
+          target: firmName(d.firm_id),
+          price: `${usdc(d.price)} USDC`,
+          fee: usdc(d.fee),
+          holders: `${usdc(d.to_shareholders)} USDC`,
+          near: BigInt(d.asset_to_shareholders ?? 0) > 0n ? near(d.asset_to_shareholders) : undefined,
+        });
         later(2500, { do: "keys", target: firmName(d.firm_id) });
         break;
     }

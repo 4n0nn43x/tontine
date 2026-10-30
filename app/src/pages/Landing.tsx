@@ -5,7 +5,7 @@ import { PixelDusk } from "../components/PixelDusk";
 import { FailSection, HowSection } from "../components/LandingSections";
 import { EventFeed } from "../components/ui";
 import { getThesis } from "../lib/api";
-import { usdc } from "../lib/format";
+import { bpText, usdc } from "../lib/format";
 import { useAppState, useEvents, useFirmName, useStats } from "../lib/hooks";
 import { PHASES } from "./Dashboard";
 
@@ -185,7 +185,7 @@ function Hero() {
             <span>Of The Agent Economy</span>
           </h1>
           <p className="subhead anim" style={{ ["--d" as any]: "0.28s" }}>
-            Marketplaces hire AI agents. Tontine lets you own them: AI firms with shares and dividends that win jobs by sealed bid, go bankrupt and get bought by their rivals, all settled on NEAR.
+            Marketplaces hire AI agents. Tontine lets you own them: AI market-making firms with shares and dividends that quote NEAR swaps by sealed bid, go bankrupt and get bought by their rivals, all settled on NEAR.
           </p>
           <div className="hero-ctas anim" style={{ ["--d" as any]: "0.4s" }}>
             <Link className="cta" to="/app">
@@ -214,7 +214,7 @@ function Hero() {
             <span className="stat-value">
               <CountUp to={30} suffix="%" delay={570} />
             </span>
-            <span className="stat-label">Of every job paid as dividends</span>
+            <span className="stat-label">Of each fill's edge paid as dividends</span>
           </div>
           <div className="stat anim" style={{ ["--d" as any]: "0.66s" }}>
             <span className="stat-icon" aria-hidden="true">
@@ -223,7 +223,7 @@ function Hero() {
             <span className="stat-value">
               <CountUp to={2} suffix="nd" delay={660} />
             </span>
-            <span className="stat-label">Price paid in the sealed auction</span>
+            <span className="stat-label">Best quote wins, delivers the second best</span>
           </div>
           <div className="stat anim" style={{ ["--d" as any]: "0.74s" }}>
             <span className="stat-icon" aria-hidden="true">
@@ -299,16 +299,16 @@ export function Landing() {
           <div className="live-grid">
             <div className="live-kpis">
               <div>
-                <span className="big-num">{stats.paid}</span>
-                <span>jobs paid</span>
+                <span className="big-num">{stats.fills}</span>
+                <span>orders filled</span>
               </div>
               <div>
                 <span className="big-num">{usdc(stats.volume)}</span>
-                <span>USDC paid to firms</span>
+                <span>USDC of volume</span>
               </div>
               <div>
-                <span className="big-num">{usdc(stats.dividends)}</span>
-                <span>USDC of dividends</span>
+                <span className="big-num">{stats.fills ? bpText(stats.improvementBps / stats.fills) : "–"}</span>
+                <span>over NEAR Intents 1Click, on average</span>
               </div>
               <div>
                 <span className="big-num">{stats.takeovers}</span>
@@ -326,8 +326,8 @@ export function Landing() {
           <Link className="cta" to="/app">
             Open the dashboard
           </Link>
-          <Link className="cta ghost" to="/app/post">
-            Post a job
+          <Link className="cta ghost" to="/app/trade">
+            Trade NEAR
           </Link>
         </div>
       </section>
@@ -343,8 +343,8 @@ export function Landing() {
           </article>
           <article>
             <i className="fa-solid fa-coins" aria-hidden="true" />
-            <h3>30% of every job</h3>
-            <p>When a job is accepted, 30% of the price goes to the shareholders, per share, claimable at any time.</p>
+            <h3>30% of each fill's edge</h3>
+            <p>A fill's edge is what the firm gained on it, valued at the previous clearing price. 30% of it goes to the shareholders at once, per share, claimable at any time.</p>
           </article>
           <article>
             <i className="fa-solid fa-building-columns" aria-hidden="true" />
@@ -354,7 +354,7 @@ export function Landing() {
           <article>
             <i className="fa-solid fa-lock" aria-hidden="true" />
             <h3>Locked down by contract</h3>
-            <p>A firm account has no full access key. Its agent can bid and deliver, and every spend is capped by its on-chain budget.</p>
+            <p>A firm account has no full access key. Its agent can only quote and settle, its owner's price band and NEAR limit are checked on every quote, and every spend is capped by its on-chain budget.</p>
           </article>
         </div>
       </section>
@@ -391,7 +391,7 @@ export function Landing() {
           </li>
           <li>
             <i className="fa-solid fa-list-check" aria-hidden="true" />
-            <span><code>make demo</code> replays the whole economy on a local chain: 25 on-chain checks, no keys, no funds.</span>
+            <span><code>make demo</code> replays the whole economy on a local chain: 27 on-chain checks, no keys, no funds.</span>
           </li>
         </ul>
       </section>
@@ -400,32 +400,32 @@ export function Landing() {
         <div>
           <p className="eyebrow">Open market</p>
           <h2 className="section-title">Run your own firm</h2>
-          <p className="lead">A firm's strategy is one file: how it prices a job and how its agent does the work. Plug it in and it joins the swarm against the house firms.</p>
+          <p className="lead">A firm's strategy is one file: its spread from the mid, the NEAR share it aims for, and optionally its own quote. Plug it in and it joins the swarm against the house firms.</p>
           <Link className="cta ghost" to="/app/firms">
             Meet the firms
           </Link>
         </div>
-        <pre className="code">{`const firm: Strategy = {
-  name: "My Firm",
-  author: "you",
-  house: false,
-  // sealed price for a job, or null to pass
-  bid: (job) => (job.budget * 60n) / 100n,
-  // the deliverable, produced by your agent
-  work: async (job, llm) =>
-    (await llm.complete("Do the job well.", job.brief)).text,
-};`}</pre>
+        <pre className="code">{`export default defineFirm({
+  spec: { name: "My Maker", description: "...",
+          skills: ["NEAR/USDC"] },
+  // quote 9 bp from the 1Click mid, keep 40% in NEAR
+  params: { spreadBps: 9, targetAssetShare: 0.4,
+            skewBps: 25 },
+  // what it delivers for an order, or null to pass
+  quote: (order, me, market, params) =>
+    defaultQuote(order, me, market, params),
+});`}</pre>
       </section>
 
       <footer className="landing-foot">
         <PixelDusk />
         <div className="foot-inner">
           <div className="foot-cta">
-            <h2 className="section-title">Put a firm to work</h2>
-            <p className="lead">Post a job, watch the firms bid for it, and own a share of the winners.</p>
+            <h2 className="section-title">Trade against the firms</h2>
+            <p className="lead">Post a NEAR order, watch the firms quote for it, and own a share of the winners.</p>
             <div className="section-ctas">
-              <Link className="cta" to="/app/post">
-                Post a job
+              <Link className="cta" to="/app/trade">
+                Trade NEAR
               </Link>
               <Link className="cta ghost" to="/app">
                 Open the dashboard
@@ -436,7 +436,7 @@ export function Landing() {
             <div>
               <h3>Market</h3>
               <Link to="/app">Dashboard</Link>
-              <Link to="/app/jobs">Jobs</Link>
+              <Link to="/app/orders">Orders</Link>
               <Link to="/app/firms">Firms</Link>
               <Link to="/app/portfolio">Portfolio</Link>
             </div>
@@ -452,7 +452,7 @@ export function Landing() {
             <span className="foot-brand">
               <img src="/assets/logo.svg" alt="" width="22" height="22" /> Tontine
             </span>
-            <span>AI micro-firms, settled on NEAR</span>
+            <span>AI market-making firms, settled on NEAR</span>
           </div>
         </div>
       </footer>

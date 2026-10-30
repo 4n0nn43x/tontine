@@ -1,14 +1,14 @@
-import { specOf } from "../lib/api";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { LineChart, type Series } from "../components/Chart";
 import { SceneView, type SceneApi } from "../components/SceneView";
 import { Badge, Card, Countdown, Empty, EventFeed, FirmChip, Kpi } from "../components/ui";
-import type { AppState, JobState } from "../lib/api";
-import { usdc } from "../lib/format";
-import { useAppState, useChainNow, useEvents, useFirmName, useStats } from "../lib/hooks";
+import { nameOf, type AppState, type ChainEvent, type OrderState } from "../lib/api";
+import { bpText, gotText, near, paidText, usdc } from "../lib/format";
+import { useAppState, useChainNow, useConfig, useEvents, useFirmName, useStats } from "../lib/hooks";
 import { liveDriver } from "../lib/live";
 
-export const PHASES = ["Job", "Sealed", "Revealed", "Paid", "Slashed", "Liquidating", "Acquired"];
+export const PHASES = ["Order", "Sealed", "Revealed", "Filled", "Slashed", "Liquidating", "Acquired"];
 
 export function PhaseStrip({ phase }: { phase: number }) {
   return (
@@ -22,19 +22,47 @@ export function PhaseStrip({ phase }: { phase: number }) {
   );
 }
 
+/** What 1Click without a key costs on top of the mid: the server backs the mid out of its quotes the same way (ts/src/prices.ts). */
+const ONECLICK_COST_BPS = 25n;
+
+/** The 1Click mid behind an order's reference, and the clearing price of each fill, in USD per NEAR. */
+function priceSeries(events: ChainEvent[], state: AppState | null): Series[] {
+  const mid: Series["points"] = [];
+  const fills: Series["points"] = [];
+  for (const e of events) {
+    const d = e.data ?? {};
+    if (e.event === "order_posted" && d.reference_out) {
+      const gross = Number((BigInt(d.reference_out) * 10_000n) / (10_000n - ONECLICK_COST_BPS));
+      const inUnits = Number(d.amount_in);
+      mid.push({ time: e.time / 1000, value: d.side === "Buy" ? inUnits / 1e6 / (gross / 1e24) : gross / 1e6 / (inUnits / 1e24) });
+    }
+    if (e.event === "order_filled") fills.push({ time: e.time / 1000, value: Number(d.price) / 1e6 });
+  }
+  if (state?.reference) mid.push({ time: state.reference.at / 1000, value: state.reference.mid });
+  return [
+    { name: "1Click mid", color: "#d7bcff", points: mid },
+    { name: "Fill price", color: "#8ef0b3", points: fills, dots: true },
+  ];
+}
+
 export function Dashboard() {
   const { data: state } = useAppState();
   const { data: stats } = useStats();
+  const config = useConfig();
   const firmName = useFirmName(state);
   const scene = useRef<SceneApi | null>(null);
   const driver = useRef<((e: any) => void) | null>(null);
   const [phase, setPhase] = useState(-1);
-  const events = useEvents(120, (e) => driver.current?.(e));
+  const events = useEvents(500, (e) => driver.current?.(e));
   const now = useChainNow(state);
-  const firmNames = useMemo(() => state?.firms.map((f) => specOf(f)?.name ?? f.strategy?.name ?? `Firm #${f.id}`) ?? null, [state?.firms.length]);
+  const firmNames = useMemo(() => state?.firms.map((f) => nameOf(f)) ?? null, [state?.firms.length]);
+  // Recompute the chart only when an order event arrives or the reference moves, so a zoom survives the polls.
+  const lastOrderEvent = events.reduce((k, e) => (e.event === "order_filled" || e.event === "order_posted" ? e.id : k), 0);
+  const series = useMemo(() => priceSeries(events, state), [lastOrderEvent, state?.reference.at]);
 
-  const solvent = state?.firms.filter((f) => f.status === "Solvent").length ?? 0;
-  const active = state?.jobs.filter((j) => ["Bidding", "Assigned", "Delivered"].includes(j.status)) ?? [];
+  const open = state?.orders.filter((o) => o.status === "Open") ?? [];
+  const avgBp = stats && stats.fills ? stats.improvementBps / stats.fills : null;
+  const share = (config?.tenderConfig?.dividend_bps ?? 0) / 100;
 
   return (
     <div className="page-app">
@@ -43,18 +71,18 @@ export function Dashboard() {
           <h1>Live market</h1>
           <p className="sub">Every figure on this page is read from the chain: the tender contract, the firm contracts and the events they emit.</p>
         </div>
-        <Link className="btn primary" to="/app/post">
-          <i className="fa-solid fa-plus" aria-hidden="true" /> Post a job
+        <Link className="btn primary" to="/app/trade">
+          <i className="fa-solid fa-arrow-right-arrow-left" aria-hidden="true" /> Trade NEAR
         </Link>
       </div>
 
       <div className="kpis">
-        <Kpi icon="fa-briefcase" label="Jobs paid" value={stats ? stats.paid : "…"} hint={stats ? `${stats.jobs} posted, ${stats.rejected} rejected` : ""} />
-        <Kpi icon="fa-coins" label="Paid to firms" value={stats ? usdc(stats.volume) : "…"} unit="USDC" hint="at the second price" />
-        <Kpi icon="fa-hand-holding-dollar" label="Dividends" value={stats ? usdc(stats.dividends) : "…"} unit="USDC" hint="30% of every job" />
-        <Kpi icon="fa-scissors" label="Bonds slashed" value={stats ? usdc(stats.slashed) : "…"} unit="USDC" hint="empty deliveries" />
-        <Kpi icon="fa-handshake" label="Takeovers" value={stats ? stats.takeovers : "…"} hint={stats ? `${stats.liquidations} liquidations` : ""} />
-        <Kpi icon="fa-building" label="Firms solvent" value={state ? `${solvent}/${state.firms.length}` : "…"} hint="treasury above the floor" />
+        <Kpi icon="fa-right-left" label="Orders filled" value={stats ? stats.fills : "…"} hint={stats ? `${stats.orders} posted, ${stats.refunded} refunded` : ""} />
+        <Kpi icon="fa-coins" label="Volume" value={stats ? usdc(stats.volume) : "…"} unit="USDC" hint="notional of the fills" />
+        <Kpi icon="fa-arrow-trend-up" label="Vs 1Click" value={stats ? bpText(avgBp) : "…"} hint="average per fill, over the NEAR Intents quote" />
+        <Kpi icon="fa-hand-holding-dollar" label="Dividends" value={stats ? usdc(stats.dividends) : "…"} unit="USDC" hint={share ? `${share}% of each fill's edge` : "a share of each fill's edge"} />
+        <Kpi icon="fa-scissors" label="Bonds slashed" value={stats ? usdc(stats.slashed) : "…"} unit="USDC" hint="quotes sealed, never revealed" />
+        <Kpi icon="fa-handshake" label="Takeovers" value={stats ? stats.takeovers : "…"} hint={stats ? `${stats.liquidations} liquidation${stats.liquidations === 1 ? "" : "s"}` : ""} />
       </div>
 
       <div className="grid-main">
@@ -77,9 +105,9 @@ export function Dashboard() {
               driver.current = liveDriver(api, firmName);
             }}
             onPhase={setPhase}
-            fallback={<Empty>The 3D view needs WebGL with a GPU. The figures and the feed below are live anyway.</Empty>}
+            fallback={<Empty>The city view needs a canvas. The figures and the feed below are live anyway.</Empty>}
           />
-          <p className="caption">Each building is a firm. Sealed bids fly to the job's airship, the winner's windows light up while it works, coins are the payment and the dividends, and a firm in liquidation goes dark until a rival buys it and repaints it in its colours.</p>
+          <p className="caption">Each building is a firm. An order is the airship: sealed bids fly to it, the winner lights up, coins carry the fill and the dividends to its shareholders. A firm in liquidation goes dark until a rival buys it and repaints it in its colours.</p>
         </Card>
 
         <Card title="Live feed" className="feed-card">
@@ -87,8 +115,22 @@ export function Dashboard() {
         </Card>
       </div>
 
-      <Card title="Auctions in progress" action={<Link to="/app/jobs">All jobs</Link>}>
-        {active.length ? <ActiveJobs jobs={active} now={now} state={state!} /> : <Empty>No auction right now. The house client posts a job every minute or so, or post one yourself.</Empty>}
+      <Card
+        title="NEAR price, USD"
+        action={
+          state ? (
+            <span className="card-note">
+              1Click mid {state.reference.mid.toFixed(4)} ({state.reference.source === "1click" ? "live quote" : "replayed prices"}) · last clearing price {(Number(state.lastPrice) / 1e6).toFixed(4)}
+            </span>
+          ) : null
+        }
+      >
+        <LineChart series={series} empty="No order in the recent events yet." />
+        <p className="caption">The line is the NEAR Intents 1Click mid behind each order's reference quote. The dots are the prices orders filled at on tender, which also anchor the firms' price bands.</p>
+      </Card>
+
+      <Card title="Auctions in progress" action={<Link to="/app/orders">All orders</Link>}>
+        {open.length ? <OpenOrders orders={open} now={now} /> : <Empty>No auction right now. The house client posts an order every minute or so, or trade yourself.</Empty>}
       </Card>
 
       <Card title="Firms" action={<Link to="/app/firms">Details</Link>}>
@@ -98,29 +140,33 @@ export function Dashboard() {
   );
 }
 
-function ActiveJobs({ jobs, now, state }: { jobs: JobState[]; now: bigint; state: AppState }) {
-  const name = (id: number) => (() => { const f = state.firms.find((x) => x.id === id); return specOf(f)?.name ?? f?.strategy?.name ?? `Firm #${id}`; })();
+function OpenOrders({ orders, now }: { orders: OrderState[]; now: bigint }) {
   return (
-    <div className="active-jobs">
-      {jobs.map((j) => {
-        const a = j.auctionState;
+    <div className="active-orders">
+      {orders.map((o) => {
+        const a = o.auctionState;
         const commitEnd = BigInt(a.commit_end);
         const revealEnd = BigInt(a.reveal_end);
-        const sealed = a.bids.length;
-        const revealed = a.bids.filter((b) => b.revealed !== null);
-        let phase: React.ReactNode;
-        if (j.status === "Bidding" && now < commitEnd) phase = <>Sealed bids: {sealed} · reveal in <Countdown until={commitEnd} now={now} /></>;
-        else if (j.status === "Bidding" && now < revealEnd) phase = <>Revealed {revealed.length}/{sealed} · settles in <Countdown until={revealEnd} now={now} /></>;
-        else if (j.status === "Bidding") phase = <>Settling…</>;
-        else if (j.status === "Assigned") phase = <>{name(a.winner!)} is working · paid {usdc(a.price)} USDC</>;
-        else phase = <>Delivered by {name(a.winner!)} · waiting for the judge</>;
+        const revealed = a.bids.filter((b) => b.revealed !== null).length;
+        const phase =
+          now < commitEnd ? (
+            <>
+              Sealed bids: {a.bids.length} · reveal in <Countdown until={commitEnd} now={now} />
+            </>
+          ) : now < revealEnd ? (
+            <>
+              Revealed {revealed}/{a.bids.length} · settles in <Countdown until={revealEnd} now={now} />
+            </>
+          ) : (
+            <>Settling…</>
+          );
         return (
-          <Link key={j.id} className="job-row" to={`/app/jobs/${j.id}`}>
-            <span className="job-id">#{j.id}</span>
-            <span className="job-brief">{j.brief}</span>
-            <span className="job-budget">{usdc(j.budget)} USDC</span>
-            <span className="job-phase">{phase}</span>
-            <Badge status={j.status} />
+          <Link key={o.id} className="order-row" to={`/app/orders/${o.id}`}>
+            <span className="order-id">#{o.id}</span>
+            <span className="order-what">{o.side === "Buy" ? `Buy NEAR with ${paidText(o.side, o.amount_in)}` : `Sell ${paidText(o.side, o.amount_in)}`}</span>
+            <span className="order-amount">at least {gotText(o.side, o.min_out)}</span>
+            <span className="order-phase">{phase}</span>
+            <Badge status={o.status} />
           </Link>
         );
       })}
@@ -137,31 +183,35 @@ export function FirmsTable({ state }: { state: AppState | null }) {
           <tr>
             <th>Firm</th>
             <th>Status</th>
-            <th className="num">Treasury</th>
-            <th className="num">Revenue</th>
+            <th className="num">Cash</th>
+            <th className="num">NEAR</th>
+            <th className="num">NAV</th>
+            <th className="num">Fills</th>
+            <th className="num">Volume</th>
+            <th className="num">Edge</th>
             <th className="num">Dividends</th>
-            <th className="num">Delivered</th>
-            <th className="num">Rejected</th>
             <th className="num">Owner bond</th>
-            <th>Shareholders</th>
+            <th className="num">Holders</th>
           </tr>
         </thead>
         <tbody>
           {state.firms.map((f, i) => (
             <tr key={f.id}>
               <td>
-                <FirmChip id={f.id} name={specOf(f)?.name ?? f.strategy?.name ?? `Firm #${f.id}`} index={i} />
+                <FirmChip id={f.id} name={nameOf(f)} index={i} />
               </td>
               <td>
                 <Badge status={f.status} />
               </td>
               <td className="num">{usdc(f.treasury)}</td>
-              <td className="num">{usdc(f.revenue)}</td>
-              <td className="num">{usdc(f.dividends)}</td>
-              <td className="num">{f.delivered}</td>
-              <td className="num">{f.rejected}</td>
+              <td className="num">{near(f.inventory)}</td>
+              <td className="num">{usdc(f.nav)}</td>
+              <td className="num">{f.fills}</td>
+              <td className="num">{usdc(f.volume)}</td>
+              <td className="num">{usdc(f.edge, 4)}</td>
+              <td className="num">{usdc(f.dividends, 4)}</td>
               <td className="num">{usdc(f.ownerBond)}</td>
-              <td>{f.holdings.length}</td>
+              <td className="num">{f.holdings.length}</td>
             </tr>
           ))}
         </tbody>

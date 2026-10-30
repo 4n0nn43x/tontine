@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { faucet } from "../lib/api";
 import { usdc, near, short } from "../lib/format";
@@ -57,20 +57,22 @@ export function AccountMenu() {
       <button className="btn account-btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className="live-dot" aria-hidden="true" />
         {short(wallet.accountId, 18)}
-        <span className="account-usdc">{bal ? usdc(BigInt(bal.wallet) + BigInt(bal.intents) + BigInt(bal.tender)) : "…"} USDC</span>
+        <span className="account-usdc">{bal ? usdc(BigInt(bal.usdc.wallet) + BigInt(bal.usdc.intents) + BigInt(bal.usdc.tender)) : "…"} USDC</span>
       </button>
       {open && (
         <div className="account-panel" role="dialog" aria-label="Demo account">
           <p className="account-id">{wallet.accountId}</p>
           <dl className="balances">
-            <dt>Wallet</dt>
-            <dd>{bal ? usdc(bal.wallet) : "…"} USDC</dd>
-            <dt>In NEAR Intents</dt>
-            <dd>{bal ? usdc(bal.intents) : "…"} USDC</dd>
-            <dt>In Tontine</dt>
-            <dd>{bal ? usdc(bal.tender) : "…"} USDC</dd>
+            {(["wallet", "intents", "tender"] as const).map((k) => (
+              <Fragment key={k}>
+                <dt>{k === "wallet" ? "Wallet" : k === "intents" ? "In NEAR Intents" : "In Tontine"}</dt>
+                <dd>
+                  {bal ? usdc(bal.usdc[k]) : "…"} USDC · {bal ? near(bal.wnear[k]) : "…"} wNEAR
+                </dd>
+              </Fragment>
+            ))}
             <dt>Gas</dt>
-            <dd>{bal ? near(bal.near) : "…"} NEAR</dd>
+            <dd>{bal ? near(bal.near, 2) : "…"} NEAR</dd>
           </dl>
           <div className="account-actions">
             <button
@@ -89,7 +91,7 @@ export function AccountMenu() {
                 }
               }}
             >
-              <i className="fa-solid fa-faucet-drip" aria-hidden="true" /> Get 100 test USDC
+              <i className="fa-solid fa-faucet-drip" aria-hidden="true" /> Get 100 USDC and 20 wNEAR
             </button>
             <Link className="btn" to="/app/portfolio" onClick={() => setOpen(false)}>
               <i className="fa-solid fa-briefcase" aria-hidden="true" /> Portfolio
@@ -97,7 +99,7 @@ export function AccountMenu() {
           </div>
           {error && <p className="tx-error">{error}</p>}
           <p className="fine">
-            Devnet account: its key was generated in this browser and never left it. Test USDC only.{" "}
+            Devnet account: its key was generated in this browser and never left it. Test USDC and wNEAR only.{" "}
             <button
               className="link"
               onClick={() => {
