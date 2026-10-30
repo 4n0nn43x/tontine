@@ -135,6 +135,13 @@ const TERRAIN_FRAG = /* glsl */ `
     vec3 col = uBase
       + uGlow * rim * (0.16 + 0.72 * back)
       + vec3(0.13, 0.1, 0.22) * pow(fill, 1.6);
+    // Carry the dusk down to the foreground: slopes facing the horizon catch the sky, the others stay in
+    // shade, so the near dunes read as coloured waves. Sand grain is fixed to the ground, not the screen.
+    float face = clamp(dot(N, uLight) * 0.5 + 0.5, 0.0, 1.0);
+    float reach = smoothstep(6.0, 34.0, vDist);
+    vec3 dusk = mix(uHaze * 1.4, uGlow * 0.7, pow(face, 3.0));
+    col += dusk * (0.12 + 0.75 * pow(face, 4.0)) * reach;
+    col *= 0.78 + 0.44 * hash(floor(vW.xz * 40.0));
     float fog = smoothstep(26.0, 300.0, vDist);
     col = mix(col, uHaze, fog * 0.8);
     col += uGlow * 0.07 * fog * fog * (0.6 + 0.4 * rim);
@@ -326,6 +333,7 @@ export function startScene({
   firmNames = null,
   calmStrength = 0.72,
   debugQuery = true,
+  swarmInHero = true,
 }) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
   renderer.setClearColor(0x000000, 1);
@@ -408,6 +416,7 @@ export function startScene({
       uniforms: terrainUniforms,
       vertexShader: TERRAIN_VERT,
       fragmentShader: TERRAIN_FRAG,
+      side: THREE.DoubleSide, // the near ground is seen from above, against the winding
       polygonOffset: true, // let the grain dots sitting on the surface win the depth test
       polygonOffsetFactor: 2,
       polygonOffsetUnits: 2,
@@ -1153,6 +1162,9 @@ export function startScene({
     duneUniforms.uTime.value = clock;
     terrainUniforms.uTime.value = clock;
     shared.uCalmStrength.value = calmStrength * (1 - explore);
+    const showSwarm = swarmInHero || explore > 0.02;
+    for (const c of [decoCloud, agentsCloud, glowCloud]) c.points.visible = showSwarm;
+    tagsLayer.style.visibility = showSwarm ? "" : "hidden";
     updateTags();
     renderer.render(scene, camera);
   }

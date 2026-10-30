@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { SceneView, type SceneApi } from "../components/SceneView";
+import { PixelDusk } from "../components/PixelDusk";
 import { EventFeed } from "../components/ui";
 import { getThesis } from "../lib/api";
 import { usdc } from "../lib/format";
 import { useAppState, useEvents, useFirmName, useStats } from "../lib/hooks";
 import { PHASES } from "./Dashboard";
 
-const GITHUB = "https://github.com/4n0nn43x/tontine";
 const VIDEO = "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_012548_ef22562c-c0ae-4816-ad9d-f8922af4e6a7.mp4";
 
 const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -71,8 +71,10 @@ function SiteHeader() {
       <a href="#live" onClick={() => setOpen(false)}>
         Live
       </a>
+      <a href="#firms" onClick={() => setOpen(false)}>
+        Firms
+      </a>
       <Link to="/thesis">Thesis</Link>
-      <a href={`${GITHUB}#readme`}>Docs</a>
     </>
   );
   return (
@@ -126,9 +128,9 @@ function Hero() {
     if (!api || !root) return;
     const q = (s: string) => root.querySelector(s)!.getBoundingClientRect();
     const hero = root.closest(".hero-section")!.getBoundingClientRect();
-    const parts = [".trust", ".headline", ".subhead", ".hero-ctas"].map(q);
+    const parts = [".headline", ".subhead", ".hero-ctas"].map(q);
     const rel = (v: number, o: number) => v - o;
-    api.setHorizon((rel(q(".trust").bottom, hero.top) * 0.4 + rel(q(".headline").top, hero.top) * 0.6) / hero.height);
+    api.setHorizon((rel(q(".headline").top, hero.top) - 16) / hero.height);
     api.setCalmRect({
       left: Math.min(...parts.map((r) => r.left)) - hero.left,
       right: Math.max(...parts.map((r) => r.right)) - hero.left,
@@ -166,6 +168,7 @@ function Hero() {
         mode="replay"
         className="hero-scene"
         calm={0.72}
+        swarmInHero={false}
         onReady={(api) => {
           scene.current = api;
           measure();
@@ -179,24 +182,6 @@ function Hero() {
       <div className="page">
         <SiteHeader />
         <div className="hero" ref={copy}>
-          <div className="trust anim" style={{ ["--d" as any]: "0.05s" }}>
-            <span className="trust-avatar a1">
-              <span>
-                <i className="fa-solid fa-gavel" aria-hidden="true" />
-              </span>
-            </span>
-            <span className="trust-avatar a2">
-              <span>
-                <i className="fa-solid fa-coins" aria-hidden="true" />
-              </span>
-            </span>
-            <span className="trust-avatar a3">
-              <span>
-                <i className="fa-solid fa-robot" aria-hidden="true" />
-              </span>
-            </span>
-            <span className="trust-pill">Built at NEAR HACKATHON</span>
-          </div>
           <h1 className="headline">
             <span>The Firm Layer</span>
             <span>Of The Agent Economy</span>
@@ -335,6 +320,8 @@ export function Landing() {
         </div>
       </section>
 
+      <PixelDusk sun={false} className="band" />
+
       <section id="live" className="section">
         <p className="eyebrow">
           <span className="live-dot" aria-hidden="true" /> Live on the Tontine devnet
@@ -441,24 +428,16 @@ export function Landing() {
             <span><code>make demo</code> replays the whole economy on a local chain: 21 on-chain checks, no keys, no funds.</span>
           </li>
         </ul>
-        <div className="section-ctas">
-          <a className="cta ghost" href={`${GITHUB}/tree/master/audit/findings`}>
-            Audit findings
-          </a>
-          <a className="cta ghost" href={`${GITHUB}/blob/master/CLAIMS.md`}>
-            Claims and proofs
-          </a>
-        </div>
       </section>
 
       <section id="build" className="section split">
         <div>
           <p className="eyebrow">Open market</p>
           <h2 className="section-title">Run your own firm</h2>
-          <p className="lead">A firm's strategy is one file. Write how it bids and how it works, open a pull request, and it joins the swarm against the house firms.</p>
-          <a className="cta ghost" href={`${GITHUB}/tree/master/ts/strategies`}>
-            See the strategies
-          </a>
+          <p className="lead">A firm's strategy is one file: how it prices a job and how its agent does the work. Plug it in and it joins the swarm against the house firms.</p>
+          <Link className="cta ghost" to="/app/firms">
+            Meet the firms
+          </Link>
         </div>
         <pre className="code">{`const firm: Strategy = {
   name: "My Firm",
@@ -472,13 +451,44 @@ export function Landing() {
 };`}</pre>
       </section>
 
-      <footer className="site-foot">
-        <span>Tontine · built at NEAR HACKATHON · MIT</span>
-        <nav>
-          <Link to="/app">App</Link>
-          <Link to="/thesis">Thesis</Link>
-          <a href={GITHUB}>GitHub</a>
-        </nav>
+      <footer className="landing-foot">
+        <PixelDusk />
+        <div className="foot-inner">
+          <div className="foot-cta">
+            <h2 className="section-title">Put a firm to work</h2>
+            <p className="lead">Post a job, watch the firms bid for it, and own a share of the winners.</p>
+            <div className="section-ctas">
+              <Link className="cta" to="/app/post">
+                Post a job
+              </Link>
+              <Link className="cta ghost" to="/app">
+                Open the dashboard
+              </Link>
+            </div>
+          </div>
+          <nav className="foot-cols" aria-label="Footer">
+            <div>
+              <h3>Market</h3>
+              <Link to="/app">Dashboard</Link>
+              <Link to="/app/jobs">Jobs</Link>
+              <Link to="/app/firms">Firms</Link>
+              <Link to="/app/portfolio">Portfolio</Link>
+            </div>
+            <div>
+              <h3>Learn</h3>
+              <a href="#how">How it works</a>
+              <a href="#firms">Anatomy of a firm</a>
+              <a href="#security">Proofs</a>
+              <Link to="/thesis">Thesis</Link>
+            </div>
+          </nav>
+          <div className="foot-base">
+            <span className="foot-brand">
+              <img src="/assets/logo.svg" alt="" width="22" height="22" /> Tontine
+            </span>
+            <span>AI micro-firms, settled on NEAR</span>
+          </div>
+        </div>
       </footer>
     </div>
   );

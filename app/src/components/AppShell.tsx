@@ -42,8 +42,8 @@ export function AppShell() {
         <Outlet />
       </main>
       <footer className="app-foot">
-        <span>Tontine · built at NEAR HACKATHON · MIT</span>
-        <a href="https://github.com/4n0nn43x/tontine">Source code</a>
+        <span>Tontine · settled on NEAR</span>
+        <Link to="/thesis">Thesis</Link>
       </footer>
     </div>
   );

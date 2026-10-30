@@ -27,6 +27,7 @@ type Props = {
   mode: "replay" | "live";
   firmNames?: string[] | null;
   calm?: number;
+  swarmInHero?: boolean;
   className?: string;
   onReady?: (api: SceneApi) => void;
   onLedger?: (e: { text: string; kind: string }) => void;
@@ -35,7 +36,7 @@ type Props = {
 };
 
 /** The dot-matrix desert and its firm swarms, sized to its container. */
-export function SceneView({ mode, firmNames, calm = 0, className = "", onReady, onLedger, onPhase, fallback = null }: Props) {
+export function SceneView({ mode, firmNames, calm = 0, swarmInHero = true, className = "", onReady, onLedger, onPhase, fallback = null }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const tags = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(() => !webglOk());
@@ -62,6 +63,7 @@ export function SceneView({ mode, firmNames, calm = 0, className = "", onReady, 
           mode,
           firmNames: (firmNames ?? null) as any,
           calmStrength: calm,
+          swarmInHero,
           debugQuery: mode === "replay",
         }) as SceneApi;
         ro = new ResizeObserver(() => api?.resize());
