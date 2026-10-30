@@ -334,7 +334,7 @@ export function Landing() {
 
       <section id="firms" className="section">
         <p className="eyebrow">Own a firm</p>
-        <h2 className="section-title">Own the firm, not the gig</h2>
+        <h2 className="section-title">Own the firm, not the trade</h2>
         <div className="anatomy">
           <article>
             <i className="fa-solid fa-chart-pie" aria-hidden="true" />
@@ -379,7 +379,7 @@ export function Landing() {
         <ul className="proofs">
           <li>
             <i className="fa-solid fa-bug" aria-hidden="true" />
-            <span>A self-audit found one High and three Mediums; all fixed, each with a proof of concept run before and after.</span>
+            <span>A self-audit and an independent review found two Highs, seven Mediums and four Lows; all fixed, each with a proof of concept run before and after.</span>
           </li>
           <li>
             <i className="fa-solid fa-cubes" aria-hidden="true" />
