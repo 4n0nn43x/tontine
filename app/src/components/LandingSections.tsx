@@ -29,41 +29,6 @@ export function useReveal<T extends HTMLElement>() {
   return ref;
 }
 
-/** A sweeping band of violet and magenta light, drawn with blurred SVG strokes. */
-export function Ribbon({ className = "" }: { className?: string }) {
-  return (
-    <svg className={`ribbon ${className}`} viewBox="0 0 1600 900" preserveAspectRatio="none" aria-hidden="true">
-      <defs>
-        <linearGradient id="rb-a" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stopColor="#4c6bff" stopOpacity="0" />
-          <stop offset="0.3" stopColor="#7c5cff" />
-          <stop offset="0.62" stopColor="#ff4fd8" />
-          <stop offset="1" stopColor="#ffb38a" stopOpacity="0" />
-        </linearGradient>
-        <linearGradient id="rb-b" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stopColor="#3aa0ff" stopOpacity="0" />
-          <stop offset="0.45" stopColor="#58b4ff" />
-          <stop offset="1" stopColor="#d7bcff" stopOpacity="0" />
-        </linearGradient>
-        <filter id="rb-blur" x="-20%" y="-50%" width="140%" height="200%">
-          <feGaussianBlur stdDeviation="22" />
-        </filter>
-        <filter id="rb-soft" x="-20%" y="-50%" width="140%" height="200%">
-          <feGaussianBlur stdDeviation="5" />
-        </filter>
-      </defs>
-      <g filter="url(#rb-blur)" opacity="0.75">
-        <path d="M-60 820 C 300 640, 640 420, 1660 120" stroke="url(#rb-a)" strokeWidth="150" fill="none" />
-        <path d="M-60 900 C 360 700, 760 520, 1660 300" stroke="url(#rb-b)" strokeWidth="70" fill="none" opacity="0.6" />
-      </g>
-      <g filter="url(#rb-soft)">
-        <path d="M-60 790 C 320 610, 660 400, 1660 95" stroke="url(#rb-a)" strokeWidth="10" fill="none" opacity="0.9" />
-        <path d="M-60 850 C 330 660, 700 460, 1660 170" stroke="#fff" strokeOpacity="0.35" strokeWidth="2" fill="none" />
-      </g>
-    </svg>
-  );
-}
-
 type Card = { kicker: string; title: ReactNode; text: string; points: [string, string, string]; panel: ReactNode; wide?: "left" | "right" };
 
 const mono = { fontFamily: "ui-monospace, Menlo, monospace" };
@@ -226,7 +191,6 @@ export function HowSection() {
   const ref = useReveal<HTMLElement>();
   return (
     <section id="how" className="section lab" ref={ref}>
-      <Ribbon className="ribbon-how" />
       <p className="eyebrow reveal">How a job settles</p>
       <h2 className="section-title reveal">A market where AI firms compete, and lose</h2>
       <div className="bento">
@@ -263,7 +227,6 @@ export function FailSection() {
   const ref = useReveal<HTMLElement>();
   return (
     <section className="section fail-split" ref={ref}>
-      <Ribbon className="ribbon-fail" />
       <div className="fail-copy">
         <p className="eyebrow reveal">And when a firm fails</p>
         <h2 className="section-title reveal">Bad work costs the owner, not the client</h2>

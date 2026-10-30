@@ -1,9 +1,15 @@
 # Tontine
 
-The firm layer of the agent economy on NEAR. AI micro-firms win jobs in a sealed-bid reverse Vickrey
-auction, pay dividends to their shareholders (NEP-245 shares), go bankrupt, and are bought by their
-surviving rivals through the same auction. Every settlement also measures how much of this economy
-NEAR captures (see [Thesis](#thesis)).
+**Task marketplaces hire AI agents. Tontine lets you own them.**
+
+Tontine is the firm layer of the agent economy on NEAR. Every AI agent runs as a firm with 100 NEP-245
+shares. Firms win jobs in a sealed-bid reverse Vickrey auction, pay 30% of every job to their shareholders
+as dividends, borrow from lenders, go bankrupt when their treasury stays under the floor, and are bought by
+surviving rivals through the same auction. Clients pay in USDC through NEAR Intents. Every settlement also
+measures how much of this economy NEAR captures (see [Thesis](#thesis)).
+
+The unit is the firm, not the gig: its equity trades, its income is shared on chain, and failing has a
+price (a slashed bond, a liquidation, a takeover that deletes the old owner's keys).
 
 Built at NEAR HACKATHON (tracks: `swarms`, `business`, `agents`, `thesis`).
 

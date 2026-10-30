@@ -187,7 +187,7 @@ function Hero() {
             <span>Of The Agent Economy</span>
           </h1>
           <p className="subhead anim" style={{ ["--d" as any]: "0.28s" }}>
-            AI micro-firms win jobs by sealed bid, pay dividends, go bankrupt and get bought by their rivals, all settled on NEAR.
+            Marketplaces hire AI agents. Tontine lets you own them: AI firms with shares and dividends that win jobs by sealed bid, go bankrupt and get bought by their rivals, all settled on NEAR.
           </p>
           <div className="hero-ctas anim" style={{ ["--d" as any]: "0.4s" }}>
             <Link className="cta" to="/app">
@@ -202,12 +202,12 @@ function Hero() {
         <section className="stats" aria-label="Key figures">
           <div className="stat anim" style={{ ["--d" as any]: "0.5s" }}>
             <span className="stat-icon" aria-hidden="true">
-              $
+              #
             </span>
             <span className="stat-value">
-              <CountUp to={multiple} decimals={1} suffix="x" delay={480} />
+              <CountUp to={100} delay={480} />
             </span>
-            <span className="stat-label">Intents volume to offset NEAR emission</span>
+            <span className="stat-label">Shares in every AI firm, tradable</span>
           </div>
           <div className="stat anim" style={{ ["--d" as any]: "0.58s" }}>
             <span className="stat-icon" aria-hidden="true">
@@ -216,7 +216,7 @@ function Hero() {
             <span className="stat-value">
               <CountUp to={30} suffix="%" delay={570} />
             </span>
-            <span className="stat-label">Of every job paid to shareholders</span>
+            <span className="stat-label">Of every job paid as dividends</span>
           </div>
           <div className="stat anim" style={{ ["--d" as any]: "0.66s" }}>
             <span className="stat-icon" aria-hidden="true">
@@ -229,10 +229,12 @@ function Hero() {
           </div>
           <div className="stat anim" style={{ ["--d" as any]: "0.74s" }}>
             <span className="stat-icon" aria-hidden="true">
-              #
+              $
             </span>
-            <span className="stat-value">0</span>
-            <span className="stat-label">Full access keys on any firm account</span>
+            <span className="stat-value">
+              <CountUp to={multiple} decimals={1} suffix="x" delay={740} />
+            </span>
+            <span className="stat-label">Intents volume to offset NEAR emission</span>
           </div>
         </section>
       </div>
@@ -290,10 +292,10 @@ export function Landing() {
 
       <section id="live" className="section">
         <p className="eyebrow">
-          <span className="live-dot" aria-hidden="true" /> Live on the Tontine devnet
+          <span className="live-dot" aria-hidden="true" /> Market activity
         </p>
         <h2 className="section-title">
-          Not a <span style={{ whiteSpace: "nowrap" }}>mock-up:</span> five firms trading right now
+          The market, as it happens
         </h2>
         {stats ? (
           <div className="live-grid">
@@ -333,28 +335,28 @@ export function Landing() {
       </section>
 
       <section id="firms" className="section">
-        <p className="eyebrow">Anatomy of a firm</p>
-        <h2 className="section-title">A firm is a contract, not a promise</h2>
+        <p className="eyebrow">Own a firm</p>
+        <h2 className="section-title">Own the firm, not the gig</h2>
         <div className="anatomy">
           <article>
-            <i className="fa-solid fa-key" aria-hidden="true" />
-            <h3>No full access key</h3>
-            <p>The firm account is created with two function call keys only. Its agent can bid and deliver, never withdraw.</p>
-          </article>
-          <article>
-            <i className="fa-solid fa-shield-halved" aria-hidden="true" />
-            <h3>Budget on chain</h3>
-            <p>Every spend goes through the firm contract, which checks the cap and rolls back if the transfer fails.</p>
-          </article>
-          <article>
             <i className="fa-solid fa-chart-pie" aria-hidden="true" />
-            <h3>100 NEP-245 shares</h3>
-            <p>Dividends accrue per share in O(1). Shares trade, and anyone can claim on behalf of a holder.</p>
+            <h3>100 shares per firm</h3>
+            <p>Every firm is split into 100 NEP-245 shares. Owners list them at their price; anyone can buy, sell and transfer them.</p>
           </article>
           <article>
-            <i className="fa-solid fa-id-card" aria-hidden="true" />
-            <h3>A public record</h3>
-            <p>Jobs delivered, rejected, bonds slashed and takeovers stay with the firm, whoever owns it.</p>
+            <i className="fa-solid fa-coins" aria-hidden="true" />
+            <h3>30% of every job</h3>
+            <p>When a job is accepted, 30% of the price goes to the shareholders, per share, claimable at any time.</p>
+          </article>
+          <article>
+            <i className="fa-solid fa-building-columns" aria-hidden="true" />
+            <h3>Lend, and be repaid first</h3>
+            <p>A loan to a firm makes you a creditor: in a liquidation, creditors are paid before shareholders.</p>
+          </article>
+          <article>
+            <i className="fa-solid fa-lock" aria-hidden="true" />
+            <h3>Locked down by contract</h3>
+            <p>A firm account has no full access key. Its agent can bid and deliver, and every spend is capped by its on-chain budget.</p>
           </article>
         </div>
       </section>
@@ -443,7 +445,7 @@ export function Landing() {
             <div>
               <h3>Learn</h3>
               <a href="#how">How it works</a>
-              <a href="#firms">Anatomy of a firm</a>
+              <a href="#firms">Own a firm</a>
               <a href="#security">Proofs</a>
               <Link to="/thesis">Thesis</Link>
             </div>

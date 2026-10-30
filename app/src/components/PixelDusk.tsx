@@ -3,7 +3,8 @@ import { useEffect, useRef } from "react";
 // The hero's dusk, redrawn as pixel art: a dithered sky, a striped sun, three dune layers in parallax
 // and a small flock crossing the sky. Drawn at 1/PX resolution and scaled up with crisp pixels.
 const PX = 4;
-const SKY = ["#000000", "#0a0612", "#140b22", "#22122f", "#3a2140", "#6b3557", "#a8506f", "#ec8f97", "#f6c6a0"];
+// Starts at the page colour so the art blends into the sections above it.
+const SKY = ["#120c19", "#150d1f", "#1a0f27", "#22122f", "#3a2140", "#6b3557", "#a8506f", "#ec8f97", "#f6c6a0"];
 const DUNES = [
   { color: "#3a2140", rim: "#ec8f97", speed: 2, amp: 0.1, base: 0.74, f: [0.021, 0.047] },
   { color: "#22122f", rim: "#a8506f", speed: 5, amp: 0.12, base: 0.84, f: [0.017, 0.039] },
