@@ -343,6 +343,17 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       log(`<b>${buyer}</b> buys ${target} · ${price}`);
       log(`fee ${fee} · old shareholders <b>+${holders}</b>`);
     },
+    close({ firm }) {
+      const f = byName.get(firm);
+      if (!f) return;
+      f.lit = 0;
+      f.forSale = false;
+      f.sign = "#3a2a46";
+      f.state = "closed";
+      setStatus(f, "closed");
+      say(f, "closed", "rgba(255,255,255,0.7)", 3);
+      log(`${firm} · <b>closed</b>`);
+    },
     keys({ target }) {
       const t = byName.get(target);
       if (!t) return;

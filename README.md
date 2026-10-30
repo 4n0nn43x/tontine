@@ -206,7 +206,10 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
   there is enough in it and the caller already has a ledger entry. Fees default to 0 when the config omits them.
 - **Liquidation**: `epoch_tick` (anyone) counts epochs under the treasury floor; after N, the firm is
   auctioned. Cascade: 2% fee, then creditors, then shareholders. The buyer firm receives 100% of the shares
-  and `tender` calls `set_owner` on the firm contract.
+  and `tender` calls `set_owner` on the firm contract. A liquidation that finds no buyer winds the firm up
+  (`Closed`): its treasury pays the creditors, then the shareholders. An owner can also `close_firm` once it
+  has no open job; a closed firm no longer bids, borrows or sells shares. On the devnet a house firm that
+  buys an empty shell closes it at once.
 - **`contracts/firm`**: deployed on `wN.<tender>` in one transaction that adds two function call keys and
   never a full access key. Function call keys cannot attach deposits, so the agent can only reach
   non-payable methods. `spend` checks the cap and `spent + amount <= budget`, books before the promise,

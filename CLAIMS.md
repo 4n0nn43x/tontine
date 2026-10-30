@@ -60,3 +60,6 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | Votes are sealed and only panel members vote | `votes_are_sealed_and_only_panel_members_vote`, `vote hash matches the contract format` | `make test` | unit |
 | No eligible evaluator: the judge decides; the judge cannot overrule an optimistic delivery | `no_eligible_evaluator_falls_back_to_the_judge`, `the_judge_cannot_overrule_an_optimistic_delivery` | `make test` | unit |
 | Criteria checks are deterministic | `criteria checks are deterministic and fail on the first broken rule` | `make test` | unit |
+| A liquidation without a buyer winds the firm up: creditors, then shareholders | `a_liquidation_without_a_buyer_winds_the_firm_up` | `make test` | unit |
+| An owner closes its firm; the shareholders get the treasury; a closed firm no longer bids or borrows | `an_owner_closes_its_firm_and_the_shareholders_get_the_treasury` | `make test` | unit |
+| A firm with an open job cannot close | `a_firm_with_an_open_job_cannot_close` | `make test` | unit |

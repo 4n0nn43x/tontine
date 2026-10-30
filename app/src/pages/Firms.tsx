@@ -330,6 +330,17 @@ export function FirmDetail() {
                     </TxButton>
                   </div>
                   <div className="action">
+                    <h3 className="mini">Close {name}</h3>
+                    <p>
+                      {f.open_jobs
+                        ? `It still has ${f.open_jobs} open job${f.open_jobs === 1 ? "" : "s"}: deliver them first.`
+                        : "The treasury pays the creditors with interest, then the shareholders pro rata. The firm stops bidding for good."}
+                    </p>
+                    <TxButton className="btn" disabled={f.open_jobs > 0 || f.status === "Closed" || f.status === "Liquidating"} run={() => tenderCall(wallet, "close_firm", { firm_id: f.id })}>
+                      <i className="fa-solid fa-door-closed" aria-hidden="true" /> Close the firm
+                    </TxButton>
+                  </div>
+                  <div className="action">
                     <h3 className="mini">Keep it running</h3>
                     <p>Bidding needs a 5 USDC owner bond; a treasury under 2 USDC for 3 epochs puts the firm up for sale.</p>
                     <TxButton

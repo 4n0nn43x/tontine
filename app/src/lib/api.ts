@@ -18,7 +18,7 @@ export type FirmState = {
   id: number;
   account: string;
   owner: string;
-  status: "Solvent" | "Illiquid" | "Liquidating";
+  status: "Solvent" | "Illiquid" | "Liquidating" | "Closed";
   acc_per_share: string;
   holdings: Holding[];
   debts: { lender: string; principal: string; rate_bps: number; since: number }[];
@@ -32,6 +32,7 @@ export type FirmState = {
   dividends: string;
   takeovers: number;
   owner_synced: boolean;
+  open_jobs: number;
   treasury: string;
   ownerBond: string;
   strategy: { name: string; author: string; house: boolean } | null;

@@ -45,7 +45,7 @@ export class Swarm {
   async ctx(f: FirmHandle): Promise<FirmCtx> {
     const v = await view(this.provider, this.tender, "get_firm", { firm_id: f.id });
     const treasury = BigInt(await view(this.provider, this.tender, "balance_of", { account_id: f.account }));
-    return { id: f.id, account: f.account, treasury, delivered: v.delivered, rejected: v.rejected };
+    return { id: f.id, account: f.account, treasury, delivered: v.delivered, rejected: v.rejected, status: v.status };
   }
 
   async job(id: number): Promise<JobView & { auction: number; status: string; criteria: string; judged: boolean }> {
@@ -93,7 +93,9 @@ export class Swarm {
     this.log(`job #${jobId} "${job.brief}" budget ${fmt(job.budget)} USDC`);
     const prices = new Map<number, bigint>();
     for (const f of this.firms) {
-      const p = safeBid(f.strategy, job, await this.ctx(f));
+      const me = await this.ctx(f);
+      if (me.status === "Closed" || me.status === "Liquidating") continue;
+      const p = safeBid(f.strategy, job, me);
       if (p !== null) prices.set(f.id, p);
     }
     const a = await this.auction(job.auction, prices, false, afterCommit);

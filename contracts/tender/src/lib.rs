@@ -93,6 +93,8 @@ pub enum FirmStatus {
     Solvent,
     Illiquid,
     Liquidating,
+    /// Wound up: by its owner, or because a liquidation found no buyer. It no longer bids or borrows.
+    Closed,
 }
 
 #[near(serializers = [borsh, json])]
@@ -145,6 +147,8 @@ pub struct Firm {
     pub takeovers: u32,
     /// False between a takeover and the firm contract confirming its new owner.
     pub owner_synced: bool,
+    /// Jobs this firm won that are not paid, rejected or cancelled yet.
+    pub open_jobs: u32,
 }
 
 #[near(serializers = [borsh, json])]
@@ -666,6 +670,7 @@ impl Tender {
             dividends: U128(0),
             takeovers: 0,
             owner_synced: true,
+            open_jobs: 0,
         });
         self.firm_by_account.insert(account.clone(), id);
         emit("firm_registered", json!({"firm_id": id, "account": account, "owner": owner}));
@@ -809,6 +814,7 @@ impl Tender {
         self.credit(&self.config.admin.clone(), fee);
         let mut f = self.firm(firm_id);
         require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
+        require!(f.status != FirmStatus::Closed, "firm closed");
         require!(ask.takeover == f.takeovers, "ask voided by a takeover");
         self.move_shares(&mut f, &seller, &me, amount);
         self.save_firm(f);
@@ -830,6 +836,7 @@ impl Tender {
         let mut f = self.firm(firm_id);
         // A loan during the sale would be repaid ahead of shareholders out of the buyer's own price.
         require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
+        require!(f.status != FirmStatus::Closed, "firm closed");
         // The owner sets the rate and the cap: a lender cannot load a firm with debt on its own terms.
         let rate_bps = match &f.loan_terms {
             Some(t) => {
@@ -938,6 +945,7 @@ impl Tender {
         let f = self.firm(firm_id);
         Self::assert_firm_actor(&f);
         require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
+        require!(f.status != FirmStatus::Closed, "firm closed");
         require!(hash.len() == 64, "hash must be hex sha256");
         let mut a = self.auction(auction_id);
         require!(now() < a.commit_end, "commit phase over");
@@ -1019,6 +1027,11 @@ impl Tender {
         match kind {
             AuctionKind::Job(job_id) => {
                 let owner = winner_idx.map(|i| a.bids[i].owner.clone());
+                if let Some(id) = a.winner {
+                    let mut f = self.firm(id);
+                    f.open_jobs += 1;
+                    self.save_firm(f);
+                }
                 self.on_job_auction(job_id, owner, a.price)
             }
             AuctionKind::Liquidation(firm_id) => self.on_liquidation_auction(firm_id, a.winner, a.price),
@@ -1328,7 +1341,9 @@ impl Tender {
             if j.status == JobStatus::Disputed {
                 self.credit(&j.client.clone(), self.config.dispute_bond.0);
             }
-            let (_, price) = self.winner_of(&j);
+            let (mut f, price) = self.winner_of(&j);
+            f.open_jobs = f.open_jobs.saturating_sub(1);
+            self.save_firm(f);
             self.credit(&j.client, price);
             self.lock(&j.winner_owner.clone().unwrap(), false);
             j.status = JobStatus::Cancelled;
@@ -1349,6 +1364,7 @@ impl Tender {
         let to_firm = net - div + dust;
         self.credit(&f.account.clone(), to_firm);
         f.delivered += 1;
+        f.open_jobs = f.open_jobs.saturating_sub(1);
         f.revenue = U128(f.revenue.0 + price);
         f.dividends = U128(f.dividends.0 + div - dust);
         self.lock(&j.winner_owner.clone().unwrap(), false);
@@ -1370,6 +1386,7 @@ impl Tender {
             self.credit(&j.client, slash);
         }
         f.rejected += 1;
+        f.open_jobs = f.open_jobs.saturating_sub(1);
         f.slashed = U128(f.slashed.0 + slash);
         self.lock(&owner, false);
         emit("slashed", json!({"job_id": j.id, "firm_id": f.id, "owner": owner, "amount": U128(slash), "refund": U128(price)}));
@@ -1387,6 +1404,9 @@ impl Tender {
         self.last_epoch = now();
         for id in 0..self.firms.len() {
             let mut f = self.firm(id);
+            if f.status == FirmStatus::Closed {
+                continue;
+            }
             if f.status == FirmStatus::Liquidating {
                 if f.liquidation_auction.is_none() {
                     self.start_liquidation(&mut f);
@@ -1423,7 +1443,10 @@ impl Tender {
         let mut f = self.firm(firm_id);
         f.liquidation_auction = None;
         let (Some(buyer_id), Some(price)) = (winner, price) else {
-            // No buyer: stays in liquidation, a new auction opens at the next epoch.
+            // Nobody wants it: wind it up, unless it still owes a job (then a new auction opens next epoch).
+            if f.open_jobs == 0 {
+                self.wind_up(&mut f, "no buyer");
+            }
             self.save_firm(f);
             return;
         };
@@ -1463,6 +1486,35 @@ impl Tender {
         let id = f.id;
         self.save_firm(f);
         self.push_owner(id).detach();
+    }
+
+    /// Owner closes its firm: the treasury pays the creditors (with interest), then the shareholders.
+    #[payable]
+    pub fn close_firm(&mut self, firm_id: u32) {
+        near_sdk::assert_one_yocto();
+        let mut f = self.firm(firm_id);
+        require!(env::predecessor_account_id() == f.owner, "owner only");
+        require!(f.status != FirmStatus::Liquidating && f.status != FirmStatus::Closed, "firm in liquidation or closed");
+        require!(f.open_jobs == 0, "finish or lose the open jobs first");
+        self.wind_up(&mut f, "closed by its owner");
+        self.save_firm(f);
+    }
+
+    fn wind_up(&mut self, f: &mut Firm, reason: &str) {
+        let treasury = self.balances.get(&f.account).copied().unwrap_or(0);
+        self.debit(&f.account.clone(), treasury);
+        let rest = self.pay_creditors(f, treasury);
+        for i in 0..f.holdings.len() {
+            self.settle_holding(f, i);
+        }
+        let dust = Self::distribute(f, rest);
+        for i in 0..f.holdings.len() {
+            self.settle_holding(f, i);
+        }
+        self.credit(&self.config.admin.clone(), dust);
+        f.status = FirmStatus::Closed;
+        f.liquidation_auction = None;
+        emit("firm_closed", json!({"firm_id": f.id, "reason": reason, "to_shareholders": U128(rest - dust)}));
     }
 
     /// The firm contract has no full access key: ownership changes only through this call.

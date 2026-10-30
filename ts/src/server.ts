@@ -68,6 +68,18 @@ indexer.subscribe((e: ChainEvent) => {
   if (e.standard === "tontine" && e.event === "firm_registered" && !devnet.firms.some((f) => f.id === e.data?.firm_id)) {
     void adopt(e.data.firm_id, e.data.account, e.data.owner);
   }
+  // A house firm that bought an empty shell absorbs it: its owner closes it, so the firm leaves the
+  // market instead of being liquidated and bought again every few epochs.
+  if (e.standard === "tontine" && e.event === "liquidated") {
+    const buyer = devnet.firms.find((f) => f.id === e.data.buyer_firm_id);
+    if (!buyer?.strategy.house) return;
+    void (async () => {
+      const treasury = BigInt(await view(provider, T, "balance_of", { account_id: (await view(provider, T, "get_firm", { firm_id: e.data.firm_id })).account }));
+      if (treasury >= DEVNET_CONFIG.floor) return;
+      await call(buyer.owner, T, "close_firm", { firm_id: e.data.firm_id }, 1n);
+      log(`${buyer.strategy.name} closed the shell it bought (firm #${e.data.firm_id})`);
+    })().catch((err) => log(`absorb: ${(err as Error).message}`));
+  }
 });
 
 async function chainNow(): Promise<bigint> {

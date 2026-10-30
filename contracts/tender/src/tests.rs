@@ -848,3 +848,65 @@ fn the_judge_cannot_overrule_an_optimistic_delivery() {
     t.as_("judge.near", 0);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.verdict(job, false, "{}".into()))).is_err());
 }
+
+// ---------------------------------------------------------------- closing firms
+
+#[test]
+fn a_liquidation_without_a_buyer_winds_the_firm_up() {
+    let mut t = T::new();
+    for w in ["w1", "w2", "w4", "w5"] {
+        t.c.balances.insert(acc(&format!("{w}.tender.near")), 50 * USDC);
+    }
+    t.as_("lender.near", 1);
+    t.c.lend(2, U128(USDC)); // w3: 1 USDC treasury, all of it lent, under the 2 USDC floor
+    for _ in 0..2 {
+        t.wait(10);
+        t.c.epoch_tick();
+    }
+    let a = t.c.get_firm(2).liquidation_auction.unwrap();
+    t.wait(5);
+    t.c.settle(a);
+    let f = t.c.get_firm(2);
+    assert_eq!(f.status, FirmStatus::Closed, "nobody bid: the firm is wound up, not auctioned forever");
+    assert_eq!(t.bal("lender.near"), 100 * USDC, "creditor repaid from the treasury");
+    assert_eq!(t.bal("w3.tender.near"), 0);
+    t.wait(10);
+    t.c.epoch_tick();
+    assert_eq!(t.c.get_firm(2).status, FirmStatus::Closed, "a closed firm stays closed");
+}
+
+#[test]
+fn an_owner_closes_its_firm_and_the_shareholders_get_the_treasury() {
+    let mut t = T::new();
+    t.c.balances.insert(acc("w1.tender.near"), 10 * USDC);
+    t.as_("o1.near", 1);
+    t.c.mt_transfer(acc("investor.near"), "0".into(), U128(25), None, None);
+    t.as_("x.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.close_firm(0))).is_err(), "owner only");
+    t.as_("o1.near", 1);
+    t.c.close_firm(0);
+    assert_eq!(t.c.get_firm(0).status, FirmStatus::Closed);
+    assert_eq!(t.bal("investor.near"), 2_500_000, "25 shares of a 10 USDC treasury");
+    let (_, a) = t.post(10 * USDC);
+    t.as_("o1.near", 0);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.commit_bid(a, 0, "0".repeat(64)))).is_err(), "a closed firm no longer bids");
+    t.as_("lender.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.lend(0, U128(USDC)))).is_err(), "nor borrows");
+}
+
+#[test]
+fn a_firm_with_an_open_job_cannot_close() {
+    let mut t = T::new();
+    let job = won_job(&mut t, 1, "o2.near");
+    assert_eq!(t.c.get_firm(1).open_jobs, 1);
+    t.as_("o2.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.close_firm(1))).is_err());
+    t.as_("w2.tender.near", 0);
+    t.c.deliver(job, "done".into());
+    t.as_("judge.near", 0);
+    t.c.verdict(job, true, "{}".into());
+    assert_eq!(t.c.get_firm(1).open_jobs, 0);
+    t.as_("o2.near", 1);
+    t.c.close_firm(1);
+    assert_eq!(t.c.get_firm(1).status, FirmStatus::Closed);
+}

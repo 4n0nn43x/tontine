@@ -84,6 +84,8 @@ export function describe(e: ChainEvent, firm: (id: number) => string): Described
         return { icon: "fa-arrow-down", tone: "", text: `${short(d.account)} deposited ${usdc(d.amount)} USDC` };
       case "withdraw":
         return { icon: "fa-arrow-up", tone: "", text: `${short(d.account)} withdrew ${usdc(d.amount)} USDC` };
+      case "firm_closed":
+        return { icon: "fa-door-closed", tone: "bad", text: `${firm(d.firm_id)} closed (${d.reason}): ${usdc(d.to_shareholders)} USDC to its shareholders`, firmId: d.firm_id };
       case "disputed":
         return { icon: "fa-scale-unbalanced", tone: "bad", text: `Job #${d.job_id} disputed by the client: ${d.panel.length} firms will vote`, jobId: d.job_id };
       case "vote_committed":

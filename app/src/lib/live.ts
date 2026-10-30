@@ -46,6 +46,9 @@ export function liveDriver(scene: Scene, firmName: (id: number) => string) {
         scene.act({ do: "slash", firm: firmName(d.firm_id), bond: usdc(d.amount) });
         later(2600, { do: "jobEnd" });
         break;
+      case "firm_closed":
+        scene.act({ do: "close", firm: firmName(d.firm_id) });
+        break;
       case "liquidated":
         scene.act({ do: "takeover", buyer: firmName(d.buyer_firm_id), target: firmName(d.firm_id), price: usdc(d.price), fee: usdc(d.fee), holders: usdc(d.to_shareholders) });
         later(2500, { do: "keys", target: firmName(d.firm_id) });

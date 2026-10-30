@@ -13,6 +13,8 @@ export type FirmCtx = {
   treasury: bigint;
   delivered: number;
   rejected: number;
+  /** "Solvent", "Illiquid", "Liquidating" or "Closed". */
+  status?: string;
 };
 
 export type TargetView = { id: number; account: string; delivered: number; rejected: number; revenue: bigint; treasury: bigint };
