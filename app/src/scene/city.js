@@ -377,10 +377,197 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     }
   }
 
+  // ------------------------------------------------------------------ agents (dashboard only)
+
+  // In live mode each firm sends a small agent down to the market hall in the street. Its bubble only
+  // says what the chain says: a sealed bid, the revealed price, the verdict, the payment, a takeover.
+  const agents = mode === "live" ? firms.map((f) => ({ f, x: null, tx: null, color: f.color, bubble: "", bubbleColor: "#fff", until: 0, carry: false, walking: false })) : [];
+  const hall = { flash: 0 };
+  let jobInfo = { budget: 0, brief: "" };
+  const agentOf = (name) => agents.find((g) => g.f.name === name);
+  const door = (f) => f.box.x + f.box.w / 2;
+  const hallX = () => W / 2;
+  function speak(g, text, color = "#fff", seconds = 4) {
+    g.bubble = text;
+    g.bubbleColor = color;
+    g.until = clock + seconds;
+  }
+  const goHall = (g) => (g.tx = hallX() + (g.f.index - (agents.length - 1) / 2) * 7);
+  const goHome = (g) => (g.tx = door(g.f));
+
+  function agentAct(s) {
+    const g = s.firm ? agentOf(s.firm) : null;
+    switch (s.do) {
+      case "job":
+        jobInfo = { budget: parseFloat(s.budget), brief: String(s.brief ?? "") };
+        hall.flash = 1.5;
+        break;
+      case "commit":
+        if (!g) break;
+        g.liquidation = !!s.target; // a bid for a firm, not for the job: no budget to compare with
+        if (s.target && byName.get(s.target)) g.tx = door(byName.get(s.target)) - 5;
+        else goHall(g);
+        speak(g, s.target ? `sealed bid for ${s.target}` : "sealed bid", g.f.color);
+        break;
+      case "reveal": {
+        if (!g) break;
+        const pct = jobInfo.budget && !g.liquidation ? ` · ${Math.round((parseFloat(s.price) / jobInfo.budget) * 100)}% of budget` : "";
+        speak(g, `${s.price} USDC${pct}`);
+        break;
+      }
+      case "win":
+        for (const o of agents) {
+          if (o === g || o.tx === null || Math.abs(o.tx - hallX()) > 40) continue;
+          goHome(o);
+          speak(o, "lost", "rgba(255,255,255,0.6)", 2);
+        }
+        if (g) {
+          g.carry = true;
+          goHome(g);
+          speak(g, `won · paid the 2nd price ${s.price}`, GREEN);
+        }
+        break;
+      case "work":
+        if (g) speak(g, s.empty ? "delivered nothing" : `working: ${jobInfo.brief.slice(0, 34)}`, s.empty ? RED : "#fff", 5);
+        break;
+      case "verdict":
+        if (g) speak(g, s.accept ? "judge: accepted" : "judge: rejected", s.accept ? GREEN : RED);
+        break;
+      case "pay":
+        if (!g) break;
+        g.carry = false;
+        speak(g, `+${s.firmShare} treasury · +${s.dividends} holders`, AMBER, 5);
+        break;
+      case "slash":
+        if (!g) break;
+        g.carry = false;
+        speak(g, `bond −${s.bond}`, RED);
+        break;
+      case "epoch":
+        if (g) speak(g, s.liquidating ? "for sale" : "treasury under the floor", RED, 5);
+        break;
+      case "takeover": {
+        const t = agentOf(s.target);
+        const bu = agentOf(s.buyer);
+        if (t) {
+          if (bu) t.color = bu.f.color;
+          speak(t, `now owned by ${s.buyer}`, t.color, 5);
+        }
+        if (bu && byName.get(s.target)) {
+          bu.tx = door(byName.get(s.target)) + 6;
+          speak(bu, `bought ${s.target} · ${s.price}`, bu.f.color, 5);
+          setTimeout(() => goHome(bu), 6000);
+        }
+        break;
+      }
+      case "keys": {
+        const t = agentOf(s.target);
+        if (t) speak(t, "old keys deleted", RED);
+        break;
+      }
+      case "jobEnd":
+        for (const o of agents) goHome(o);
+        break;
+    }
+  }
+
+  // Chain events come from final blocks, often a whole auction at once. Play them back at a pace the
+  // eye can follow: bids leave together, then the agents get time to reach the hall before the reveal.
+  const queue = [];
+  let lastDo = "";
+  let lastAt = -9;
+  function pump() {
+    while (queue.length) {
+      const next = queue[0];
+      const gap = next.do === "commit" ? (lastDo === "commit" ? 0.35 : 1) : lastDo === "commit" ? 3 : 1.2;
+      if (clock < lastAt + gap) return;
+      queue.shift();
+      ACTIONS[next.do]?.(next);
+      agentAct(next);
+      lastDo = next.do;
+      lastAt = clock;
+    }
+  }
+
+  function moveAgents(dt) {
+    if (queue.length) pump();
+    hall.flash = Math.max(0, hall.flash - dt);
+    for (const g of agents) {
+      if (g.x === null) g.x = g.tx = door(g.f);
+      const d = g.tx - g.x;
+      const step = 40 * dt;
+      g.walking = Math.abs(d) > 0.5;
+      g.x += Math.abs(d) <= step ? d : Math.sign(d) * step;
+    }
+  }
+
+  function drawAgents() {
+    const hx = Math.round(hallX());
+    // The market hall: a small stall in the street where the agents meet to bid.
+    a.fillStyle = "#2a1a36";
+    a.fillRect(hx - 9, G - 7, 18, 7);
+    a.fillStyle = hall.flash > 0 ? mix("#7c3a5f", AMBER, Math.min(1, hall.flash)) : "#7c3a5f";
+    a.fillRect(hx - 11, G - 9, 22, 2);
+    a.fillStyle = "#f6d7a7";
+    a.globalAlpha = 0.5 + 0.5 * Math.min(1, hall.flash + 0.3);
+    a.fillRect(hx - 6, G - 5, 12, 2);
+    a.globalAlpha = 1;
+    const feet = G + Math.min(9, H - G - 2);
+    for (const g of agents) {
+      const x = Math.round(g.x - pointer.x * 6);
+      const stride = g.walking && Math.floor(clock * 8) % 2;
+      a.fillStyle = "#f2d3b8";
+      a.fillRect(x, feet - 7, 2, 2);
+      a.fillStyle = g.color;
+      a.fillRect(x, feet - 5, 2, 3);
+      a.fillStyle = "#cfc6dc";
+      a.fillRect(x + (stride ? 1 : 0), feet - 2, 1, 2);
+      a.fillRect(x + (stride ? 0 : 1), feet - 2, 1, 2);
+      if (g.carry) {
+        a.fillStyle = AMBER;
+        a.fillRect(x + 2, feet - 3, 2, 2);
+      }
+    }
+  }
+
+  function drawBubbles() {
+    const feet = G + Math.min(9, H - G - 2);
+    text("MARKET", hallX(), G - 11, "rgba(246,215,167,0.8)", 10);
+    ctx.font = `${Math.round(11 * dpr)}px ${FONT}`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    const shown = agents.filter((g) => g.until > clock && g.bubble);
+    shown.forEach((g, i) => {
+      const alpha = Math.min(1, (g.until - clock) * 2);
+      const tw = ctx.measureText(g.bubble).width;
+      const pad = 6 * dpr;
+      const bw = tw + pad * 2;
+      const bh = 18 * dpr;
+      // Agents at the hall stand close together: alternate bubble heights so they do not cover each other.
+      const lift = (i % 3) * 20 * dpr;
+      let bx = (g.x - pointer.x * 6) * S - bw / 2;
+      bx = Math.max(4 * dpr, Math.min(canvas.width - bw - 4 * dpr, bx));
+      const by = (feet - 9) * S - bh - 6 * dpr - lift;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "rgba(16,10,24,0.88)";
+      ctx.strokeStyle = g.bubbleColor;
+      ctx.lineWidth = dpr;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 6 * dpr);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = g.bubbleColor;
+      ctx.fillText(g.bubble, bx + pad, by + bh / 2 + dpr);
+      ctx.globalAlpha = 1;
+    });
+    ctx.textBaseline = "alphabetic";
+  }
+
   // ------------------------------------------------------------------ simulation
 
   function simulate(dt) {
     clock += dt;
+    moveAgents(dt);
     explore += (exploreTarget - explore) * Math.min(1, dt * 3);
     pointer.x += (pointer.tx - pointer.x) * Math.min(1, dt * 2);
     job.on += (job.target - job.on) * Math.min(1, dt * 2.2);
@@ -627,11 +814,13 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     drawJob();
     for (const f of firms) drawTower(f);
     drawStreet();
+    if (agents.length) drawAgents();
     drawFlyers();
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(art, 0, 0, W * S, H * S);
     drawLabels();
+    if (agents.length) drawBubbles();
   }
 
   // ------------------------------------------------------------------ loop
@@ -677,7 +866,18 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
 
   return {
     act(storyStep) {
+      if (agents.length && !still) {
+        queue.push(storyStep);
+        // A hidden tab piles events up: apply the old ones at once so the city never lags far behind.
+        while (queue.length > 24) {
+          const st = queue.shift();
+          ACTIONS[st.do]?.(st);
+          agentAct(st);
+        }
+        return;
+      }
       ACTIONS[storyStep.do]?.(storyStep);
+      if (agents.length) agentAct(storyStep);
       if (still) step(0);
     },
     resize() {
