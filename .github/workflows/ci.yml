@@ -15,8 +15,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - run: make deps
       - run: make test
-      - name: rebuilt wasm matches the committed checksums
-        run: make build && git diff --exit-code wasm/SHA256SUMS || echo "::warning::wasm differs from committed build (toolchain drift)"
+      # The committed wasm comes from `make build-repro` (pinned cargo-near image); a plain cargo
+      # rebuild here would not match it. Check the committed files, then run the demo on them.
       - run: make verify-wasm
       - run: make demo
       - run: make thesis
