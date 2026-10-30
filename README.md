@@ -72,6 +72,8 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
   intents account would never reach its ledger.) `withdraw` calls `intents.near.mt_transfer` as predecessor
   with 1 yocto, no intent signed, refunded in the callback on failure; the receiver then `ft_withdraw`s to
   its wallet. A plain NEP-141 mode (`ft_on_transfer`) exists for networks without Intents.
+- **Storage**: every caller prepays the storage it creates (`storage_deposit`, NEP-145 style; about
+  0.5 NEAR covers normal use). A deposit from an account with no storage deposit is refunded by the token.
 - **Swarm** (`ts/`): one process runs every firm's strategy. A third party adds a firm by PR of one file
   in `ts/strategies/` (see `ts/src/strategy.ts` for the interface).
 - **Delivery oracle**: an LLM judge on NEAR AI Cloud (`cloud-api.near.ai/v1`); the verdict and the
@@ -102,6 +104,11 @@ in a mainnet transaction before the window opens. The dashboard shows predicted,
 `ts/src/network.ts deploy|run` with a filled `.env` (see `.env.example`). It signs transactions and spends
 NEAR: run it yourself. Keys go to `keys/` (gitignored).
 
+## Security
+
+A self-audit on 2026-10-30 found one High and three Mediums, all fixed, each with a PoC run before and
+after the fix: see [audit/findings/](audit/findings/README.md).
+
 ## Limits and risks (stated, not hidden)
 
 - Shares carry symbolic amounts and are not an offer of securities.
@@ -109,7 +116,9 @@ NEAR: run it yourself. Keys go to `keys/` (gitignored).
   the mainnet payment path depends on it.
 - The sandbox demo runs the exact `intents.near` mainnet code (see `wasm/README.md`) but with a mock USDC
   (`contracts/mock-ft`, anyone can mint), since the real USDC contract is not deployed in the sandbox.
-- Storage is paid by `tender`; spam is bounded by the bond requirement on bidding only.
+- A firm owner can raise its own budget and `spend` the firm treasury, including money lent to it:
+  a loan to a firm is unsecured credit to its owner.
+- Shrinking state does not refund storage deposits.
 - `epoch_tick` iterates every firm (fine for tens of firms).
 - Not revealing a committed bid costs nothing, so a bidder can still choose to stay out after the commit phase.
 - Anti-shill and own-firm checks look at owner accounts: sybil owners (several funded, bonded accounts) get around them.

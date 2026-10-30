@@ -2,7 +2,7 @@
 // (NEAR AI Cloud and market.near.ai are replayed from fixtures/ unless their env vars are set).
 // Every claim prints PASS or FAIL; the exit code is non-zero if any check fails.
 import { Sandbox, DEFAULT_ACCOUNT_ID, DEFAULT_PRIVATE_KEY } from "near-sandbox";
-import { JsonRpcProvider, type Account } from "near-api-js";
+import { JsonRpcProvider, nearToYocto, type Account } from "near-api-js";
 import { account, call, view, fmt, USDC, sleep, TGAS } from "./chain.ts";
 import { createAccount, createFirm, deployContract, wasm } from "./deploy.ts";
 import { loadStrategies } from "./strategy.ts";
@@ -95,6 +95,10 @@ async function main() {
       return call(from, I, "mt_transfer_call", { receiver_id: T, token_id: TOKEN, amount: amount.toString(), approval: null, memo: null, msg: msg === "" ? "" : JSON.stringify(msg) }, 1n, TGAS(250));
     };
     await call(usdc.acct, usdc.acct.accountId, "mint", { account_id: I, amount: "0" });
+    // Callers prepay the storage they create in tender (NEP-145 style, audit finding F3).
+    const storage = (a: Account, forId?: string) => call(a, T, "storage_deposit", forId ? { account_id: forId } : {}, nearToYocto("0.5"));
+    await Promise.all([client.acct, ...owners.map((o) => o.acct)].map((a) => storage(a)));
+    await Promise.all(firms.map((f) => storage(f.owner, f.account)));
     await call(usdc.acct, usdc.acct.accountId, "mint", { account_id: client.acct.accountId, amount: USDC(100).toString() });
     await Promise.all(
       firms.map(async (f, i) => {

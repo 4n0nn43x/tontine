@@ -40,5 +40,7 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | A takeover deletes the old owner's agent keys and freezes spending | `only_tender_sets_owner`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
 | A failed owner push to the firm contract can be retried by anyone | `failed_owner_sync_can_be_retried`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
 | Contracts deploy on protocol 86 (mainnet today) and 88 | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
+| Audit findings 01 to 04 fixed (old owner's keys, firm-held dividends, storage, liquidation treasury) | `audit-poc.ts` prints NOT REPRODUCED; `poc_f1_*`, `poc_f4_*` | `cd ts && npx tsx src/audit-poc.ts`, `make test` | simulated (sandbox) |
+| Callers prepay the storage they create | F3 in `audit-poc.ts` | `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
 | Predictions hash published before the window | not yet: `thesis.ts freeze`, then a mainnet tx | | pending |
 | A third party paid a job on-chain | not yet | | pending |

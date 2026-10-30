@@ -41,6 +41,15 @@ impl T {
             liquidation_reveal_secs: 2,
         });
         let mut t = T { c, t: 1_000 * SEC };
+        // Every caller now prepays the storage it creates (storage_deposit, NEP-145 style).
+        for who in [
+            "o1.near", "o2.near", "o3.near", "o4.near", "nobond.near", "client.near", "lender.near", "payer.near",
+            "x.near", "investor.near", "anyone.near", "w1.tender.near", "w2.tender.near", "w3.tender.near",
+        ] {
+            ctx(who, 10 * 10u128.pow(24), t.t);
+            t.c.storage_deposit(None);
+        }
+        ctx("admin.near", 0, t.t);
         // Five firms: w1..w4 owned by distinct owners, w5 shares owner o1 with w1 (shill test).
         for (w, o) in [("w1", "o1"), ("w2", "o2"), ("w3", "o3"), ("w4", "o4"), ("w5", "o1")] {
             t.c.register_firm(acc(&format!("{w}.tender.near")), acc(&format!("{o}.near")));
@@ -277,7 +286,10 @@ fn liquidation_cascade_and_takeover() {
     assert_eq!(t.bal("w4.tender.near"), 50 * USDC, "loser refunded");
     assert_eq!(t.bal("admin.near"), 220_000, "2% fee");
     assert_eq!(t.bal("lender.near"), 99 * USDC + USDC, "creditor repaid first");
-    assert_eq!(t.bal("o3.near"), 90 * USDC + 11 * USDC - 220_000 - USDC, "rest to old shareholders");
+    // w3's remaining treasury (the 1 USDC loan) is sold with the firm and joins the pot (finding F4):
+    // price 11 + treasury 1 - fee 0.22 - creditor 1 goes to the old shareholders.
+    assert_eq!(t.bal("o3.near"), 90 * USDC + 11 * USDC + USDC - 220_000 - USDC, "rest to old shareholders");
+    assert_eq!(t.bal("w3.tender.near"), 0, "treasury left the firm with the sale");
 }
 
 #[test]
@@ -472,4 +484,32 @@ fn failed_owner_sync_can_be_retried() {
     );
     assert!(t.c.on_set_owner(2, acc("o2.near")));
     assert!(t.c.get_firm(2).owner_synced);
+}
+
+/// F4 PoC: a lone takeover bid at the reserve (1 base unit) buys the firm's remaining treasury,
+/// while the creditor who funded that treasury gets nothing.
+#[test]
+fn poc_f4_lone_buyer_takes_the_treasury_creditor_gets_nothing() {
+    let mut t = T::new();
+    for w in ["w1", "w2", "w4", "w5"] {
+        t.c.balances.insert(acc(&format!("{w}.tender.near")), 50 * USDC);
+    }
+    // w3 has 1.99 USDC of treasury, all of it lent by `lender` (floor is 2).
+    t.as_("lender.near", 1);
+    t.c.lend(2, U128(1_990_000));
+    for _ in 0..2 {
+        t.wait(10);
+        t.c.epoch_tick();
+    }
+    let a = t.c.get_firm(2).liquidation_auction.unwrap();
+    t.bid(a, 1, "o2.near", 1);
+    t.wait(2);
+    t.reveal(a, 1, "o2.near", 1);
+    t.wait(2);
+    let lender_before = t.bal("lender.near");
+    t.c.settle(a);
+    let creditor_got = t.bal("lender.near") - lender_before;
+    let treasury_kept = t.bal("w3.tender.near");
+    println!("price 1 unit, creditor repaid {creditor_got} of 1990000, treasury left to the buyer {treasury_kept}");
+    assert!(creditor_got >= 1_990_000 - 1, "creditor must be repaid from the treasury: got {creditor_got}");
 }

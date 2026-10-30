@@ -10,7 +10,7 @@ use near_sdk::{env, ext_contract, near, require, AccountId, Allowance, Gas, Near
 
 const SEC: u64 = 1_000_000_000;
 /// Methods an agent key may call on tender (none takes a deposit). Mirrors ts/src/deploy.ts.
-const AGENT_TENDER_METHODS: &str = "commit_bid,reveal_bid,deliver,settle,epoch_tick,expire";
+const AGENT_TENDER_METHODS: &str = "commit_bid,reveal_bid,deliver,settle,epoch_tick,expire,settle_dividends";
 
 #[ext_contract(ext_tender)]
 #[allow(dead_code)]
@@ -105,16 +105,17 @@ impl Firm {
         emit("owner_set", json!({"old": self.owner, "new": owner}));
         self.owner = owner;
         self.budget = U128(0);
-        let mut p = Promise::new(env::current_account_id());
+        // One promise per key: in a single batch, one failing delete_key would revert every deletion.
         for k in std::mem::take(&mut self.agent_keys) {
-            p = p.delete_key(k);
+            Promise::new(env::current_account_id()).delete_key(k).detach();
         }
-        p.detach();
     }
 
     /// Owner adds a function call key for its agent: on tender (bidding) or on this contract (`spend`).
     pub fn add_agent_key(&mut self, public_key: PublicKey, on_tender: bool) {
         require!(env::predecessor_account_id() == self.owner, "owner only");
+        // A duplicate entry would make the key outlive a takeover (audit finding F1).
+        require!(!self.agent_keys.contains(&public_key), "key already registered");
         let (receiver, methods) =
             if on_tender { (self.tender.clone(), AGENT_TENDER_METHODS) } else { (env::current_account_id(), "spend") };
         self.agent_keys.push(public_key.clone());
@@ -196,6 +197,14 @@ mod tests {
         );
         assert!(!f.on_spend(U128(5_000_000), Err(near_sdk::PromiseError::Failed)));
         assert_eq!(f.get_state().spent.0, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "key already registered")]
+    fn poc_f1_duplicate_agent_key_refused() {
+        let mut f = firm();
+        testing_env!(ctx("alice.near").build());
+        f.add_agent_key(KEY.parse().unwrap(), true);
     }
 
     #[test]

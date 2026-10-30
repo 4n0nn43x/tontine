@@ -193,6 +193,7 @@ enum Key {
     Jobs,
     Auctions,
     Asks,
+    Storage,
 }
 
 #[ext_contract(ext_ft)]
@@ -233,6 +234,8 @@ pub struct Tender {
     jobs: Vector<Job>,
     auctions: Vector<Auction>,
     asks: LookupMap<String, Ask>,
+    /// NEP-145-style prepaid storage (yoctoNEAR): whoever grows the state pays for it.
+    storage: LookupMap<AccountId, u128>,
     last_epoch: u64,
 }
 
@@ -277,8 +280,60 @@ impl Tender {
             jobs: Vector::new(Key::Jobs),
             auctions: Vector::new(Key::Auctions),
             asks: LookupMap::new(Key::Asks),
+            storage: LookupMap::new(Key::Storage),
             last_epoch: now(),
         }
+    }
+
+    // ---------------------------------------------------------------- storage
+
+    /// Bytes the state takes now. `store` collections cache writes until the end of the call,
+    /// so flush them first or the growth of this call is invisible.
+    fn usage(&mut self) -> u64 {
+        self.balances.flush();
+        self.bonds.flush();
+        self.locks.flush();
+        self.firms.flush();
+        self.firm_by_account.flush();
+        self.jobs.flush();
+        self.auctions.flush();
+        self.asks.flush();
+        env::storage_usage()
+    }
+
+    /// Bill `payer`'s storage deposit for the bytes added since `before`.
+    /// ponytail: shrinking state is not refunded; add refunds if storage churn matters.
+    fn charge(&mut self, payer: &AccountId, before: u64) {
+        let after = self.usage();
+        if after <= before {
+            return;
+        }
+        let cost = (after - before) as u128 * env::storage_byte_cost().as_yoctonear();
+        let have = self.storage.get(payer).copied().unwrap_or(0);
+        require!(have >= cost, format!("storage deposit too low: {payer} needs {cost} yoctoNEAR, has {have}"));
+        self.storage.insert(payer.clone(), have - cost);
+    }
+
+    #[payable]
+    pub fn storage_deposit(&mut self, account_id: Option<AccountId>) -> U128 {
+        let who = account_id.unwrap_or_else(env::predecessor_account_id);
+        let b = self.storage.get(&who).copied().unwrap_or(0) + env::attached_deposit().as_yoctonear();
+        self.storage.insert(who, b);
+        U128(b)
+    }
+
+    #[payable]
+    pub fn storage_withdraw(&mut self, amount: U128) -> Promise {
+        near_sdk::assert_one_yocto();
+        let me = env::predecessor_account_id();
+        let b = self.storage.get(&me).copied().unwrap_or(0);
+        require!(b >= amount.0, "insufficient storage deposit");
+        self.storage.insert(me.clone(), b - amount.0);
+        Promise::new(me).transfer(NearToken::from_yoctonear(amount.0))
+    }
+
+    pub fn storage_balance_of(&self, account_id: AccountId) -> U128 {
+        U128(self.storage.get(&account_id).copied().unwrap_or(0))
     }
 
     // ---------------------------------------------------------------- ledger
@@ -295,6 +350,13 @@ impl Tender {
     }
 
     fn apply_deposit(&mut self, sender: AccountId, amount: u128, msg: &str) {
+        let s0 = self.usage();
+        self.apply_deposit_inner(sender.clone(), amount, msg);
+        // A deposit from someone without storage deposit panics: the token refunds it.
+        self.charge(&sender, s0);
+    }
+
+    fn apply_deposit_inner(&mut self, sender: AccountId, amount: u128, msg: &str) {
         self.credit(&sender, amount);
         emit("deposit", json!({"account": sender, "amount": U128(amount)}));
         if msg.is_empty() {
@@ -348,8 +410,10 @@ impl Tender {
     pub fn transfer(&mut self, receiver_id: AccountId, amount: U128) {
         near_sdk::assert_one_yocto();
         let me = env::predecessor_account_id();
+        let s0 = self.usage();
         self.debit(&me, amount.0);
         self.credit(&receiver_id, amount.0);
+        self.charge(&me, s0);
         emit("transfer", json!({"from": me, "to": receiver_id, "amount": amount}));
     }
 
@@ -390,9 +454,11 @@ impl Tender {
     pub fn deposit_bond(&mut self, amount: U128) {
         near_sdk::assert_one_yocto();
         let me = env::predecessor_account_id();
+        let s0 = self.usage();
         self.debit(&me, amount.0);
         let b = self.bonds.get(&me).copied().unwrap_or(0);
-        self.bonds.insert(me, b + amount.0);
+        self.bonds.insert(me.clone(), b + amount.0);
+        self.charge(&me, s0);
     }
 
     #[payable]
@@ -508,8 +574,21 @@ impl Tender {
         let me = env::predecessor_account_id();
         let mut f = self.firm(firm_id);
         let i = f.holdings.iter().position(|h| h.account == me).unwrap_or_else(|| env::panic_str("not a holder"));
+        let s0 = self.usage();
         self.settle_holding(&mut f, i);
         self.save_firm(f);
+        self.charge(&me, s0);
+    }
+
+    /// Anyone can pay a holder its accrued dividends, into the holder's own ledger balance. Shares held
+    /// by a firm account (after a takeover) have no other way out: firm keys cannot attach a deposit.
+    pub fn settle_dividends(&mut self, firm_id: u32, account_id: AccountId) {
+        let mut f = self.firm(firm_id);
+        let i = f.holdings.iter().position(|h| h.account == account_id).unwrap_or_else(|| env::panic_str("not a holder"));
+        let s0 = self.usage();
+        self.settle_holding(&mut f, i);
+        self.save_firm(f);
+        self.charge(&env::predecessor_account_id(), s0);
     }
 
     /// NEP-245 share transfer (token_id = firm id).
@@ -529,8 +608,11 @@ impl Tender {
         let amount: u32 = amount.0.try_into().unwrap_or_else(|_| env::panic_str("amount too large"));
         let mut f = self.firm(id);
         require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
-        self.move_shares(&mut f, &env::predecessor_account_id(), &receiver_id, amount);
+        let me = env::predecessor_account_id();
+        let s0 = self.usage();
+        self.move_shares(&mut f, &me, &receiver_id, amount);
         self.save_firm(f);
+        self.charge(&me, s0);
     }
 
     /// Offer shares for sale at a fixed price (USDC base units per share).
@@ -542,7 +624,9 @@ impl Tender {
         let f = self.firm(firm_id);
         let held = f.holdings.iter().find(|h| h.account == me).map(|h| h.shares).unwrap_or(0);
         require!(held >= amount, "insufficient shares");
+        let s0 = self.usage();
         self.asks.insert(format!("{firm_id}:{me}"), Ask { amount, price_per_share, takeover: f.takeovers });
+        self.charge(&me, s0);
         emit("shares_listed", json!({"firm_id": firm_id, "seller": me, "amount": amount, "price_per_share": price_per_share}));
     }
 
@@ -554,6 +638,7 @@ impl Tender {
         let mut ask = self.asks.get(&key).cloned().unwrap_or_else(|| env::panic_str("no ask"));
         require!(amount > 0 && ask.amount >= amount, "ask too small");
         let cost = ask.price_per_share.0 * amount as u128;
+        let s0 = self.usage();
         self.debit(&me, cost);
         self.credit(&seller, cost);
         let mut f = self.firm(firm_id);
@@ -567,6 +652,7 @@ impl Tender {
         } else {
             self.asks.insert(key, ask);
         }
+        self.charge(&me, s0);
         emit("shares_bought", json!({"firm_id": firm_id, "seller": seller, "buyer": me, "amount": amount, "cost": U128(cost)}));
     }
 
@@ -578,10 +664,12 @@ impl Tender {
         let mut f = self.firm(firm_id);
         // A loan during the sale would be repaid ahead of shareholders out of the buyer's own price.
         require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
+        let s0 = self.usage();
         self.debit(&me, amount.0);
         self.credit(&f.account, amount.0);
         f.debts.push((me.clone(), amount));
         self.save_firm(f);
+        self.charge(&me, s0);
         emit("loan", json!({"firm_id": firm_id, "lender": me, "amount": amount}));
     }
 
@@ -660,9 +748,11 @@ impl Tender {
         if let AuctionKind::Liquidation(target) = a.kind {
             require!(target != firm_id && self.firm(target).owner != f.owner, "cannot bid on own firm");
         }
+        let s0 = self.usage();
         a.bids.push(Bid { firm_id, owner: f.owner.clone(), hash, revealed: None });
         self.auctions.replace(auction_id as u32, a);
         self.lock(&f.owner, true);
+        self.charge(&f.owner, s0);
         emit("bid_committed", json!({"auction_id": auction_id, "firm_id": firm_id}));
     }
 
@@ -741,7 +831,11 @@ impl Tender {
     #[payable]
     pub fn post_job(&mut self, job: PostJob) -> u64 {
         near_sdk::assert_one_yocto();
-        self.post_job_from(env::predecessor_account_id(), job)
+        let me = env::predecessor_account_id();
+        let s0 = self.usage();
+        let id = self.post_job_from(me.clone(), job);
+        self.charge(&me, s0);
+        id
     }
 
     fn post_job_from(&mut self, client: AccountId, p: PostJob) -> u64 {
@@ -803,7 +897,10 @@ impl Tender {
         Self::assert_firm_actor(&f);
         j.status = JobStatus::Delivered;
         j.result = Some(result.clone());
+        let payer = j.winner_owner.clone().unwrap();
+        let s0 = self.usage();
         self.jobs.replace(job_id as u32, j);
+        self.charge(&payer, s0);
         emit("delivered", json!({"job_id": job_id, "firm_id": f.id, "result": result}));
     }
 
@@ -923,7 +1020,10 @@ impl Tender {
         let buyer = self.firm(buyer_id);
         let fee = price.0 * self.config.liquidation_fee_bps as u128 / BPS;
         self.credit(&self.config.admin.clone(), fee);
-        let rest = self.pay_creditors(&mut f, price.0 - fee);
+        // The firm's remaining treasury is sold with it: it joins the pot instead of going to the buyer.
+        let treasury = self.balances.get(&f.account).copied().unwrap_or(0);
+        self.debit(&f.account.clone(), treasury);
+        let rest = self.pay_creditors(&mut f, price.0 - fee + treasury);
         for i in 0..f.holdings.len() {
             self.settle_holding(&mut f, i);
         }

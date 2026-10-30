@@ -60,7 +60,7 @@ async function deploy() {
     console.log(`firm #${f.id} ${f.account} ${strategies[i].name}`);
   }
   writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2), { mode: 0o600 });
-  console.log(`keys written to ${KEYS_FILE}. Owners must now deposit USDC, deposit_bond and fund their firm.`);
+  console.log(`keys written to ${KEYS_FILE}. Owners must now storage_deposit (about 0.5 NEAR) on tender, deposit USDC, deposit_bond and fund their firm.`);
 }
 
 async function loadSwarm(): Promise<Swarm> {
