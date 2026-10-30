@@ -36,7 +36,8 @@ const GAS_FIRM_INIT: Gas = Gas::from_tgas(30);
 /// Raw storage key of the firm contract code that `create_firm` deploys (set by the admin).
 const FIRM_CODE_KEY: &[u8] = b"firm_code";
 /// Methods an agent key may call on tender (none takes a deposit). Mirrors contracts/firm and ts/src/deploy.ts.
-const AGENT_TENDER_METHODS: &str = "commit_bid,reveal_bid,deliver,settle,epoch_tick,expire,settle_dividends";
+const AGENT_TENDER_METHODS: &str =
+    "commit_bid,reveal_bid,deliver,settle,epoch_tick,expire,settle_dividends,commit_vote,reveal_vote,finalize,resolve_dispute";
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
@@ -72,6 +73,18 @@ pub struct Config {
     /// Paid out of `admin`'s fee balance to whoever settles an auction or ticks an epoch.
     #[serde(default)]
     pub keeper_reward: U128,
+    /// Optimistic jobs: what a client stakes to dispute a delivery, lost to the evaluators if the panel accepts it.
+    #[serde(default)]
+    pub dispute_bond: U128,
+    /// Owner bond each evaluator puts at stake, lost if it votes against the majority or does not reveal.
+    #[serde(default)]
+    pub eval_stake: U128,
+    /// Evaluator firms per dispute (0 means 3).
+    #[serde(default)]
+    pub panel_size: u8,
+    /// Length of each vote phase of a dispute, commit then reveal (0 means 60 s).
+    #[serde(default)]
+    pub vote_secs: u64,
 }
 
 #[near(serializers = [borsh, json])]
@@ -176,6 +189,37 @@ pub enum JobStatus {
     Paid,
     Rejected,
     Cancelled,
+    Disputed,
+}
+
+/// How a delivery is checked. `Judge`: the configured oracle posts the verdict (the default).
+/// `Optimistic`: the client accepts or disputes within `review_secs`; silence pays the firm, and a dispute
+/// goes to a panel of evaluator firms that vote with stakes (commit, then reveal).
+#[near(serializers = [borsh, json])]
+#[derive(Clone, PartialEq, Debug, Default)]
+pub enum Verify {
+    #[default]
+    Judge,
+    Optimistic { review_secs: u64 },
+}
+
+/// One evaluator of a dispute. `hash` is hex(sha256("{1|0}:{salt}")), 1 meaning the delivery is accepted.
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct Ballot {
+    pub firm_id: u32,
+    pub owner: AccountId,
+    pub hash: Option<String>,
+    pub vote: Option<bool>,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct Dispute {
+    pub panel: Vec<Ballot>,
+    pub commit_end: u64,
+    pub reveal_end: u64,
+    pub resolved: bool,
 }
 
 #[near(serializers = [borsh, json])]
@@ -193,6 +237,11 @@ pub struct Job {
     pub attestation: Option<String>,
     /// Owner of the winning firm when it bid: its lock and bond back this job, even if the firm is sold.
     pub winner_owner: Option<AccountId>,
+    /// Acceptance criteria fixed when the job was posted: the delivery is judged against them only.
+    pub criteria: String,
+    pub verify: Verify,
+    /// Optimistic jobs: end of the client's review window, set on delivery.
+    pub review_end: Option<u64>,
 }
 
 #[near(serializers = [json])]
@@ -202,6 +251,11 @@ pub struct PostJob {
     pub commit_secs: u64,
     pub reveal_secs: u64,
     pub deliver_secs: u64,
+    /// Acceptance criteria (format, checks, rubric), immutable once posted.
+    #[serde(default)]
+    pub criteria: String,
+    #[serde(default)]
+    pub verify: Verify,
 }
 
 /// `msg` of a deposit. Empty msg = plain deposit to the sender.
@@ -233,6 +287,7 @@ enum Key {
     Auctions,
     Asks,
     Storage,
+    Disputes,
 }
 
 #[ext_contract(ext_ft)]
@@ -276,6 +331,7 @@ pub struct Tender {
     /// NEP-145-style prepaid storage (yoctoNEAR): whoever grows the state pays for it.
     storage: LookupMap<AccountId, u128>,
     last_epoch: u64,
+    disputes: LookupMap<u64, Dispute>,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -284,6 +340,11 @@ fn hex(bytes: &[u8]) -> String {
 
 pub fn bid_hash(amount: u128, salt: &str) -> String {
     hex(&env::sha256(format!("{amount}:{salt}").as_bytes()))
+}
+
+/// Sealed vote of an evaluator: 1 accepts the delivery, 0 rejects it.
+pub fn vote_hash(accept: bool, salt: &str) -> String {
+    hex(&env::sha256(format!("{}:{salt}", accept as u8).as_bytes()))
 }
 
 fn emit(event: &str, data: serde_json::Value) {
@@ -324,6 +385,7 @@ impl Tender {
             asks: LookupMap::new(Key::Asks),
             storage: LookupMap::new(Key::Storage),
             last_epoch: now(),
+            disputes: LookupMap::new(Key::Disputes),
         }
     }
 
@@ -340,6 +402,7 @@ impl Tender {
         self.jobs.flush();
         self.auctions.flush();
         self.asks.flush();
+        self.disputes.flush();
         env::storage_usage()
     }
 
@@ -993,6 +1056,10 @@ impl Tender {
         require!(p.budget.0 > 0, "budget must be > 0");
         require!(p.brief.len() <= 2000, "brief too long");
         require!(p.deliver_secs > 0 && p.deliver_secs <= MAX_PHASE_SECS, "deliver_secs out of range");
+        require!(p.criteria.len() <= 2000, "criteria too long");
+        if let Verify::Optimistic { review_secs } = p.verify {
+            require!(review_secs > 0 && review_secs <= MAX_PHASE_SECS, "review_secs out of range");
+        }
         self.debit(&client, p.budget.0);
         let id = self.jobs.len() as u64;
         let auction = self.new_auction(AuctionKind::Job(id), true, p.budget.0, p.commit_secs, p.reveal_secs);
@@ -1008,8 +1075,14 @@ impl Tender {
             result: None,
             attestation: None,
             winner_owner: None,
+            criteria: p.criteria.clone(),
+            verify: p.verify.clone(),
+            review_end: None,
         });
-        emit("job_posted", json!({"job_id": id, "client": client, "budget": p.budget, "brief": p.brief, "auction_id": auction}));
+        emit(
+            "job_posted",
+            json!({"job_id": id, "client": client, "budget": p.budget, "brief": p.brief, "auction_id": auction, "criteria": p.criteria, "verify": p.verify}),
+        );
         id
     }
 
@@ -1048,11 +1121,15 @@ impl Tender {
         Self::assert_firm_actor(&f);
         j.status = JobStatus::Delivered;
         j.result = Some(result.clone());
+        if let Verify::Optimistic { review_secs } = j.verify {
+            j.review_end = Some(now() + review_secs * SEC);
+        }
+        let review_end = j.review_end;
         let payer = j.winner_owner.clone().unwrap();
         let s0 = self.usage();
         self.jobs.replace(job_id as u32, j);
         self.charge(&payer, s0);
-        emit("delivered", json!({"job_id": job_id, "firm_id": f.id, "result": result}));
+        emit("delivered", json!({"job_id": job_id, "firm_id": f.id, "result": result, "review_end": review_end}));
     }
 
     /// The delivery oracle posts its verdict with the NEAR AI Cloud attestation (signature payload).
@@ -1060,14 +1137,182 @@ impl Tender {
         require!(env::predecessor_account_id() == self.config.judge, "judge only");
         require!(attestation.len() <= 4000, "attestation too long");
         let mut j = self.job(job_id);
-        require!(j.status == JobStatus::Delivered, "nothing delivered");
+        // The judge also decides a dispute for which no evaluator firm was eligible.
+        let fallback = j.status == JobStatus::Disputed && self.disputes.get(&job_id).map_or(true, |d| d.panel.is_empty());
+        require!((j.status == JobStatus::Delivered && j.verify == Verify::Judge) || fallback, "nothing to judge");
         j.attestation = Some(attestation);
+        if fallback {
+            // Accepted: the client's dispute bond goes to Tontine. Rejected: it comes back.
+            let to = if accept { self.config.admin.clone() } else { j.client.clone() };
+            self.credit(&to, self.config.dispute_bond.0);
+        }
         if accept {
             self.pay(&mut j);
         } else {
-            self.reject(&mut j);
+            self.reject(&mut j, true);
         }
         self.jobs.replace(job_id as u32, j);
+    }
+
+    // ---------------------------------------------------------------- optimistic review and disputes
+
+    fn optimistic_delivery(&self, job_id: u64) -> Job {
+        let j = self.job(job_id);
+        require!(j.status == JobStatus::Delivered && matches!(j.verify, Verify::Optimistic { .. }), "no delivery under review");
+        j
+    }
+
+    /// The client accepts the delivery: the firm is paid at once.
+    #[payable]
+    pub fn accept_delivery(&mut self, job_id: u64) {
+        near_sdk::assert_one_yocto();
+        let mut j = self.optimistic_delivery(job_id);
+        require!(env::predecessor_account_id() == j.client, "client only");
+        self.pay(&mut j);
+        self.jobs.replace(job_id as u32, j);
+    }
+
+    /// Anyone pays the firm once the review window passed without a dispute.
+    pub fn finalize(&mut self, job_id: u64) {
+        let mut j = self.optimistic_delivery(job_id);
+        require!(now() > j.review_end.unwrap(), "review window still open");
+        self.pay(&mut j);
+        self.jobs.replace(job_id as u32, j);
+        self.reward_keeper();
+    }
+
+    /// The client disputes the delivery within the review window, staking `dispute_bond`. A panel of
+    /// evaluator firms is drawn: solvent, bonded, one per owner, neither the client nor the winner's owner.
+    #[payable]
+    pub fn dispute(&mut self, job_id: u64) {
+        near_sdk::assert_one_yocto();
+        let mut j = self.optimistic_delivery(job_id);
+        let me = env::predecessor_account_id();
+        require!(me == j.client, "client only");
+        require!(now() <= j.review_end.unwrap(), "review window closed");
+        let s0 = self.usage();
+        self.debit(&me, self.config.dispute_bond.0);
+        let panel = self.draw_panel(&j);
+        for b in &panel {
+            self.lock(&b.owner, true);
+        }
+        let vote = if self.config.vote_secs == 0 { 60 } else { self.config.vote_secs.min(MAX_PHASE_SECS) };
+        let commit_end = now() + vote * SEC;
+        let ids: Vec<u32> = panel.iter().map(|b| b.firm_id).collect();
+        self.disputes.insert(job_id, Dispute { panel, commit_end, reveal_end: commit_end + vote * SEC, resolved: false });
+        j.status = JobStatus::Disputed;
+        self.jobs.replace(job_id as u32, j);
+        self.charge(&me, s0);
+        emit("disputed", json!({"job_id": job_id, "panel": ids, "commit_end": commit_end, "reveal_end": commit_end + vote * SEC}));
+    }
+
+    /// ponytail: scans every firm and shuffles with the block's random seed, which a validator can see
+    /// in advance; use a VRF or a commit-reveal draw if panels must resist block producers.
+    fn draw_panel(&self, j: &Job) -> Vec<Ballot> {
+        let winner_owner = j.winner_owner.clone().unwrap();
+        let need = self.config.min_bond.0.max(self.config.eval_stake.0);
+        let mut eligible: Vec<Ballot> = vec![];
+        for id in 0..self.firms.len() {
+            let f = self.firm(id);
+            let bonded = self.bonds.get(&f.owner).copied().unwrap_or(0) >= need;
+            if f.status != FirmStatus::Solvent || !bonded || f.owner == j.client || f.owner == winner_owner || eligible.iter().any(|b| b.owner == f.owner) {
+                continue;
+            }
+            eligible.push(Ballot { firm_id: id, owner: f.owner, hash: None, vote: None });
+        }
+        let size = if self.config.panel_size == 0 { 3 } else { self.config.panel_size as usize };
+        let seed = env::random_seed();
+        let mut panel = vec![];
+        let mut i = 0;
+        while !eligible.is_empty() && panel.len() < size {
+            let k = seed[i % seed.len()] as usize % eligible.len();
+            panel.push(eligible.swap_remove(k));
+            i += 1;
+        }
+        panel
+    }
+
+    fn ballot(d: &Dispute, firm_id: u32) -> usize {
+        d.panel.iter().position(|b| b.firm_id == firm_id).unwrap_or_else(|| env::panic_str("not on the panel"))
+    }
+
+    pub fn commit_vote(&mut self, job_id: u64, firm_id: u32, hash: String) {
+        Self::assert_firm_actor(&self.firm(firm_id));
+        require!(hash.len() == 64, "hash must be hex sha256");
+        let mut d = self.disputes.get(&job_id).cloned().unwrap_or_else(|| env::panic_str("no dispute"));
+        require!(now() < d.commit_end, "commit phase over");
+        let i = Self::ballot(&d, firm_id);
+        require!(d.panel[i].hash.is_none(), "already committed");
+        d.panel[i].hash = Some(hash);
+        self.disputes.insert(job_id, d);
+        emit("vote_committed", json!({"job_id": job_id, "firm_id": firm_id}));
+    }
+
+    pub fn reveal_vote(&mut self, job_id: u64, firm_id: u32, accept: bool, salt: String) {
+        Self::assert_firm_actor(&self.firm(firm_id));
+        let mut d = self.disputes.get(&job_id).cloned().unwrap_or_else(|| env::panic_str("no dispute"));
+        require!(now() >= d.commit_end && now() < d.reveal_end, "not in reveal phase");
+        let i = Self::ballot(&d, firm_id);
+        require!(d.panel[i].vote.is_none(), "already revealed");
+        require!(d.panel[i].hash.as_deref() == Some(vote_hash(accept, &salt).as_str()), "hash mismatch");
+        d.panel[i].vote = Some(accept);
+        self.disputes.insert(job_id, d);
+        emit("vote_revealed", json!({"job_id": job_id, "firm_id": firm_id, "accept": accept}));
+    }
+
+    /// Anyone closes a dispute after the reveal phase. The majority decides; a tie or no vote leaves the
+    /// delivery accepted and refunds the client's bond. Evaluators that voted against the majority or did
+    /// not reveal lose `eval_stake`. The losing side pays the majority: the client's dispute bond if the
+    /// delivery stands, the winner owner's slashed bond if it is rejected (the client then gets its price
+    /// and its bond back).
+    pub fn resolve_dispute(&mut self, job_id: u64) {
+        let mut j = self.job(job_id);
+        require!(j.status == JobStatus::Disputed, "not disputed");
+        let mut d = self.disputes.get(&job_id).cloned().unwrap_or_else(|| env::panic_str("no dispute"));
+        require!(!d.panel.is_empty(), "no panel: the judge decides");
+        require!(now() >= d.reveal_end, "votes still open");
+        d.resolved = true;
+        let yes = d.panel.iter().filter(|b| b.vote == Some(true)).count();
+        let no = d.panel.iter().filter(|b| b.vote == Some(false)).count();
+        let decisive = yes != no;
+        let accept = yes >= no;
+        let mut pot = 0u128;
+        let mut majority: Vec<AccountId> = vec![];
+        for b in &d.panel {
+            self.lock(&b.owner, false);
+            if decisive && b.vote == Some(accept) {
+                majority.push(self.firm(b.firm_id).account);
+            } else if b.vote.is_none() || decisive {
+                let bond = self.bonds.get(&b.owner).copied().unwrap_or(0);
+                let cut = bond.min(self.config.eval_stake.0);
+                self.bonds.insert(b.owner.clone(), bond - cut);
+                pot += cut;
+            }
+        }
+        let bond = self.config.dispute_bond.0;
+        if accept {
+            if decisive {
+                pot += bond;
+            } else {
+                self.credit(&j.client.clone(), bond);
+            }
+            self.pay(&mut j);
+        } else {
+            self.credit(&j.client.clone(), bond);
+            pot += self.reject(&mut j, false);
+        }
+        let share = if majority.is_empty() { 0 } else { pot / majority.len() as u128 };
+        for a in &majority {
+            self.credit(a, share);
+        }
+        self.credit(&self.config.admin.clone(), pot - share * majority.len() as u128);
+        emit(
+            "dispute_resolved",
+            json!({"job_id": job_id, "accept": accept, "yes": yes, "no": no, "evaluators_paid": majority, "reward_each": U128(share)}),
+        );
+        self.disputes.insert(job_id, d);
+        self.jobs.replace(job_id as u32, j);
+        self.reward_keeper();
     }
 
     /// Anyone can expire a job: undelivered after its deadline (rejected, slashed), or delivered with
@@ -1075,9 +1320,14 @@ impl Tender {
     pub fn expire(&mut self, job_id: u64) {
         let mut j = self.job(job_id);
         let deadline = j.deadline.unwrap_or(u64::MAX);
+        let unjudged = (j.status == JobStatus::Delivered && j.verify == Verify::Judge)
+            || (j.status == JobStatus::Disputed && self.disputes.get(&job_id).map_or(true, |d| d.panel.is_empty()));
         if j.status == JobStatus::Assigned && now() > deadline {
-            self.reject(&mut j);
-        } else if j.status == JobStatus::Delivered && now() > deadline + JUDGE_TIMEOUT_SECS * SEC {
+            self.reject(&mut j, true);
+        } else if unjudged && now() > deadline + JUDGE_TIMEOUT_SECS * SEC {
+            if j.status == JobStatus::Disputed {
+                self.credit(&j.client.clone(), self.config.dispute_bond.0);
+            }
             let (_, price) = self.winner_of(&j);
             self.credit(&j.client, price);
             self.lock(&j.winner_owner.clone().unwrap(), false);
@@ -1107,20 +1357,25 @@ impl Tender {
         j.status = JobStatus::Paid;
     }
 
-    fn reject(&mut self, j: &mut Job) {
+    /// Refund the client and slash the winner owner's bond, to the client or (for a dispute) returned
+    /// to the caller to pay the evaluators.
+    fn reject(&mut self, j: &mut Job, slash_to_client: bool) -> u128 {
         let (mut f, price) = self.winner_of(j);
         let owner = j.winner_owner.clone().unwrap();
         self.credit(&j.client, price);
         let bond = self.bonds.get(&owner).copied().unwrap_or(0);
         let slash = bond.min(self.config.slash.0);
         self.bonds.insert(owner.clone(), bond - slash);
-        self.credit(&j.client, slash);
+        if slash_to_client {
+            self.credit(&j.client, slash);
+        }
         f.rejected += 1;
         f.slashed = U128(f.slashed.0 + slash);
         self.lock(&owner, false);
         emit("slashed", json!({"job_id": j.id, "firm_id": f.id, "owner": owner, "amount": U128(slash), "refund": U128(price)}));
         self.save_firm(f);
         j.status = JobStatus::Rejected;
+        slash
     }
 
     // ---------------------------------------------------------------- epochs & liquidation
@@ -1268,6 +1523,10 @@ impl Tender {
     pub fn get_auction(&self, auction_id: u64) -> Auction {
         self.auction(auction_id)
     }
+    pub fn get_dispute(&self, job_id: u64) -> Option<Dispute> {
+        self.disputes.get(&job_id).cloned()
+    }
+
     pub fn get_ask(&self, firm_id: u32, seller: AccountId) -> Option<Ask> {
         self.asks.get(&format!("{firm_id}:{seller}")).cloned()
     }

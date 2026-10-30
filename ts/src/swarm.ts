@@ -2,8 +2,8 @@
 // Firm agents sign with function call keys only (no deposit possible): commit, reveal, deliver, spend.
 import { randomBytes, createHash } from "node:crypto";
 import type { Account, JsonRpcProvider } from "near-api-js";
-import { call, view, waitUntilChainTime, fmt } from "./chain.ts";
-import { judge, type Verdict } from "./judge.ts";
+import { call, chainTime, view, waitUntilChainTime, fmt } from "./chain.ts";
+import { evaluate, judge, type Verdict } from "./judge.ts";
 import type { Llm } from "./llm.ts";
 import { safeBid, type FirmCtx, type JobView, type Strategy } from "./strategy.ts";
 
@@ -22,6 +22,8 @@ export type FirmHandle = {
 export const INFERENCE_COST = 50_000n;
 
 export const bidHash = (amount: bigint, salt: string) => createHash("sha256").update(`${amount}:${salt}`).digest("hex");
+/** Sealed vote of an evaluator, as `tender.vote_hash`: 1 accepts the delivery, 0 rejects it. */
+export const voteHash = (accept: boolean, salt: string) => createHash("sha256").update(`${accept ? 1 : 0}:${salt}`).digest("hex");
 
 export class Swarm {
   constructor(
@@ -46,9 +48,10 @@ export class Swarm {
     return { id: f.id, account: f.account, treasury, delivered: v.delivered, rejected: v.rejected };
   }
 
-  async job(id: number): Promise<JobView & { auction: number; status: string }> {
+  async job(id: number): Promise<JobView & { auction: number; status: string; criteria: string; judged: boolean }> {
     const j = await view(this.provider, this.tender, "get_job", { job_id: id });
-    return { id: j.id, client: j.client, budget: BigInt(j.budget), brief: j.brief, auction: j.auction, status: j.status };
+    // `verify` is "Judge" or {"Optimistic": {...}}: only judge-mode jobs get an oracle verdict.
+    return { id: j.id, client: j.client, budget: BigInt(j.budget), brief: j.brief, auction: j.auction, status: j.status, criteria: j.criteria ?? "", judged: j.verify === "Judge" };
   }
 
   /** Commit then reveal one sealed bid per willing firm, then settle. Returns the auction after settlement. */
@@ -104,7 +107,7 @@ export class Swarm {
     return { auction: a, verdict };
   }
 
-  async deliverAndJudge(jobId: number, w: FirmHandle, job: JobView): Promise<Verdict> {
+  async deliverAndJudge(jobId: number, w: FirmHandle, job: JobView): Promise<Verdict | null> {
     const result = await w.strategy.work(job, this.llm);
     if (result.trim()) {
       // The firm pays its own inference from its treasury, through its on-chain budget.
@@ -112,10 +115,51 @@ export class Swarm {
     }
     await call(w.agentTender, this.tender, "deliver", { job_id: jobId, result });
     this.log(`  deliver ${w.strategy.name}: ${result ? JSON.stringify(result.slice(0, 60)) + "..." : "(empty)"}`);
+    // Optimistic jobs: the client reviews, and a dispute goes to a panel of firms (serveDispute).
+    if (!(await this.job(jobId)).judged) return null;
     const v = await judge(this.llm, job.brief, result);
     const r = await call(this.judgeAccount, this.tender, "verdict", { job_id: jobId, accept: v.accept, attestation: v.attestation });
     this.log(`  verdict ${v.accept ? "ACCEPTED" : "REJECTED"} (${v.reason})`);
     return { ...v, attestation: r.txHash };
+  }
+
+  private ballots = new Map<string, { accept: boolean; salt: string }>(); // `${job}:${firm}`
+
+  /** Evaluator duty for one disputed job: our firms on the panel vote (sealed, then revealed), and the
+   * dispute is closed once the votes are in. Call it repeatedly; each call does what the phase allows. */
+  async serveDispute(jobId: number) {
+    const d = await view(this.provider, this.tender, "get_dispute", { job_id: jobId });
+    if (!d || d.resolved || !d.panel.length) return;
+    const now = await chainTime(this.provider);
+    for (const b of d.panel) {
+      const f = this.firms.find((x) => x.id === b.firm_id);
+      if (!f) continue;
+      const key = `${jobId}:${f.id}`;
+      if (now < BigInt(d.commit_end) && !b.hash && !this.ballots.has(key)) {
+        const j = await this.job(jobId);
+        const raw = await view(this.provider, this.tender, "get_job", { job_id: jobId });
+        const result: string = raw.result ?? "";
+        const accept = f.strategy.evaluate ? await f.strategy.evaluate(j, result, this.llm) : (await evaluate(this.llm, j.brief, j.criteria, result)).accept;
+        const salt = randomBytes(16).toString("hex");
+        this.ballots.set(key, { accept, salt });
+        const args = { job_id: jobId, firm_id: f.id, hash: voteHash(accept, salt) };
+        // After a takeover the old agent keys are gone: the owner votes itself until it adds new ones.
+        try {
+          await call(f.agentTender, this.tender, "commit_vote", args).catch(() => call(f.owner, this.tender, "commit_vote", args));
+          this.log(`  vote    ${f.strategy.name.padEnd(18)} sealed on job #${jobId}`);
+        } catch (e) {
+          this.log(`  vote    ${f.strategy.name.padEnd(18)} refused: ${(e as Error).message}`);
+        }
+      } else if (now >= BigInt(d.commit_end) && now < BigInt(d.reveal_end) && b.vote === null && this.ballots.has(key)) {
+        const { accept, salt } = this.ballots.get(key)!;
+        const args = { job_id: jobId, firm_id: f.id, accept, salt };
+        await call(f.agentTender, this.tender, "reveal_vote", args).catch(() => call(f.owner, this.tender, "reveal_vote", args)).catch(() => {});
+        this.log(`  vote    ${f.strategy.name.padEnd(18)} ${accept ? "accepts" : "rejects"} job #${jobId}`);
+      }
+    }
+    if (now >= BigInt(d.reveal_end)) {
+      await call(this.firms[0].agentTender, this.tender, "resolve_dispute", { job_id: jobId }).catch(() => {});
+    }
   }
 
   /** epoch_tick, ignoring "epoch not over". */

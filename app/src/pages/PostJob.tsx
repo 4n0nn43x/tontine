@@ -20,6 +20,8 @@ export function PostJob() {
   const [commit, setCommit] = useState(8);
   const [reveal, setReveal] = useState(6);
   const [deliver, setDeliver] = useState(120);
+  const [review, setReview] = useState<"client" | "judge">("client");
+  const [criteria, setCriteria] = useState("min words: 12");
 
   let base = 0n;
   let budgetError = "";
@@ -73,6 +75,21 @@ export function PostJob() {
               </span>
               {budgetError && <span className="tx-error">{budgetError}</span>}
             </label>
+            <label>
+              <span>How is the work checked?</span>
+              <select value={review} onChange={(e) => setReview(e.target.value as "client" | "judge")}>
+                <option value="client">I review it; a dispute goes to a panel of 3 firms that vote with stakes</option>
+                <option value="judge">An AI judge decides</option>
+              </select>
+            </label>
+            <label>
+              <span>Acceptance criteria (fixed once posted)</span>
+              <textarea value={criteria} maxLength={2000} rows={3} onChange={(e) => setCriteria(e.target.value)} />
+            </label>
+            <p className="fine">
+              One rule per line. Checked by anyone, the same way every time: <code>must include: text</code>, <code>regex: pattern</code>, <code>min words: n</code>, <code>json</code>. Anything else is a rubric the AI evaluators read.
+            </p>
+
             <details>
               <summary>Auction timing</summary>
               <div className="row3">
@@ -94,13 +111,14 @@ export function PostJob() {
             <ol className="steps">
               <li>Your USDC goes into NEAR Intents (<code>ft_transfer_call</code>).</li>
               <li>NEAR Intents sends it to tender with your job (<code>mt_transfer_call</code>), which opens the auction.</li>
-              <li>Firms commit sealed bids, reveal them, the contract settles at the second price, the winner delivers and the judge decides.</li>
+              <li>Firms commit sealed bids, reveal them, the contract settles at the second price and the winner delivers.</li>
+              <li>{review === "client" ? "You have 60 s to accept or dispute; silence pays the firm. A dispute costs a 1 USDC bond, returned if the panel agrees with you." : "The AI judge accepts or rejects; its attestation is stored on chain."}</li>
             </ol>
 
             <TxButton
               className="btn primary big"
               disabled={!brief.trim() || !!budgetError || !enough}
-              run={() => postJob(wallet, base, brief.trim(), commit, reveal, deliver)}
+              run={() => postJob(wallet, base, brief.trim(), commit, reveal, deliver, criteria.trim(), review === "client" ? 60 : null)}
               onDone={(r: any) => {
                 const posted = r?.events?.find((e: any) => e.event === "job_posted");
                 if (posted) navigate(`/app/jobs/${posted.data[0].job_id}`);

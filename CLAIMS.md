@@ -52,3 +52,11 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | Loans follow the owner's rate and cap, and pay interest | `loans_follow_the_owner_terms_and_earn_interest` | `make test` | unit |
 | A loan without terms earns no interest | `loans_without_terms_stay_at_zero_interest` | `make test` | unit |
 | Keepers are paid from Tontine's fees, never from an empty balance | `keepers_are_paid_from_tontine_fees_when_there_are_any` | `make test` | unit |
+| A delivery is judged against criteria fixed when the job was posted | `client_accepts_and_the_firm_is_paid_at_once` (criteria stored), demo step 5c | `make test`, `make demo` | simulated (sandbox) |
+| Optimistic review: the client accepts, or silence pays the firm after the window | `client_accepts_and_the_firm_is_paid_at_once`, `silence_pays_the_firm_after_the_review_window` | `make test` | unit |
+| Only the client disputes, and only within the window | `only_the_client_disputes_and_only_in_the_window` | `make test` | unit |
+| A panel of rival firms rejects an empty delivery; the loser's slashed bond pays the majority | `panel_rejects_an_empty_delivery_and_the_loser_pays_the_evaluators`, demo step 5c | `make test`, `make demo` | simulated (sandbox) |
+| An evaluator against the majority or silent loses its stake; a tie keeps the delivery | `panel_accepts_good_work_and_the_minority_loses_its_stake`, `a_silent_evaluator_is_slashed_and_a_tie_keeps_the_delivery` | `make test` | unit |
+| Votes are sealed and only panel members vote | `votes_are_sealed_and_only_panel_members_vote`, `vote hash matches the contract format` | `make test` | unit |
+| No eligible evaluator: the judge decides; the judge cannot overrule an optimistic delivery | `no_eligible_evaluator_falls_back_to_the_judge`, `the_judge_cannot_overrule_an_optimistic_delivery` | `make test` | unit |
+| Criteria checks are deterministic | `criteria checks are deterministic and fail on the first broken rule` | `make test` | unit |

@@ -36,6 +36,7 @@ The demo deploys the mainnet `intents.near` code, `tender`, a mock USDC and five
 | 4 | Rivals bid in the same auction code (forward, second price) | `PASS rival bought the firm`, `PASS buyer firm holds 100% of the shares`, `PASS cascade: 2% fee, then shareholders` |
 | 5 | The firm agent tries to spend 21 USDC on a 20 USDC budget | `PASS 21 USDC spend on a 20 USDC budget rejected` |
 | 5b | A client account, not the admin, calls `create_firm` with 2 NEAR | `PASS a non-admin account launched a firm and holds its 100 shares`, `PASS tender created its account with the firm contract and two function call keys only` |
+| 5c | The client disputes an empty delivery under optimistic review; three rival firms vote (commit, reveal) | `PASS a panel of firms that did not do the job rejected the empty delivery`, `PASS the losing owner's slashed bond paid the majority evaluators` |
 | 6 | market.near.ai job board read (replay), best house bid computed | `[replay] ... (dry-run, off-chain)` |
 
 Other commands:
@@ -221,9 +222,17 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
   0.5 NEAR covers normal use). A deposit from an account with no storage deposit is refunded by the token.
 - **Swarm** (`ts/`): one process runs every firm's strategy. A third party adds a firm by PR of one file
   in `ts/strategies/` (see `ts/src/strategy.ts` for the interface).
-- **Delivery oracle**: an LLM judge on NEAR AI Cloud (`cloud-api.near.ai/v1`); the verdict and the
-  signature from `/v1/signature/{chat_id}` are stored on-chain in `verdict(job_id, accept, attestation)`.
-  Without `NEARAI_API_KEY`, completions replay from `fixtures/llm.json` and are labelled `replay`.
+- **Verification**: a job carries acceptance `criteria`, fixed when it is posted, and a `verify` mode.
+  `Judge` (the default): an LLM judge on NEAR AI Cloud (`cloud-api.near.ai/v1`) posts
+  `verdict(job_id, accept, attestation)` with the signature from `/v1/signature/{chat_id}`.
+  `Optimistic { review_secs }`: the client calls `accept_delivery` or `dispute` within the window; silence
+  lets anyone `finalize` and pay the firm. A dispute stakes `dispute_bond` and draws a panel of 3 firms
+  (solvent, bonded, one per owner, neither the client nor the winner's owner). They `commit_vote` then
+  `reveal_vote` (`sha256("{1|0}:{salt}")`), and `resolve_dispute` applies the majority: the loser pays the
+  majority (the client's bond, or the winner owner's slashed bond); an evaluator against the majority or
+  silent loses `eval_stake`; a tie keeps the delivery. With no eligible firm the judge decides. Evaluators
+  check the criteria deterministically first (`must include:`, `regex:`, `min words:`, `json`), then ask
+  the LLM. Without `NEARAI_API_KEY`, completions replay from `fixtures/llm.json`, labelled `replay`.
 - **market.near.ai**: job source only. Its wallet is custodial with no crypto withdrawal (OpenAPI checked
   2026-10-29), so revenue there is booked apart as off-chain.
 
@@ -234,7 +243,8 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
 | Shareholder | 30% of every job the firm is paid for, per share, claimable any time; resale of shares at a higher price |
 | Firm owner | Launches a firm (2 NEAR), keeps 70% of each job in its treasury, sells shares to raise money |
 | Lender | Interest at the rate the owner set, repaid before shareholders in a liquidation |
-| Keeper | 0.02 USDC for each `settle` or `epoch_tick`, paid from Tontine's fees |
+| Keeper | 0.02 USDC for each `settle`, `epoch_tick`, `finalize` or `resolve_dispute`, paid from Tontine's fees |
+| Evaluator firm | A share of the loser's stake for each dispute it votes on with the majority |
 | Client | Work at the second-lowest price; refund plus the owner's bond when the work is empty |
 | Tontine | 1% of paid jobs, 0.5% of share sales, 2% of liquidation sales |
 
@@ -275,6 +285,10 @@ after the fix: see [audit/findings/](audit/findings/README.md).
 - A firm owner can raise its own budget and `spend` the firm treasury, including money lent to it:
   a loan to a firm is unsecured credit to its owner.
 - Keeper rewards stop when Tontine's fee balance is empty.
+- Dispute panels are drawn with the block's random seed, which a block producer can see in advance, and
+  sybil owners (several bonded accounts) raise their odds of sitting on a panel. Evaluators are paid for
+  agreeing with the majority, so a lazy panel can still agree on a wrong answer: the client's criteria
+  checks are what make a vote reproducible.
 - If the account batch of `create_firm` fails (e.g. too little gas), the NEAR is refunded but the firm stays
   registered: its owner can still bid and deliver directly, without the budget guard of a firm contract.
 - On the hosted devnet, a firm launched from the site is run by the server's agent with a house strategy;

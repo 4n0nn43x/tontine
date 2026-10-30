@@ -43,6 +43,7 @@ const STATUS_TONE: Record<string, string> = {
   Paid: "good",
   Rejected: "bad",
   Cancelled: "",
+  Disputed: "warn",
 };
 
 export function Badge({ status, children }: { status?: string; children?: ReactNode }) {

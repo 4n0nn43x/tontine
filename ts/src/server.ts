@@ -12,6 +12,7 @@ import { KeyPair } from "near-api-js";
 import { account, call, sleep, view, USDC } from "./chain.ts";
 import { DEVNET_CONFIG, startDevnet, type Devnet } from "./devnet.ts";
 import { Indexer, type ChainEvent } from "./indexer.ts";
+import { evaluate } from "./judge.ts";
 import { makeLlm } from "./llm.ts";
 import { Swarm, type FirmHandle } from "./swarm.ts";
 import type { Strategy } from "./strategy.ts";
@@ -87,6 +88,8 @@ async function jobsLoop() {
       const recent: any[] = await view(provider, T, "get_jobs", { from: Math.max(0, nextJob - 50), limit: 50 });
       const now = await chainNow();
       for (const j of recent) {
+        if (j.status === "Delivered" && j.verify !== "Judge") await review(j, now);
+        if (j.status === "Disputed") await swarm.serveDispute(j.id).catch((e) => log(`dispute ${j.id}: ${(e as Error).message}`));
         if (j.status !== "Bidding" || running.has(j.id)) continue;
         const a = await view(provider, T, "get_auction", { auction_id: j.auction });
         if (BigInt(a.commit_end) > now) {
@@ -105,6 +108,21 @@ async function jobsLoop() {
     }
     await sleep(1000);
   }
+}
+
+// Optimistic jobs: the house client reviews its own deliveries against its criteria (accept, or dispute
+// with a bond), and anyone may pay the firm once a review window passes in silence.
+const reviewed = new Set<number>();
+async function review(j: any, now: bigint) {
+  if (j.review_end !== null && now > BigInt(j.review_end)) {
+    await call(devnet.firms[0].agentTender, T, "finalize", { job_id: j.id }).catch(() => {});
+    return;
+  }
+  if (j.client !== devnet.houseClient.accountId || reviewed.has(j.id)) return;
+  reviewed.add(j.id);
+  const v = await evaluate(swarm.llm, j.brief, j.criteria, j.result ?? "");
+  await call(devnet.houseClient, T, v.accept ? "accept_delivery" : "dispute", { job_id: j.id }, 1n).catch((e) => log(`review ${j.id}: ${(e as Error).message}`));
+  log(`house client ${v.accept ? "accepts" : "disputes"} job #${j.id} (${v.reason})`);
 }
 
 const liquidating = new Set<number>();
@@ -143,11 +161,11 @@ async function houseClientLoop() {
   for (;;) {
     try {
       const recent: any[] = await view(provider, T, "get_jobs", { from: Math.max(0, nextJob - 10), limit: 10 });
-      const open = recent.filter((j) => ["Bidding", "Assigned", "Delivered"].includes(j.status)).length;
+      const open = recent.filter((j) => ["Bidding", "Assigned", "Delivered", "Disputed"].includes(j.status)).length;
       if (open === 0) {
         const [brief, budget] = HOUSE_JOBS[houseIndex++ % HOUSE_JOBS.length];
         await devnet.deposit(devnet.houseClient, USDC(budget), {
-          PostJob: { budget: USDC(budget).toString(), brief, commit_secs: 8, reveal_secs: 6, deliver_secs: 120 },
+          PostJob: { budget: USDC(budget).toString(), brief, commit_secs: 8, reveal_secs: 6, deliver_secs: 120, criteria: "min words: 8", verify: { Optimistic: { review_secs: 30 } } },
         });
         log(`house client posted "${brief}" (${budget} USDC)`);
       }

@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadStrategies, safeBid, type Strategy } from "./strategy.ts";
-import { judge, obviouslyEmpty } from "./judge.ts";
+import { checkCriteria, judge, obviouslyEmpty } from "./judge.ts";
 import { Replay } from "./llm.ts";
-import { bidHash } from "./swarm.ts";
+import { createHash } from "node:crypto";
+import { bidHash, voteHash } from "./swarm.ts";
 
 const job = { id: 0, client: "c", budget: 10_000_000n, brief: "Translate a README" };
 const me = { id: 0, account: "w", treasury: 0n, delivered: 0, rejected: 0 };
@@ -55,4 +56,21 @@ test("evaluate stays pending until the 12-day window is complete", () => {
   assert.match(evaluate(p, [day(1), day(2)]).P3.status, /pending/);
   const full = evaluate(p, Array.from({ length: 12 }, (_, i) => day(i + 1)));
   assert.equal(full.P3.status, "TRUE"); // 5 bp >= 4
+});
+
+test("criteria checks are deterministic and fail on the first broken rule", () => {
+  assert.equal(checkCriteria("a rubric with no checkable rule", "anything"), null);
+  assert.deepEqual(checkCriteria("must include: hola\nmin words: 2", "Hola mundo"), { ok: true, reason: "every criteria check passes" });
+  assert.equal(checkCriteria("must include: hola", "bonjour")?.ok, false);
+  assert.equal(checkCriteria("regex: ^\\d{3}$", "123")?.ok, true);
+  assert.equal(checkCriteria("regex: ^\\d{3}$", "12a")?.ok, false);
+  assert.equal(checkCriteria("json", '{"a":1}')?.ok, true);
+  assert.equal(checkCriteria("json", "{a:1}")?.ok, false);
+  assert.equal(checkCriteria("min words: 5", "too short")?.ok, false);
+  assert.equal(checkCriteria("regex: (", "x")?.ok, true, "an invalid pattern checks nothing");
+});
+
+test("vote hash matches the contract format sha256('{1|0}:{salt}')", () => {
+  assert.equal(voteHash(true, "s"), createHash("sha256").update("1:s").digest("hex"));
+  assert.equal(voteHash(false, "s"), createHash("sha256").update("0:s").digest("hex"));
 });

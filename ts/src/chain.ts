@@ -66,6 +66,12 @@ export async function view<T = any>(provider: JsonRpcProvider, contractId: strin
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** The chain clock (ns), from the latest optimistic block. */
+export async function chainTime(provider: JsonRpcProvider): Promise<bigint> {
+  const b: any = await provider.viewBlock({ finality: "optimistic" } as any);
+  return BigInt(b.header.timestamp_nanosec ?? b.header.timestamp);
+}
+
 /** Wait until the chain clock passes `ns` (block timestamps drive the auction phases). */
 export async function waitUntilChainTime(provider: JsonRpcProvider, ns: bigint | number) {
   for (;;) {

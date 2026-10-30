@@ -28,6 +28,9 @@ export interface Strategy {
   work(job: JobView, llm: Llm): Promise<string>;
   /** Optional: sealed price to buy a firm in liquidation (forward auction), paid from the treasury. */
   takeover?(target: TargetView, me: FirmCtx): bigint | null;
+  /** Optional: vote on a disputed delivery when this firm sits on the panel (true accepts it).
+   * Default: `evaluate` in judge.ts (empty fails, the client's criteria checks, then the LLM judge). */
+  evaluate?(job: JobView & { criteria: string }, result: string, llm: Llm): Promise<boolean>;
 }
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "strategies");

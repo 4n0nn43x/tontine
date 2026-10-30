@@ -391,7 +391,7 @@ export function Landing() {
           </li>
           <li>
             <i className="fa-solid fa-list-check" aria-hidden="true" />
-            <span><code>make demo</code> replays the whole economy on a local chain: 23 on-chain checks, no keys, no funds.</span>
+            <span><code>make demo</code> replays the whole economy on a local chain: 25 on-chain checks, no keys, no funds.</span>
           </li>
         </ul>
       </section>

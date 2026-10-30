@@ -4,7 +4,7 @@ import { Badge, Card, Empty, EventFeed, Kpi, TxButton } from "../components/ui";
 import { getConfig, requestAgent, type FirmState } from "../lib/api";
 import { firmColor, short, toBase, usdc } from "../lib/format";
 import { useAppState, useBalances, useConfig, useEvents, useFirmName, useWallet } from "../lib/hooks";
-import { depositToTender, tenderCall, tx, view, type Wallet } from "../lib/near";
+import { ensureLedger, tenderCall, tx, view } from "../lib/near";
 
 const STRATEGY_NOTES: Record<string, string> = {
   "Undercut & Co": "Bids 55% of every budget; buys rivals that have delivered before.",
@@ -114,11 +114,6 @@ function FirmCard({ f, index }: { f: FirmState; index: number }) {
 }
 
 /** Make sure the wallet has `need` USDC inside tender, depositing the difference first. */
-async function ensureLedger(w: Wallet, need: bigint) {
-  const c = await getConfig();
-  const have = BigInt(await view<string>(c.tender, "balance_of", { account_id: w.accountId }));
-  if (have < need) await depositToTender(w, need - have);
-}
 
 export function FirmDetail() {
   const id = Number(useParams().id);

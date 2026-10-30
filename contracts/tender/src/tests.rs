@@ -43,6 +43,10 @@ impl T {
             job_fee_bps: 0,
             trade_fee_bps: 0,
             keeper_reward: U128(0),
+            dispute_bond: U128(0),
+            eval_stake: U128(0),
+            panel_size: 0,
+            vote_secs: 0,
         });
         let mut t = T { c, t: 1_000 * SEC };
         // Every caller now prepays the storage it creates (storage_deposit, NEP-145 style).
@@ -90,7 +94,7 @@ impl T {
 
     fn post(&mut self, budget: u128) -> (u64, u64) {
         self.as_("client.near", 1);
-        let id = self.c.post_job(PostJob { budget: U128(budget), brief: "translate README".into(), commit_secs: 2, reveal_secs: 2, deliver_secs: 60 });
+        let id = self.c.post_job(PostJob { budget: U128(budget), brief: "translate README".into(), commit_secs: 2, reveal_secs: 2, deliver_secs: 60, criteria: String::new(), verify: Verify::Judge });
         (id, self.c.get_job(id).auction)
     }
 
@@ -378,7 +382,7 @@ fn won_job(t: &mut T, firm: u32, owner: &str) -> u64 {
 fn huge_deliver_secs_refused() {
     let mut t = T::new();
     t.as_("client.near", 1);
-    t.c.post_job(PostJob { budget: U128(1), brief: "x".into(), commit_secs: 2, reveal_secs: 2, deliver_secs: 20_000_000_000 });
+    t.c.post_job(PostJob { budget: U128(1), brief: "x".into(), commit_secs: 2, reveal_secs: 2, deliver_secs: 20_000_000_000, criteria: String::new(), verify: Verify::Judge });
 }
 
 #[test]
@@ -659,4 +663,188 @@ fn keepers_are_paid_from_tontine_fees_when_there_are_any() {
     t.as_("anyone.near", 0);
     t.c.epoch_tick();
     assert_eq!(t.bal("anyone.near"), 0, "no ledger entry: not paid, nothing stored");
+}
+
+// ---------------------------------------------------------------- optimistic review and evaluator disputes
+
+fn with_disputes() -> T {
+    let mut t = T::new();
+    t.c.config.dispute_bond = U128(USDC);
+    t.c.config.eval_stake = U128(USDC);
+    t.c.config.vote_secs = 5;
+    t
+}
+
+/// Optimistic job won alone by firm 1 (owner o2) at the 10 USDC budget, then delivered.
+fn delivered_optimistic(t: &mut T, result: &str) -> u64 {
+    t.as_("client.near", 1);
+    let job = t.c.post_job(PostJob {
+        budget: U128(10 * USDC),
+        brief: "translate README to Spanish".into(),
+        commit_secs: 2,
+        reveal_secs: 2,
+        deliver_secs: 60,
+        criteria: "must include: hola".into(),
+        verify: Verify::Optimistic { review_secs: 10 },
+    });
+    let a = t.c.get_job(job).auction;
+    t.bid(a, 1, "o2.near", 7 * USDC);
+    t.wait(2);
+    t.reveal(a, 1, "o2.near", 7 * USDC);
+    t.wait(2);
+    t.c.settle(a);
+    t.as_("w2.tender.near", 0);
+    t.c.deliver(job, result.into());
+    job
+}
+
+/// Each panel member votes (None = commits nothing), then the vote phases run out.
+fn vote(t: &mut T, job: u64, votes: &[Option<bool>]) {
+    let panel = t.c.get_dispute(job).unwrap().panel;
+    for (b, v) in panel.iter().zip(votes) {
+        if let Some(v) = v {
+            t.as_(b.owner.as_str(), 0);
+            t.c.commit_vote(job, b.firm_id, vote_hash(*v, "salt"));
+        }
+    }
+    t.wait(5);
+    for (b, v) in panel.iter().zip(votes) {
+        if let Some(v) = v {
+            t.as_(b.owner.as_str(), 0);
+            t.c.reveal_vote(job, b.firm_id, *v, "salt".into());
+        }
+    }
+    t.wait(5);
+}
+
+fn bond(t: &T, who: &str) -> u128 {
+    t.c.bond_of(acc(who)).0
+}
+
+#[test]
+fn client_accepts_and_the_firm_is_paid_at_once() {
+    let mut t = with_disputes();
+    let job = delivered_optimistic(&mut t, "hola mundo");
+    assert_eq!(t.c.get_job(job).criteria, "must include: hola");
+    t.as_("x.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.accept_delivery(job))).is_err(), "client only");
+    t.as_("client.near", 1);
+    t.c.accept_delivery(job);
+    assert_eq!(t.c.get_job(job).status, JobStatus::Paid);
+    assert_eq!(t.bal("w2.tender.near"), 7 * USDC);
+}
+
+#[test]
+fn silence_pays_the_firm_after_the_review_window() {
+    let mut t = with_disputes();
+    let job = delivered_optimistic(&mut t, "hola mundo");
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.finalize(job))).is_err(), "window still open");
+    t.wait(11);
+    t.c.finalize(job);
+    assert_eq!(t.c.get_job(job).status, JobStatus::Paid);
+    t.as_("client.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.dispute(job))).is_err(), "too late to dispute");
+}
+
+#[test]
+fn only_the_client_disputes_and_only_in_the_window() {
+    let mut t = with_disputes();
+    let job = delivered_optimistic(&mut t, "hola");
+    t.as_("x.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.dispute(job))).is_err(), "client only");
+    t.wait(11);
+    t.as_("client.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.dispute(job))).is_err(), "window closed");
+}
+
+#[test]
+fn panel_rejects_an_empty_delivery_and_the_loser_pays_the_evaluators() {
+    let mut t = with_disputes();
+    let job = delivered_optimistic(&mut t, "");
+    t.as_("client.near", 1);
+    t.c.dispute(job);
+    assert_eq!(t.bal("client.near"), 89 * USDC, "1 USDC dispute bond");
+    let mut ids: Vec<u32> = t.c.get_dispute(job).unwrap().panel.iter().map(|b| b.firm_id).collect();
+    ids.sort();
+    assert_eq!(ids, vec![0, 2, 3], "one firm per owner, neither the client nor the winner's owner");
+    vote(&mut t, job, &[Some(false), Some(false), Some(false)]);
+    t.c.resolve_dispute(job);
+    assert_eq!(t.c.get_job(job).status, JobStatus::Rejected);
+    assert_eq!(t.bal("client.near"), 100 * USDC, "price and bond back");
+    assert_eq!(bond(&t, "o2.near"), 5 * USDC, "winner owner slashed 5 USDC");
+    for w in ["w1", "w3", "w4"] {
+        assert_eq!(t.bal(&format!("{w}.tender.near")), 1_666_666, "the slash split between the 3 evaluators");
+    }
+}
+
+#[test]
+fn panel_accepts_good_work_and_the_minority_loses_its_stake() {
+    let mut t = with_disputes();
+    let job = delivered_optimistic(&mut t, "hola mundo");
+    t.as_("client.near", 1);
+    t.c.dispute(job);
+    let panel = t.c.get_dispute(job).unwrap().panel;
+    vote(&mut t, job, &[Some(true), Some(true), Some(false)]);
+    t.c.resolve_dispute(job);
+    assert_eq!(t.c.get_job(job).status, JobStatus::Paid);
+    assert_eq!(t.bal("w2.tender.near"), 7 * USDC);
+    assert_eq!(t.bal("client.near"), 89 * USDC, "client's bond lost");
+    assert_eq!(bond(&t, panel[2].owner.as_str()), 9 * USDC, "minority evaluator lost its 1 USDC stake");
+    for b in &panel[..2] {
+        assert_eq!(t.bal(t.c.get_firm(b.firm_id).account.as_str()), USDC, "bond + minority stake split by the majority");
+    }
+}
+
+#[test]
+fn a_silent_evaluator_is_slashed_and_a_tie_keeps_the_delivery() {
+    let mut t = with_disputes();
+    let job = delivered_optimistic(&mut t, "hola mundo");
+    t.as_("client.near", 1);
+    t.c.dispute(job);
+    let panel = t.c.get_dispute(job).unwrap().panel;
+    vote(&mut t, job, &[Some(true), Some(false), None]);
+    t.c.resolve_dispute(job);
+    assert_eq!(t.c.get_job(job).status, JobStatus::Paid, "tie: the delivery stands");
+    assert_eq!(t.bal("client.near"), 90 * USDC, "no majority: dispute bond refunded");
+    assert_eq!(bond(&t, panel[2].owner.as_str()), 9 * USDC, "silent evaluator slashed");
+    assert_eq!(bond(&t, panel[0].owner.as_str()), 10 * USDC);
+    assert_eq!(t.bal("admin.near"), USDC, "no majority to pay: the stake goes to Tontine");
+}
+
+#[test]
+fn votes_are_sealed_and_only_panel_members_vote() {
+    let mut t = with_disputes();
+    let job = delivered_optimistic(&mut t, "hola");
+    t.as_("client.near", 1);
+    t.c.dispute(job);
+    let b = t.c.get_dispute(job).unwrap().panel[0].clone();
+    t.as_("o2.near", 0);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.commit_vote(job, 1, vote_hash(true, "s")))).is_err(), "the winner is not on the panel");
+    t.as_(b.owner.as_str(), 0);
+    t.c.commit_vote(job, b.firm_id, vote_hash(true, "s"));
+    t.wait(5);
+    t.as_(b.owner.as_str(), 0);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.reveal_vote(job, b.firm_id, false, "s".into()))).is_err(), "reveal must match the commit");
+}
+
+#[test]
+fn no_eligible_evaluator_falls_back_to_the_judge() {
+    let mut t = with_disputes();
+    t.c.config.eval_stake = U128(100 * USDC); // no owner has that much bonded
+    let job = delivered_optimistic(&mut t, "");
+    t.as_("client.near", 1);
+    t.c.dispute(job);
+    assert!(t.c.get_dispute(job).unwrap().panel.is_empty());
+    t.as_("judge.near", 0);
+    t.c.verdict(job, false, "{}".into());
+    assert_eq!(t.c.get_job(job).status, JobStatus::Rejected);
+    assert_eq!(t.bal("client.near"), 105 * USDC, "price, bond and the owner's slash");
+}
+
+#[test]
+fn the_judge_cannot_overrule_an_optimistic_delivery() {
+    let mut t = with_disputes();
+    let job = delivered_optimistic(&mut t, "hola");
+    t.as_("judge.near", 0);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.verdict(job, false, "{}".into()))).is_err());
 }

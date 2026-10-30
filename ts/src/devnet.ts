@@ -19,6 +19,10 @@ export const DEVNET_CONFIG = {
   jobFeeBps: 100,
   tradeFeeBps: 50,
   keeperReward: USDC(0.02),
+  disputeBond: USDC(1),
+  evalStake: USDC(1),
+  panelSize: 3,
+  voteSecs: 8,
 };
 
 export type Devnet = {
@@ -109,6 +113,10 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
       job_fee_bps: DEVNET_CONFIG.jobFeeBps,
       trade_fee_bps: DEVNET_CONFIG.tradeFeeBps,
       keeper_reward: DEVNET_CONFIG.keeperReward.toString(),
+      dispute_bond: DEVNET_CONFIG.disputeBond.toString(),
+      eval_stake: DEVNET_CONFIG.evalStake.toString(),
+      panel_size: DEVNET_CONFIG.panelSize,
+      vote_secs: DEVNET_CONFIG.voteSecs,
     },
   });
   // The code `create_firm` deploys when anyone launches a firm.
@@ -136,6 +144,8 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
   for (const a of [houseClient, ...owners]) await storage(root, a.accountId);
   for (const f of firms) await storage(root, f.account);
   await mint(houseClient.accountId, USDC(1_000_000));
+  // A ledger buffer for the house client's dispute bonds.
+  await deposit(houseClient, USDC(20));
   for (let i = 0; i < firms.length; i++) {
     const f = firms[i];
     await mint(f.owner.accountId, USDC(1000));

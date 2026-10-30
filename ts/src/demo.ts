@@ -65,6 +65,9 @@ async function main() {
         epoch_secs: EPOCH_SECS,
         liquidation_commit_secs: 3,
         liquidation_reveal_secs: 3,
+        dispute_bond: USDC(1).toString(),
+        eval_stake: USDC(1).toString(),
+        vote_secs: 4,
       },
     });
     console.log(`tender=${T}  intents=${I} (mainnet code)  usdc=${usdc.acct.accountId} (mock, sandbox only)`);
@@ -213,6 +216,34 @@ async function main() {
       openPerms.length === 2 && openPerms.every((p: any) => p !== "FullAccess" && p.FunctionCall) && openState.owner === client.acct.accountId && openState.tender === T,
       `${openPerms.length} function call keys`,
     );
+
+    section("5c. optimistic review: the client disputes an empty delivery, a panel of firms decides");
+    const o = await ftCall(client.acct, USDC(4), {
+      PostJob: { budget: USDC(4).toString(), brief: "Summarize the NEAR Intents fee page", commit_secs: 3, reveal_secs: 3, deliver_secs: 120, criteria: "min words: 8", verify: { Optimistic: { review_secs: 60 } } },
+    });
+    const oJob = (o.events.find((e) => e.event === "job_posted")?.data as any)?.[0]?.job_id as number;
+    const seller = firms[1];
+    await swarm.auction((await swarm.job(oJob)).auction, new Map([[seller.id, USDC(3)]]), false);
+    await call(seller.agentTender, T, "deliver", { job_id: oJob, result: "" });
+    const sellerBond = BigInt(await view(provider, T, "bond_of", { account_id: seller.owner.accountId }));
+    await call(client.acct, T, "dispute", { job_id: oJob }, 1n);
+    const panel: any[] = (await view(provider, T, "get_dispute", { job_id: oJob })).panel;
+    const evalBefore = await Promise.all(panel.map(async (b) => BigInt(await view(provider, T, "balance_of", { account_id: (await view(provider, T, "get_firm", { firm_id: b.firm_id })).account }))));
+    for (let i = 0; i < 40 && (await view(provider, T, "get_job", { job_id: oJob })).status === "Disputed"; i++) {
+      await swarm.serveDispute(oJob);
+      await sleep(1000);
+    }
+    const dOut = await view(provider, T, "get_dispute", { job_id: oJob });
+    const noVotes = dOut.panel.filter((b: any) => b.vote === false).length;
+    check(
+      "a panel of firms that did not do the job rejected the empty delivery",
+      (await view(provider, T, "get_job", { job_id: oJob })).status === "Rejected" && noVotes > dOut.panel.length / 2,
+      `${noVotes} of ${dOut.panel.length} evaluators rejected, ${dOut.panel.filter((b: any) => b.vote === null).length} silent`,
+    );
+    const evalAfter = await Promise.all(dOut.panel.map(async (b: any) => BigInt(await view(provider, T, "balance_of", { account_id: (await view(provider, T, "get_firm", { firm_id: b.firm_id })).account }))));
+    const paidEvaluators = dOut.panel.filter((b: any, i: number) => b.vote === false && evalAfter[i] > evalBefore[i]).length;
+    const slashed = sellerBond - BigInt(await view(provider, T, "bond_of", { account_id: seller.owner.accountId }));
+    check("the losing owner's slashed bond paid the majority evaluators", slashed === USDC(5) && paidEvaluators === noVotes, `bond -${fmt(slashed)}, ${paidEvaluators} evaluators paid`);
 
     section("6. market.near.ai as demand source (off-chain revenue, booked apart)");
     const mb = await board();

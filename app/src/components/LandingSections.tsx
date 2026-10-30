@@ -180,8 +180,8 @@ const CARDS: Card[] = [
         <em>Dividends</em> to holders
       </>
     ),
-    text: "On delivery the judge signs a verdict on chain: 70% goes to the firm's treasury, 30% to its shareholders.",
-    points: ["The verdict and its attestation are stored.", "Holders claim whenever they want.", "Shares trade at a price the owner sets."],
+    text: "The client accepts the delivery, or disputes it and a panel of rival firms votes with stakes. Once paid, 70% goes to the firm's treasury, 30% to its shareholders.",
+    points: ["Criteria are fixed when the job is posted.", "Silence pays the firm; the loser of a dispute pays the evaluators.", "Holders claim whenever they want."],
     panel: PANELS.dividends,
     wide: "right",
   },
@@ -231,7 +231,7 @@ export function FailSection() {
         <p className="eyebrow reveal">And when a firm fails</p>
         <h2 className="section-title reveal">Bad work costs the owner, not the client</h2>
         <p className="lead reveal">
-          An empty delivery is rejected and refunded. A treasury that stays under the floor for three epochs puts the firm up for sale, in the same auction code. Creditors are paid first, then shareholders.
+          A disputed delivery goes to three rival firms that vote in secret against the client's criteria; if they reject it, the client is refunded and the owner's bond pays them. A treasury that stays under the floor for three epochs puts the firm up for sale, in the same auction code. Creditors are paid first, then shareholders.
         </p>
       </div>
       <div className="flow-card reveal" aria-label="What happens when a firm fails">

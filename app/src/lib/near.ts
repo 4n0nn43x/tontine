@@ -89,9 +89,18 @@ export async function depositToTender(w: Wallet, amount: bigint, msg?: object) {
   return tx(w, c.intents, "mt_transfer_call", { receiver_id: c.tender, token_id: c.token, amount: amount.toString(), approval: null, memo: null, msg: msg ? JSON.stringify(msg) : "" }, ONE_YOCTO, 250);
 }
 
+/** Make sure the wallet has `need` USDC inside tender, depositing the difference first. */
+export async function ensureLedger(w: Wallet, need: bigint) {
+  const c = await getConfig();
+  const have = BigInt(await view<string>(c.tender, "balance_of", { account_id: w.accountId }));
+  if (have < need) await depositToTender(w, need - have);
+}
+
 /** Pay a job: escrow `budget` in tender and open its sealed-bid auction. */
-export function postJob(w: Wallet, budget: bigint, brief: string, commitSecs: number, revealSecs: number, deliverSecs: number) {
-  return depositToTender(w, budget, { PostJob: { budget: budget.toString(), brief, commit_secs: commitSecs, reveal_secs: revealSecs, deliver_secs: deliverSecs } });
+/** `reviewSecs` null: an AI judge decides. A number: you review the delivery (accept, or dispute to a panel of firms). */
+export function postJob(w: Wallet, budget: bigint, brief: string, commitSecs: number, revealSecs: number, deliverSecs: number, criteria = "", reviewSecs: number | null = null) {
+  const verify = reviewSecs === null ? "Judge" : { Optimistic: { review_secs: reviewSecs } };
+  return depositToTender(w, budget, { PostJob: { budget: budget.toString(), brief, commit_secs: commitSecs, reveal_secs: revealSecs, deliver_secs: deliverSecs, criteria, verify } });
 }
 
 /** Ledger balance out of tender (to intents.near), then out of intents.near to the wallet. */

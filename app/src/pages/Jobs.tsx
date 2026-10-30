@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Badge, Card, Countdown, Empty, EventFeed, FirmChip } from "../components/ui";
-import { getConfig, type JobState } from "../lib/api";
+import { Badge, Card, Countdown, Empty, EventFeed, FirmChip, TxButton } from "../components/ui";
+import { getConfig, type Dispute, type JobState } from "../lib/api";
 import { short, usdc } from "../lib/format";
-import { useAppState, useChainNow, useEvents, useFirmName, useWallet } from "../lib/hooks";
-import { view } from "../lib/near";
+import { useAppState, useChainNow, useConfig, useEvents, useFirmName, useWallet } from "../lib/hooks";
+import { ensureLedger, tenderCall, view } from "../lib/near";
 
 function clientLabel(client: string, house: string | undefined, me: string | undefined) {
   if (me && client === me) return "you";
@@ -81,6 +81,7 @@ export function JobDetail() {
   const name = useFirmName(state);
   const now = useChainNow(state);
   const events = useEvents(400);
+  const wallet = useWallet();
   const [fetched, setFetched] = useState<JobState | null>(null);
   const fromState = state?.jobs.find((j) => j.id === id) ?? null;
 
@@ -99,7 +100,27 @@ export function JobDetail() {
   }, [id, !!fromState]);
 
   const job = fromState ?? fetched;
+  const optimistic = !!job && typeof job.verify === "object";
+  const config = useConfig();
+  const [dispute, setDispute] = useState<Dispute | null>(null);
+  useEffect(() => {
+    if (!optimistic) return;
+    let alive = true;
+    const load = async () => {
+      const c = await getConfig();
+      const d = await view<Dispute | null>(c.tender, "get_dispute", { job_id: id });
+      if (alive) setDispute(d);
+    };
+    void load().catch(() => {});
+    const t = window.setInterval(() => void load().catch(() => {}), 3000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [id, optimistic]);
   if (!job) return <div className="page-app"><Empty>Loading job #{id}…</Empty></div>;
+  const bond = BigInt(config?.tenderConfig?.dispute_bond ?? 0);
+  const resolved = events.find((e) => e.event === "dispute_resolved" && e.data?.job_id === id)?.data;
   const a = job.auctionState;
   const mine = events.filter((e) => e.data?.job_id === id || e.data?.auction_id === job.auction);
   const paid = mine.find((e) => e.event === "paid")?.data;
@@ -140,6 +161,10 @@ export function JobDetail() {
             <dd>{a.winner !== null ? <FirmChip id={a.winner} name={name(a.winner)} index={a.winner} /> : "–"}</dd>
             <dt>Price paid</dt>
             <dd>{a.price ? `${usdc(a.price)} USDC (the second-lowest bid)` : "–"}</dd>
+            <dt>Checked by</dt>
+            <dd>{optimistic ? "the client; a dispute goes to a panel of firms" : "the AI judge"}</dd>
+            <dt>Criteria</dt>
+            <dd>{job.criteria ? <code className="criteria">{job.criteria}</code> : "none"}</dd>
           </dl>
           <table className="table bids">
             <thead>
@@ -178,6 +203,70 @@ export function JobDetail() {
           ) : (
             <Empty>{job.status === "Assigned" ? "The winning firm is working on it." : "Nothing delivered yet."}</Empty>
           )}
+          {optimistic && job.status === "Delivered" && job.review_end !== null && (
+            <div className="review">
+              <h3 className="mini">Client review</h3>
+              <p>
+                {now < BigInt(job.review_end) ? (
+                  <>
+                    The client has <Countdown until={BigInt(job.review_end)} now={now} /> to accept or dispute. Silence pays the firm.
+                  </>
+                ) : (
+                  "The review window is over: the firm is being paid."
+                )}
+              </p>
+              {wallet?.accountId === job.client && now < BigInt(job.review_end) && (
+                <div className="inline">
+                  <TxButton className="btn primary" run={() => tenderCall(wallet, "accept_delivery", { job_id: job.id })}>
+                    <i className="fa-solid fa-check" aria-hidden="true" /> Accept and pay
+                  </TxButton>
+                  <TxButton
+                    className="btn"
+                    run={async () => {
+                      await ensureLedger(wallet, bond);
+                      return tenderCall(wallet, "dispute", { job_id: job.id });
+                    }}
+                  >
+                    <i className="fa-solid fa-scale-unbalanced" aria-hidden="true" /> Dispute ({usdc(bond)} USDC bond)
+                  </TxButton>
+                </div>
+              )}
+            </div>
+          )}
+          {dispute && (
+            <div className="review">
+              <h3 className="mini">Evaluator panel</h3>
+              {dispute.panel.length ? (
+                <>
+                  <p>
+                    {resolved
+                      ? `The panel ${resolved.accept ? "kept" : "rejected"} the delivery, ${resolved.yes} for and ${resolved.no} against. Evaluators against the majority or silent lost their stake.`
+                      : now < BigInt(dispute.commit_end)
+                        ? "Firms that did not do the job are sealing their votes against the criteria."
+                        : now < BigInt(dispute.reveal_end)
+                          ? "Votes are being revealed."
+                          : "Votes are in: the dispute is being closed."}
+                  </p>
+                  <table className="table">
+                    <tbody>
+                      {dispute.panel.map((b) => (
+                        <tr key={b.firm_id}>
+                          <td>
+                            <FirmChip id={b.firm_id} name={name(b.firm_id)} index={b.firm_id} />
+                          </td>
+                          <td className="num">
+                            {b.vote === null ? (b.hash ? "sealed" : now < BigInt(dispute.commit_end) ? "evaluating" : "no vote") : b.vote ? "accepts" : "rejects"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              ) : (
+                <p>No firm was eligible to evaluate: the AI judge decides.</p>
+              )}
+            </div>
+          )}
           {paid && (
             <dl className="facts">
               <dt>Paid</dt>
@@ -199,7 +288,7 @@ export function JobDetail() {
               <dt>Rejected</dt>
               <dd>the client got {usdc(slashed.refund)} USDC back</dd>
               <dt>Owner bond slashed</dt>
-              <dd>{usdc(slashed.amount)} USDC to the client</dd>
+              <dd>{usdc(slashed.amount)} USDC {resolved ? "to the evaluators who voted with the majority" : "to the client"}</dd>
             </dl>
           )}
           {attestation && (

@@ -30,3 +30,45 @@ export async function judge(llm: Llm, brief: string, result: string): Promise<Ve
   const attestation = JSON.stringify({ source: c.source, model: c.model, chat_id: c.chatId, accept, reason, signature: c.signature });
   return { accept, reason, attestation };
 }
+
+/** Deterministic checks a client can write in its criteria, one per line: "must include: <text>",
+ * "regex: <pattern>", "min words: <n>", "json". Anyone can rerun them; null when the criteria hold none.
+ * ponytail: a client pattern runs in the evaluator (bounded to 200 chars, result to 4000); sandbox it if
+ * evaluators ever run unattended on hostile criteria. */
+export function checkCriteria(criteria: string, result: string): { ok: boolean; reason: string } | null {
+  let any = false;
+  for (const line of criteria.split("\n")) {
+    const m = line.trim().match(/^(must include|regex|min words|json)\s*:?\s*(.*)$/i);
+    if (!m) continue;
+    any = true;
+    const [kind, arg] = [m[1].toLowerCase(), m[2].trim()];
+    if (kind === "must include" && !result.toLowerCase().includes(arg.toLowerCase())) return { ok: false, reason: `missing "${arg}"` };
+    if (kind === "regex" && arg.length <= 200) {
+      let re: RegExp | null = null;
+      try {
+        re = new RegExp(arg, "m");
+      } catch {
+        // An invalid pattern checks nothing.
+      }
+      if (re && !re.test(result.slice(0, 4000))) return { ok: false, reason: `does not match /${arg}/` };
+    }
+    if (kind === "min words" && result.trim().split(/\s+/).length < Number(arg)) return { ok: false, reason: `fewer than ${arg} words` };
+    if (kind === "json") {
+      try {
+        JSON.parse(result);
+      } catch {
+        return { ok: false, reason: "not valid JSON" };
+      }
+    }
+  }
+  return any ? { ok: true, reason: "every criteria check passes" } : null;
+}
+
+/** An evaluator's vote on a disputed delivery: empty fails, deterministic criteria decide when the
+ * client wrote some, otherwise the LLM judge reads the brief with the criteria. */
+export async function evaluate(llm: Llm, brief: string, criteria: string, result: string): Promise<Verdict> {
+  if (obviouslyEmpty(result)) return { accept: false, reason: "empty deliverable", attestation: JSON.stringify({ source: "rule", reason: "empty" }) };
+  const c = checkCriteria(criteria, result);
+  if (c) return { accept: c.ok, reason: c.reason, attestation: JSON.stringify({ source: "criteria", ...c }) };
+  return judge(llm, criteria ? `${brief}\n\nACCEPTANCE CRITERIA:\n${criteria}` : brief, result);
+}

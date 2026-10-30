@@ -10,7 +10,8 @@ use near_sdk::{env, ext_contract, near, require, AccountId, Allowance, Gas, Near
 
 const SEC: u64 = 1_000_000_000;
 /// Methods an agent key may call on tender (none takes a deposit). Mirrors ts/src/deploy.ts.
-const AGENT_TENDER_METHODS: &str = "commit_bid,reveal_bid,deliver,settle,epoch_tick,expire,settle_dividends";
+const AGENT_TENDER_METHODS: &str =
+    "commit_bid,reveal_bid,deliver,settle,epoch_tick,expire,settle_dividends,commit_vote,reveal_vote,finalize,resolve_dispute";
 
 #[ext_contract(ext_tender)]
 #[allow(dead_code)]

@@ -84,6 +84,14 @@ export function describe(e: ChainEvent, firm: (id: number) => string): Described
         return { icon: "fa-arrow-down", tone: "", text: `${short(d.account)} deposited ${usdc(d.amount)} USDC` };
       case "withdraw":
         return { icon: "fa-arrow-up", tone: "", text: `${short(d.account)} withdrew ${usdc(d.amount)} USDC` };
+      case "disputed":
+        return { icon: "fa-scale-unbalanced", tone: "bad", text: `Job #${d.job_id} disputed by the client: ${d.panel.length} firms will vote`, jobId: d.job_id };
+      case "vote_committed":
+        return { icon: "fa-lock", tone: "", text: `${firm(d.firm_id)} sealed its vote on job #${d.job_id}`, jobId: d.job_id, firmId: d.firm_id };
+      case "vote_revealed":
+        return { icon: "fa-lock-open", tone: d.accept ? "good" : "bad", text: `${firm(d.firm_id)} ${d.accept ? "accepts" : "rejects"} the delivery of job #${d.job_id}`, jobId: d.job_id, firmId: d.firm_id };
+      case "dispute_resolved":
+        return { icon: "fa-scale-balanced", tone: d.accept ? "good" : "bad", text: `Panel ${d.accept ? "kept" : "rejected"} the delivery of job #${d.job_id} (${d.yes} for, ${d.no} against)`, jobId: d.job_id };
       case "verdict_timeout":
         return { icon: "fa-hourglass-end", tone: "", text: `Job #${d.job_id} cancelled: no verdict in time`, jobId: d.job_id };
     }

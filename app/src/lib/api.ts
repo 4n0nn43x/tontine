@@ -57,13 +57,23 @@ export type JobState = {
   budget: string;
   brief: string;
   auction: number;
-  status: "Bidding" | "Assigned" | "Delivered" | "Paid" | "Rejected" | "Cancelled";
+  status: "Bidding" | "Assigned" | "Delivered" | "Paid" | "Rejected" | "Cancelled" | "Disputed";
   deliver_secs: number;
   deadline: number | string | null;
   result: string | null;
   attestation: string | null;
   winner_owner: string | null;
+  criteria: string;
+  verify: "Judge" | { Optimistic: { review_secs: number } };
+  review_end: number | string | null;
   auctionState: AuctionState;
+};
+
+export type Dispute = {
+  panel: { firm_id: number; owner: string; hash: string | null; vote: boolean | null }[];
+  commit_end: number | string;
+  reveal_end: number | string;
+  resolved: boolean;
 };
 
 export type AppState = { firms: FirmState[]; jobs: JobState[]; totalJobs: number; chainTime: string; updatedAt: number };
