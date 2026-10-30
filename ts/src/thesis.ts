@@ -24,7 +24,9 @@ const SOURCES = {
   nearStats: "https://api.nearblocks.io/v1/stats",
 };
 const WINDOW_DAYS = 12;
-const EVAL = { from: "2026-11-01", to: "2026-11-12" };
+// DefiLlama still revises the last day or two (2026-10-29 fees went from $8.8k to $199k within a day):
+// the verdict is read on or after `read_from`.
+const EVAL = { from: "2026-11-01", to: "2026-11-12", read_from: "2026-11-14" };
 const P3_MIN_BP = 4.0;
 
 type Series = [number, number][];
@@ -120,14 +122,14 @@ function computePredictions(s: Snapshot) {
     method: `80% intervals = 10th-90th percentile of ${w.length} rolling ${WINDOW_DAYS}-day windows over the last 90 days (DefiLlama).`,
     window: EVAL,
     evaluation:
-      `After ${EVAL.to}, fetch the same sources (below), keep the UTC days ${EVAL.from} to ${EVAL.to} inclusive present in all four series. ` +
+      `On or after ${EVAL.read_from} (UTC), fetch the same sources (below), keep the UTC days ${EVAL.from} to ${EVAL.to} inclusive present in all four series. ` +
       "P1 = mean of daily volume. P2 = sum(Intents revenue) / sum(NEAR gas fees). P3 = 10000 * sum(Intents revenue) / sum(volume). " +
       "A prediction is TRUE if the observed value lies in its interval (P3: at or above its minimum), FALSE otherwise. Fewer than 12 days: no verdict.",
     sources: SOURCES,
     snapshot_sha256: createHash("sha256").update(readFileSync(SNAPSHOT)).digest("hex"),
     caveats: [
-      "DefiLlama 'revenue' for near-intents is the fee share captured for NEAR buybacks, not confirmed purchases.",
-      "Bought-back NEAR offsets emission only if it is burnt or locked; this was not confirmed when the predictions were made.",
+      "DefiLlama 'revenue' (equal to 'holdersRevenue') for near-intents is the fee share allocated to NEAR buybacks, not confirmed purchases.",
+      "Bought-back NEAR offsets emission only if it is burnt or locked. On 2026-10-30 it sat on buybacks.multisignature.near (2.13M NEAR, none staked or locked, a 2-of-4 multisig): it offset nothing yet.",
     ],
     P1: { metric: "mean daily Intents volume (USD)", low: quantile(v, 0.1), central: quantile(v, 0.5), high: quantile(v, 0.9), kind: "base rate" },
     P2: { metric: "Intents revenue / NEAR gas fees (total, not only the burnt share)", low: quantile(g, 0.1), central: quantile(g, 0.5), high: quantile(g, 0.9), kind: "base rate" },
@@ -149,6 +151,7 @@ function freeze() {
   console.log(body);
   console.log(`sha256 ${h}`);
   console.log(`Publish it (human, mainnet): a tx whose memo or args carry this hash, then put the tx link in CLAIMS.md.`);
+  console.log(`Commit thesis/predictions.json with data/snapshot.json and tag it (git tag thesis-freeze): a later snapshot overwrites the file hashed above.`);
 }
 
 // ---------------------------------------------------------------- evaluate + HTML
@@ -156,10 +159,13 @@ function freeze() {
 const usd = (x: number) => (x >= 1e9 ? `$${(x / 1e9).toFixed(2)}B` : x >= 1e6 ? `$${(x / 1e6).toFixed(1)}M` : `$${Math.round(x).toLocaleString("en-US")}`);
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-export function evaluate(p: Predictions, d: Day[]) {
+export function evaluate(p: Predictions, d: Day[], fetchedAt?: string) {
   const win = d.filter((x) => x.date >= p.window.from && x.date <= p.window.to);
-  const complete = win.length === WINDOW_DAYS;
-  const status = (ok: boolean) => (complete ? (ok ? "TRUE" : "FALSE") : `pending (${win.length}/${WINDOW_DAYS} days)`);
+  // ISO strings compare in time order; a read before read_from gives no verdict, as pre-registered.
+  const early = !!fetchedAt && !!p.window.read_from && fetchedAt < p.window.read_from;
+  const complete = win.length === WINDOW_DAYS && !early;
+  const status = (ok: boolean) =>
+    win.length < WINDOW_DAYS ? `pending (${win.length}/${WINDOW_DAYS} days)` : early ? `pending (read on or after ${p.window.read_from})` : ok ? "TRUE" : "FALSE";
   if (!win.length) return { complete, win, P1: { observed: null, status: status(false) }, P2: { observed: null, status: status(false) }, P3: { observed: null, status: status(false) } };
   const o1 = avgVol(win), o2 = revOverGas(win), o3 = bp(win);
   return {
@@ -182,7 +188,7 @@ function report() {
   const tr = bp(last30);
   const m25 = multiple({ ...base, emission: 0.025, takeRateBp: tr });
   const m16 = multiple({ ...base, emission: 0.016, takeRateBp: tr });
-  const e = evaluate(p, d);
+  const e = evaluate(p, d, s.fetched_at);
 
   // 12-day blocks of the take rate since July: the regime change P3 bets on.
   const since = d.filter((x) => x.date >= "2026-07-01");

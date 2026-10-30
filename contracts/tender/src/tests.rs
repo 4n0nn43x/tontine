@@ -923,3 +923,71 @@ fn owners_publish_their_firm_spec() {
     t.c.set_firm_profile(1, spec.into());
     assert_eq!(t.c.get_firm(1).profile.as_deref(), Some(spec));
 }
+
+// ---------------------------------------------------------------- audit findings 05 to 07
+
+/// F5 PoC: zero or dust loans, from an account with no USDC, grew `debts` without bound.
+#[test]
+fn poc_f5_dust_loans_bloat_the_firm() {
+    let mut t = T::new();
+    for amount in [0, USDC / 2] {
+        t.as_("x.near", 1);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.lend(1, U128(amount))));
+        assert!(r.is_err(), "a loan of {amount} base units is refused");
+    }
+    for _ in 0..20 {
+        t.as_("lender.near", 1);
+        t.c.lend(1, U128(USDC));
+    }
+    t.as_("lender.near", 1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.lend(1, U128(USDC)))).is_err(), "at most 20 open loans");
+    t.as_("o2.near", 1);
+    t.c.repay(1, U128(USDC));
+    t.as_("lender.near", 1);
+    t.c.lend(1, U128(USDC));
+    assert_eq!(t.c.get_firm(1).debts.len(), 20, "a repaid loan frees its slot");
+}
+
+/// F6 PoC: with no eligible evaluator, a client disputed past deadline + 3 days, then expired the job in
+/// the same block: price and bond back, firm unpaid, no verdict ever given.
+#[test]
+fn poc_f6_late_dispute_then_expire_before_the_judge() {
+    let mut t = with_disputes();
+    t.c.config.eval_stake = U128(100 * USDC); // no eligible evaluator: the judge decides
+    t.as_("client.near", 1);
+    let job = t.c.post_job(PostJob {
+        budget: U128(10 * USDC), brief: "b".into(), commit_secs: 2, reveal_secs: 2, deliver_secs: 60,
+        criteria: String::new(), verify: Verify::Optimistic { review_secs: 5 * 86_400 },
+    });
+    let a = t.c.get_job(job).auction;
+    t.bid(a, 1, "o2.near", 7 * USDC);
+    t.wait(2);
+    t.reveal(a, 1, "o2.near", 7 * USDC);
+    t.wait(2);
+    t.c.settle(a);
+    t.as_("w2.tender.near", 0);
+    t.c.deliver(job, "good work".into());
+    t.wait(4 * 86_400); // inside the review window, past deadline + 3 days
+    t.as_("client.near", 1);
+    t.c.dispute(job);
+    t.as_("client.near", 0);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.expire(job))).is_err(), "the judge gets its 3 days from the dispute");
+    t.wait(3 * 86_400 + 11);
+    t.c.expire(job);
+    assert_eq!(t.c.get_job(job).status, JobStatus::Cancelled, "a judge outage still ends in a refund");
+}
+
+/// F7 PoC: settling a 1-unit job nobody bid on paid the keeper reward out of Tontine's fees.
+#[test]
+fn poc_f7_keeper_farms_auctions_nobody_bid_on() {
+    let mut t = with_fees();
+    t.c.balances.insert(acc("admin.near"), USDC);
+    t.deposit("payer.near", USDC);
+    t.as_("payer.near", 1);
+    let job = t.c.post_job(PostJob { budget: U128(1), brief: "b".into(), commit_secs: 1, reveal_secs: 1, deliver_secs: 60, criteria: String::new(), verify: Verify::Judge });
+    t.wait(2);
+    t.as_("payer.near", 0);
+    t.c.settle(t.c.get_job(job).auction);
+    assert_eq!(t.bal("payer.near"), USDC, "no reward for an auction nobody won");
+    assert_eq!(t.bal("admin.near"), USDC);
+}

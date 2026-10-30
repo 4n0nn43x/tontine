@@ -28,7 +28,7 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | Intents deposits credited, impostor contracts refused | `mt_on_transfer_credits_intents_deposits`, `mt_on_transfer_rejects_impostor` | `make test` | unit |
 | Firm pays its inference from its treasury | demo step 2 | `make demo` | simulated (sandbox) |
 | Judge never accepts an empty deliverable | `judge never accepts an empty deliverable` | `make test` | unit |
-| Buyback multiple 4.9x at 2.5% emission | `thesis multiple reproduces the spec figure`, `thesis/result.json` | `make thesis` | measured (public data, snapshot 2026-10-30) |
+| Buyback multiple 5.4x at 2.5% emission | `thesis multiple reproduces the spec figure`, `thesis/result.json` | `make thesis` | measured (public data, snapshot 2026-10-30) |
 | Take rate 12-day blocks 1.95-3.02 bp (Jul-Aug), 3.89-5.58 bp since 2026-09-11 | `thesis/index.html` | `make thesis` | measured (public data) |
 | Phases and deadlines capped at 30 days (no overflow can freeze `settle`) | `huge_deliver_secs_refused` | `make test` | unit |
 | No loans to a firm in liquidation | `no_loans_to_a_firm_in_liquidation` | `make test` | unit |
@@ -39,8 +39,12 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | A takeover voids older share asks | `takeover_voids_old_asks` | `make test` | unit |
 | A takeover deletes the old owner's agent keys and freezes spending | `only_tender_sets_owner`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
 | A failed owner push to the firm contract can be retried by anyone | `failed_owner_sync_can_be_retried`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
-| Contracts deploy on protocol 86 (mainnet today) and 88 | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
+| Contracts deploy on protocol 86 (mainnet until about 2026-11-04) and 88 (from about 2026-11-07) | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
 | Audit findings 01 to 04 fixed (old owner's keys, firm-held dividends, storage, liquidation treasury) | `audit-poc.ts` prints NOT REPRODUCED; `poc_f1_*`, `poc_f4_*` | `cd ts && npx tsx src/audit-poc.ts`, `make test` | simulated (sandbox) |
+| Loans are at least 1 USDC, at most 20 open per firm (audit 05) | `poc_f5_dust_loans_bloat_the_firm` | `make test` | unit |
+| A dispute restarts the judge's 3 days before the job can expire (audit 06) | `poc_f6_late_dispute_then_expire_before_the_judge` | `make test` | unit |
+| No keeper reward for a job auction nobody won (audit 07) | `poc_f7_keeper_farms_auctions_nobody_bid_on` | `make test` | unit |
+| The thesis verdict is read only on or after 2026-11-14 | `evaluate stays pending until the 12-day window is complete and read on time` | `make test` | unit |
 | Callers prepay the storage they create | F3 in `audit-poc.ts` | `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
 | Predictions hash published before the window | not yet: `thesis.ts freeze`, then a mainnet tx | | pending |
 | A third party paid a job on-chain | not yet | | pending |

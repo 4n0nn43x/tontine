@@ -6,6 +6,9 @@
 | 02 | Dividends on shares held by a firm account could never be claimed | Medium | fixed |
 | 03 | Any caller grew tender's storage at tender's expense | Medium | fixed |
 | 04 | A liquidated firm's remaining treasury went to the buyer, not to its creditors | Medium | fixed |
+| 05 | Zero or dust loans grew a firm's debt list without bound | Medium | fixed |
+| 06 | A late dispute let the client cancel a job before the judge could rule | Medium | fixed |
+| 07 | Settling an auction nobody bid on paid the keeper reward | Low | fixed |
 
 Re-run every PoC: `cd ts && npx tsx src/audit-poc.ts` (prints NOT REPRODUCED on the fixed contracts) and
 `cd contracts && cargo test poc_`.
@@ -24,3 +27,7 @@ Read in full: `contracts/tender/src/lib.rs`, `contracts/firm/src/lib.rs`. Out of
 and callbacks, storage staking, shares and dividend accounting, liquidation cascade, auction clearing,
 deposits from intents.near. The earlier review (commit 3a2dd96, ba97778) covered overflow, lock
 counters and rounding.
+
+Second pass (commit `2b3c89c`, 2026-10-30) on what was added after the first one: `create_firm`, fees,
+loans with interest, keeper rewards, optimistic review and evaluator disputes, closing, profiles. It found
+05 to 07; each PoC fails on `2b3c89c` and passes on the fix.

@@ -31,9 +31,10 @@ Every README claim maps to a test or a demo check in `CLAIMS.md`.
 - Wasm flags live in `contracts/.cargo/config.toml` (`--cfg near -C link-arg=-s`), so a plain
   `cargo build --target wasm32-unknown-unknown --release` is enough. Without `--cfg near`, near-sdk turns
   contract panics into a bare `unreachable` trap.
-- near-sdk is pinned to 5.29.1: 5.30 targets protocol 88 and its wasm is refused by protocol 86, which
-  mainnet still runs (checked 2026-10-30). `make demo` runs sandbox 2.13.4 (protocol 86) for that reason;
-  `SANDBOX_VERSION=2.14.0 make demo` checks protocol 88.
+- near-sdk is pinned to 5.29.1: 5.30 declares protocol 88 as its minimum and its wasm is refused by
+  protocol 86, which mainnet runs until its upgrade votes of 2026-11-04 (87) and 2026-11-06 (88) (nearcore
+  2.14.0, checked 2026-10-30). `make demo` runs sandbox 2.13.4 (protocol 86) for that reason;
+  `SANDBOX_VERSION=2.14.0 make demo` checks protocol 88, which mainnet runs from about 2026-11-07.
 - `make build-repro` builds tender and firm reproducibly in `sourcescan/cargo-near:0.22.0-rust-1.97.1`
   (pinned digest), the image the mainnet intents.near build used. Two runs give the same sha256, and
   the result passes `make demo` on protocol 86.

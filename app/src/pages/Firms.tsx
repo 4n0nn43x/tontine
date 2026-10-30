@@ -341,7 +341,7 @@ export function FirmDetail() {
                   {f.loan_terms
                     ? `${name} pays ${f.loan_terms.rate_bps / 100}% a year on new loans, up to ${usdc(f.loan_terms.cap)} USDC owed (${usdc(f.debts.reduce((a, d) => a + BigInt(d.principal), 0n))} now).`
                     : `${name} has set no loan terms: a loan earns no interest.`}{" "}
-                  The loan goes to the treasury. In a liquidation, creditors are repaid with interest before shareholders; until then the owner can spend it: it is unsecured credit.
+                  The loan goes to the treasury. In a liquidation, creditors are repaid with interest before shareholders; until then the owner can spend it: it is unsecured credit. At least 1 USDC, and a firm carries at most 20 open loans.
                 </p>
                 <div className="inline">
                   <input inputMode="decimal" value={lendAmount} onChange={(e) => setLendAmount(e.target.value)} aria-label="USDC to lend" />

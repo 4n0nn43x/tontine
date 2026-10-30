@@ -50,12 +50,15 @@ test("quantile interpolates", () => {
   assert.equal(quantile([0, 10], 0.1), 1);
 });
 
-test("evaluate stays pending until the 12-day window is complete", () => {
+test("evaluate stays pending until the 12-day window is complete and read on time", () => {
   const p: any = { window: { from: "2026-11-01", to: "2026-11-12" }, P1: { low: 0, high: 1e12 }, P2: { low: 0, high: 1e9 }, P3: { min: 4 } };
   const day = (i: number) => ({ ts: 0, date: `2026-11-${String(i).padStart(2, "0")}`, vol: 1e8, rev: 5e4, fees: 1e5, gas: 4e3 });
   assert.match(evaluate(p, [day(1), day(2)]).P3.status, /pending/);
   const full = evaluate(p, Array.from({ length: 12 }, (_, i) => day(i + 1)));
   assert.equal(full.P3.status, "TRUE"); // 5 bp >= 4
+  // Read too early, the last days are still revised: no verdict.
+  const early = evaluate({ ...p, window: { ...p.window, read_from: "2026-11-14" } }, Array.from({ length: 12 }, (_, i) => day(i + 1)), "2026-11-13T09:00:00Z");
+  assert.match(early.P3.status, /read on or after 2026-11-14/);
 });
 
 test("criteria checks are deterministic and fail on the first broken rule", () => {

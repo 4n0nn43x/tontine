@@ -28,6 +28,10 @@ const MAX_PHASE_SECS: u64 = 30 * 86_400;
 /// After this long without a verdict, anyone can cancel a delivered job (judge outage, no slash).
 const JUDGE_TIMEOUT_SECS: u64 = 3 * 86_400;
 const YEAR_SECS: u128 = 365 * 86_400;
+/// Smallest loan (1 USDC) and most open loans per firm: each loan is a row the firm carries in every call.
+const MIN_LOAN: u128 = 1_000_000;
+/// ponytail: fixed cap of 20 open loans per firm; merge loans per lender if firms need more creditors.
+const MAX_DEBTS: usize = 20;
 /// NEAR a creator attaches to `create_firm`: the storage of the firm contract code (about 1.5 NEAR) and
 /// the gas its agent keys pay for every transaction.
 const FIRM_ACCOUNT_DEPOSIT: NearToken = NearToken::from_near(3);
@@ -841,6 +845,10 @@ impl Tender {
         // A loan during the sale would be repaid ahead of shareholders out of the buyer's own price.
         require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
         require!(f.status != FirmStatus::Closed, "firm closed");
+        // Every loan is loaded with the firm on each call (and by epoch_tick for every firm): dust loans
+        // would grow it without bound (audit finding 05).
+        require!(amount.0 >= MIN_LOAN, "loan below 1 USDC");
+        require!(f.debts.len() < MAX_DEBTS, "too many open loans: the owner repays some first");
         // The owner sets the rate and the cap: a lender cannot load a firm with debt on its own terms.
         let rate_bps = match &f.loan_terms {
             Some(t) => {
@@ -1040,7 +1048,11 @@ impl Tender {
             }
             AuctionKind::Liquidation(firm_id) => self.on_liquidation_auction(firm_id, a.winner, a.price),
         }
-        self.reward_keeper();
+        // A job auction nobody won did no work: paying it would let anyone farm rewards with 1-unit jobs
+        // (audit finding 07).
+        if !a.reverse || a.winner.is_some() {
+            self.reward_keeper();
+        }
     }
 
     /// Pay the caller a small reward out of Tontine's fee balance, if there is enough in it. Only an
@@ -1337,11 +1349,15 @@ impl Tender {
     pub fn expire(&mut self, job_id: u64) {
         let mut j = self.job(job_id);
         let deadline = j.deadline.unwrap_or(u64::MAX);
+        let dispute = self.disputes.get(&job_id).filter(|_| j.status == JobStatus::Disputed).cloned();
         let unjudged = (j.status == JobStatus::Delivered && j.verify == Verify::Judge)
-            || (j.status == JobStatus::Disputed && self.disputes.get(&job_id).map_or(true, |d| d.panel.is_empty()));
+            || (j.status == JobStatus::Disputed && dispute.as_ref().map_or(true, |d| d.panel.is_empty()));
+        // A dispute restarts the judge's clock: a client cannot dispute late, then cancel before the judge
+        // can rule (audit finding 06).
+        let judge_from = dispute.map_or(deadline, |d| d.reveal_end.max(deadline));
         if j.status == JobStatus::Assigned && now() > deadline {
             self.reject(&mut j, true);
-        } else if unjudged && now() > deadline + JUDGE_TIMEOUT_SECS * SEC {
+        } else if unjudged && now() > judge_from + JUDGE_TIMEOUT_SECS * SEC {
             if j.status == JobStatus::Disputed {
                 self.credit(&j.client.clone(), self.config.dispute_bond.0);
             }

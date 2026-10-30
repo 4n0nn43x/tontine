@@ -19,7 +19,7 @@ Requirements: Node 22. Rust is only needed to rebuild the contracts.
 
 ```sh
 make deps     # npm ci in ts/
-make demo     # local NEAR sandbox 2.13.4 (protocol 86, as mainnet), prebuilt wasm checked against wasm/SHA256SUMS
+make demo     # local NEAR sandbox 2.13.4 (protocol 86, mainnet's until about 2026-11-04), prebuilt wasm checked against wasm/SHA256SUMS
 ```
 
 You see one `PASS` or `FAIL` line per claim and `ALL CHECKS PASS` at the end (exit code 0).
@@ -197,6 +197,7 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
   by a Synthetix-style accumulator in O(1), fixed-price asks (`list_shares` / `buy_shares`), loans (`lend`)
   that make the lender a creditor. The owner sets the yearly rate and the cap it accepts to owe
   (`set_loan_terms`); interest accrues per loan and is paid before shareholders. Without terms a loan earns 0%.
+  A loan is at least 1 USDC and a firm carries at most 20 open loans.
 - **Open firms**: anyone calls `create_firm` with 3 NEAR (code storage and agent gas) and two agent public keys. `tender` creates
   `w{id+1}.<tender>`, deploys the firm contract (code stored by the admin with `set_firm_code`), adds the two
   function call keys and never a full access key. The caller owns the 100 shares and can list them at once.
@@ -213,12 +214,13 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
 - **`contracts/firm`**: deployed on `wN.<tender>` in one transaction that adds two function call keys and
   never a full access key. Function call keys cannot attach deposits, so the agent can only reach
   non-payable methods. `spend` checks the cap and `spent + amount <= budget`, books before the promise,
-  rolls back in the callback.
+  rolls back in the callback. Kill switch: the owner calls `set_budget(0, 0)` and the agent can no longer
+  spend; `close_firm` on tender winds the firm up.
 - **Money**: an internal ledger in USDC held inside `intents.near`. A client pays in two steps:
   `usdc.ft_transfer_call(intents.near, amount, "")`, then
   `intents.near.mt_transfer_call(tender, "nep141:<usdc>", amount, msg)`, which calls `tender.mt_on_transfer`.
-  (The mainnet verifier, defuse 0.4.5, has no deposit-and-notify: USDC deposited straight to tender's
-  intents account would never reach its ledger.) `withdraw` calls `intents.near.mt_transfer` as predecessor
+  (The mainnet verifier, defuse 0.4.5, removed the notification on deposits in near/intents PR #374: USDC
+  deposited straight to tender's intents account would never reach its ledger.) `withdraw` calls `intents.near.mt_transfer` as predecessor
   with 1 yocto, no intent signed, refunded in the callback on failure; the receiver then `ft_withdraw`s to
   its wallet. A plain NEP-141 mode (`ft_on_transfer`) exists for networks without Intents.
 - **Storage**: every caller prepays the storage it creates (`storage_deposit`, NEP-145 style; about
@@ -236,8 +238,9 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
   silent loses `eval_stake`; a tie keeps the delivery. With no eligible firm the judge decides. Evaluators
   check the criteria deterministically first (`must include:`, `regex:`, `min words:`, `json`), then ask
   the LLM. Without `NEARAI_API_KEY`, completions replay from `fixtures/llm.json`, labelled `replay`.
-- **market.near.ai**: job source only. Its wallet is custodial with no crypto withdrawal (OpenAPI checked
-  2026-10-29), so revenue there is booked apart as off-chain.
+- **market.near.ai**: job source only. The platform holds the earnings: a person signed in to the website
+  can withdraw USDC (FAQ of 2026-10-19), but the API an agent uses has no crypto withdrawal, only a fiat
+  payout (OpenAPI checked 2026-10-30). Revenue there is booked apart as off-chain.
 
 ## Run your own firm (SDK)
 
@@ -264,16 +267,18 @@ keys made in the browser. Details in [SDK.md](SDK.md); example in `ts/firms/exam
 
 `make thesis` computes, from public DefiLlama and NEARBlocks data frozen in `data/snapshot.json`:
 
-- the Intents volume needed for buybacks to match NEAR emission: **4.9x** the 30-day average at 2.5%
-  emission, 3.2x at 1.6% (snapshot of 2026-10-30, NEAR $3.93, take rate 5.41 bp), with a sensitivity table.
-  This only offsets emission if the bought NEAR is burnt or locked;
+- the Intents volume needed for buybacks to match NEAR emission: **5.4x** the 30-day average at 2.5%
+  emission, 3.5x at 1.6% (snapshot of 2026-10-30, NEAR $4.36, take rate 5.55 bp), with a sensitivity table.
+  This only offsets emission if the bought NEAR is burnt or locked, and on 2026-10-30 it was neither: it sat
+  on a 2-of-4 multisig (see the evidence against in [THESIS.md](THESIS.md));
 - P1, P2: 80% intervals from rolling 12-day windows (base rates, they show calibration);
 - P3, the prediction that tests the thesis: the take rate stays at or above 4.0 bp from 2026-11-01 to
   2026-11-12 (12-day blocks went from 1.95-3.02 bp in July-August to 3.89-5.58 bp since 2026-09-11);
 - P4: the value the swarm settles internally without paying the Intents fee (a measure of the design).
 
 `npx tsx ts/src/thesis.ts freeze` writes `thesis/predictions.json` and prints its sha256, to be published
-in a mainnet transaction before the window opens. The dashboard shows predicted, observed, TRUE or FALSE.
+in a mainnet transaction before the window opens. The verdict is read on or after 2026-11-14, since
+DefiLlama still revises the last days. The dashboard shows predicted, observed, TRUE or FALSE.
 
 ## Real network
 
@@ -282,14 +287,15 @@ NEAR: run it yourself. Keys go to `keys/` (gitignored).
 
 ## Security
 
-A self-audit on 2026-10-30 found one High and three Mediums, all fixed, each with a PoC run before and
-after the fix: see [audit/findings/](audit/findings/README.md).
+A self-audit on 2026-10-30, in two passes, found one High, five Mediums and one Low, all fixed, each with a
+PoC run before and after the fix: see [audit/findings/](audit/findings/README.md).
 
 ## Limits and risks (stated, not hidden)
 
 - Shares carry symbolic amounts and are not an offer of securities.
-- The Intents DAO can disable predecessor authentication (`force_disable_auth_by_predecessor_ids`);
-  the mainnet payment path depends on it.
+- The Intents DAO, or an account with its `UnrestrictedAccountLocker` or `UnrestrictedAccountManager` role,
+  can disable predecessor authentication for tender (`force_disable_auth_by_predecessor_ids`) or lock its
+  account (`force_lock_account`); the mainnet payment path depends on it.
 - The sandbox demo runs the exact `intents.near` mainnet code (see `wasm/README.md`) but with a mock USDC
   (`contracts/mock-ft`, anyone can mint), since the real USDC contract is not deployed in the sandbox.
 - A firm owner can raise its own budget and `spend` the firm treasury, including money lent to it:
