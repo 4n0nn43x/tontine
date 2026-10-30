@@ -13,21 +13,9 @@ export type SceneApi = {
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const isMobile = () => window.matchMedia("(max-width: 720px), (pointer: coarse)").matches;
 
-export function webglOk(): boolean {
-  // Software-only WebGL is too slow for the scene (?gl=force skips the check, for QA).
-  const force = new URLSearchParams(location.search).get("gl") === "force";
-  try {
-    return !!document.createElement("canvas").getContext("webgl2", { failIfMajorPerformanceCaveat: !force });
-  } catch {
-    return false;
-  }
-}
-
 type Props = {
   mode: "replay" | "live";
   firmNames?: string[] | null;
-  calm?: number;
-  swarmInHero?: boolean;
   className?: string;
   onReady?: (api: SceneApi) => void;
   onLedger?: (e: { text: string; kind: string }) => void;
@@ -35,11 +23,11 @@ type Props = {
   fallback?: ReactNode;
 };
 
-/** The dot-matrix desert and its firm swarms, sized to its container. */
-export function SceneView({ mode, firmNames, calm = 0, swarmInHero = true, className = "", onReady, onLedger, onPhase, fallback = null }: Props) {
+/** The pixel-art city where every building is a firm, sized to its container. */
+export function SceneView({ mode, firmNames, className = "", onReady, onLedger, onPhase, fallback = null }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const tags = useRef<HTMLDivElement>(null);
-  const [failed, setFailed] = useState(() => !webglOk());
+  const [failed, setFailed] = useState(false);
   const handlers = useRef({ onReady, onLedger, onPhase });
   handlers.current = { onReady, onLedger, onPhase };
   const namesKey = firmNames ? firmNames.join("|") : "";
@@ -50,7 +38,7 @@ export function SceneView({ mode, firmNames, calm = 0, swarmInHero = true, class
     let api: SceneApi | null = null;
     let ro: ResizeObserver | null = null;
     let disposed = false;
-    import("../scene/scene.js")
+    import("../scene/city.js")
       .then(({ startScene }) => {
         if (disposed || !canvas.current) return;
         api = startScene({
@@ -62,8 +50,6 @@ export function SceneView({ mode, firmNames, calm = 0, swarmInHero = true, class
           isMobile: isMobile(),
           mode,
           firmNames: (firmNames ?? null) as any,
-          calmStrength: calm,
-          swarmInHero,
           debugQuery: mode === "replay",
         }) as SceneApi;
         ro = new ResizeObserver(() => api?.resize());
@@ -81,7 +67,7 @@ export function SceneView({ mode, firmNames, calm = 0, swarmInHero = true, class
       api?.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [failed, mode, namesKey, calm]);
+  }, [failed, mode, namesKey]);
 
   if (failed) return <div className={`scene ${className}`}>{fallback}</div>;
   return (

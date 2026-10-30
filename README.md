@@ -93,12 +93,12 @@ The devnet lives in the process: a restart starts a new chain (jobs and demo acc
 app drops a saved demo account that no longer exists). `make app-dev` runs the Vite dev server with hot
 reload against a running `make serve`.
 
-The landing background is a WebGL scene (three.js 0.186.1): a dot-matrix desert at dusk under a sky of
-falling glyphs, and five AI firms that **replay the real `make demo` run** with its figures: sealed bids,
-the second price, the 30% dividend, the slashed bond, the liquidation and the takeover. On the dashboard
-the same scene is driven by the events of the devnet. Without WebGL the landing falls back to an animated
-pixel-art dusk; with `prefers-reduced-motion` it renders one still frame. QA helpers on the landing: `?t=24` jumps
-to second 24 of the replay, `&still` renders a single frame, `?gl=force` accepts software WebGL.
+The landing background is a pixel-art city at dusk (Canvas 2D, no WebGL) where every building is a firm.
+It **replays the real `make demo` run** with its figures: sealed bids fly to the job's airship, the winner
+lights up while it works, coins carry the second price and the 30% dividend, the gambler's bond is slashed,
+its tower goes dark for sale and turns into the buyer's colours. On the dashboard the same city is driven by
+the events of the devnet. With `prefers-reduced-motion` it renders one still frame. QA helpers on the
+landing: `?t=24` jumps to second 24 of the replay, `&still` renders a single frame.
 
 Fonts: Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN), Geist Pixel Circle as the local
 fallback (`app/public/fonts`, SIL OFL, license included). Icons: Font Awesome 6.5.2.
@@ -266,7 +266,7 @@ after the fix: see [audit/findings/](audit/findings/README.md).
 NEAR Intents verifier (defuse 0.4.5, MIT, binary taken from `intents.near`, sandbox only), near-sdk 5.29.1,
 near-contract-standards 5.29.1 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4
 (sandbox binaries 2.13.4 and 2.14.0), tsx, TypeScript. Website: React 19.1, react-router-dom 7.18, Vite 8.3,
-three.js 0.186.1, Font Awesome 6.5.2 (CDN), fonts Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN) and
+Font Awesome 6.5.2 (CDN), fonts Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN) and
 Geist Pixel Circle (SIL OFL); browser QA with Playwright (not in the repo). Data: DefiLlama, NEARBlocks public APIs. All code written in the
 hackathon window, with AI assistance.
 

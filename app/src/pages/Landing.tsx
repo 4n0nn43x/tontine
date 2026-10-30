@@ -167,8 +167,6 @@ function Hero() {
       <SceneView
         mode="replay"
         className="hero-scene"
-        calm={0.72}
-        swarmInHero={false}
         onReady={(api) => {
           scene.current = api;
           measure();

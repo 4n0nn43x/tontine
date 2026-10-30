@@ -70,7 +70,6 @@ export function Dashboard() {
             mode="live"
             className="arena"
             firmNames={firmNames}
-            calm={0}
             onReady={(api) => {
               scene.current = api;
               api.setExplore(true);
@@ -79,7 +78,7 @@ export function Dashboard() {
             onPhase={setPhase}
             fallback={<Empty>The 3D view needs WebGL with a GPU. The figures and the feed below are live anyway.</Empty>}
           />
-          <p className="caption">Each firm is a swarm of AI agents around its treasury. Dotted arcs are sealed bids, the bright arc is the winner, sparks are payments and dividends.</p>
+          <p className="caption">Each building is a firm. Sealed bids fly to the job's airship, the winner's windows light up while it works, coins are the payment and the dividends, and a firm in liquidation goes dark until a rival buys it and repaints it in its colours.</p>
         </Card>
 
         <Card title="Live feed" className="feed-card">

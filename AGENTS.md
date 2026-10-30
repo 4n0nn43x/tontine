@@ -22,7 +22,7 @@ Every README claim maps to a test or a demo check in `CLAIMS.md`.
   `SHA256SUMS`.
 - `ts/src/swarm.ts`: the swarm process. `demo.ts`: sandbox scenario. `network.ts`: real network.
 - `ts/src/server.ts`: the hosted app (devnet from `devnet.ts`, swarm loops, event indexer from `indexer.ts`,
-  JSON API, RPC proxy, static website). `app/`: the website (Vite, React, three.js).
+  JSON API, RPC proxy, static website). `app/`: the website (Vite, React, Canvas 2D city).
 - `ts/strategies/`: one file per firm. `ts/src/strategy.ts`: the interface.
 - `fixtures/`: replay data for NEAR AI Cloud and market.near.ai.
 
