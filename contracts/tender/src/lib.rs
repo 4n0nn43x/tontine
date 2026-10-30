@@ -27,6 +27,8 @@ const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 const SEC: u64 = 1_000_000_000;
 /// Upper bound on any phase or deadline, so `now + secs * SEC` can never overflow.
 const MAX_PHASE_SECS: u64 = 30 * 86_400;
+/// Order phases are short: a revealed bid's escrow is out of the firm's treasury until settlement.
+const MAX_ORDER_PHASE_SECS: u64 = 600;
 const YEAR_SECS: u128 = 365 * 86_400;
 /// Smallest loan (1 USDC) and most open loans per firm: each loan is a row the firm carries in every call.
 const MIN_LOAN: u128 = 1_000_000;
@@ -90,6 +92,12 @@ pub struct Config {
     /// Fewest revealed bids for an order to fill (0 means 1); with fewer, everyone is refunded.
     #[serde(default)]
     pub min_bidders: u8,
+    /// Smallest order, in stable units (amount_in of a buy, min_out of a sell): no dust fills.
+    #[serde(default)]
+    pub min_order: U128,
+    /// Most the reference price moves on one fill (0 = no limit): a single fill cannot set it at will.
+    #[serde(default)]
+    pub max_move_bps: u16,
 }
 
 #[near(serializers = [borsh, json])]
@@ -166,6 +174,9 @@ pub struct Firm {
     pub slashed: U128,
     pub dividends: U128,
     pub takeovers: u32,
+    /// Stable and asset escrowed in its revealed, unsettled bids: still the firm's, counted in its floor.
+    pub escrow: U128,
+    pub escrow_asset: U128,
     /// False between a takeover and the firm contract confirming its new owner.
     pub owner_synced: bool,
     /// The firm's spec as published by its owner: JSON (name, description, skills, model, budgets...).
@@ -232,6 +243,9 @@ pub struct Order {
     pub min_out: U128,
     /// What the client was quoted elsewhere when posting (e.g. NEAR Intents 1Click). Informational.
     pub reference_out: Option<U128>,
+    /// The reference price when posted: firms' price bands are checked against it, so a fill elsewhere
+    /// during the auction cannot push their bids out of band.
+    pub price: U128,
     pub auction: u64,
     pub status: OrderStatus,
     pub firm: Option<u32>,
@@ -382,7 +396,7 @@ impl Tender {
             "bps > 100%"
         );
         require!(config.asset_unit.0 > 0 && config.initial_price.0 > 0, "asset_unit and initial_price must be > 0");
-        Self {
+        let mut c = Self {
             last_price: config.initial_price.0,
             config,
             balances: LookupMap::new(Key::Balances),
@@ -396,7 +410,12 @@ impl Tender {
             asks: LookupMap::new(Key::Asks),
             storage: LookupMap::new(Key::Storage),
             last_epoch: now(),
-        }
+        };
+        // Fees land here on every fill: create the entries once, at the contract's cost.
+        let admin = c.config.admin.clone();
+        c.balances.insert(admin.clone(), 0);
+        c.assets.insert(admin, 0);
+        c
     }
 
     // ---------------------------------------------------------------- storage
@@ -491,7 +510,12 @@ impl Tender {
 
     /// Stable value of an asset amount at the last clearing price.
     fn value(&self, asset: u128) -> u128 {
-        asset * self.last_price / self.config.asset_unit.0
+        asset.saturating_mul(self.last_price) / self.config.asset_unit.0
+    }
+
+    /// Principal plus interest the firm owes, all loans.
+    fn owed_total(f: &Firm) -> u128 {
+        f.debts.iter().map(Self::owed).sum()
     }
 
     /// Net asset value of a firm: its stable treasury plus its asset inventory at the last clearing price.
@@ -733,6 +757,8 @@ impl Tender {
             slashed: U128(0),
             dividends: U128(0),
             takeovers: 0,
+            escrow: U128(0),
+            escrow_asset: U128(0),
             owner_synced: true,
             profile: None,
         });
@@ -1035,6 +1061,8 @@ impl Tender {
             AuctionKind::Liquidation(target) => require!(target != firm_id && self.firm(target).owner != f.owner, "cannot bid on own firm"),
             AuctionKind::Order(oid) => {
                 require!(!f.policy.paused, "firm paused by its owner");
+                // A firm under its floor stops quoting: no new escrow while it may be liquidated.
+                require!(f.status == FirmStatus::Solvent, "firm under its treasury floor");
                 require!(self.order(oid).client != f.owner, "cannot fill your own order");
             }
         }
@@ -1056,21 +1084,33 @@ impl Tender {
         require!(bid_hash(amount.0, &salt) == a.bids[i].hash, "hash mismatch");
         require!(amount.0 >= a.reserve.0, "bid below reserve");
         require!(f.status != FirmStatus::Liquidating && f.status != FirmStatus::Closed, "firm in liquidation or closed");
+        let s0 = self.usage();
+        let mut f = f;
         match a.kind {
             AuctionKind::Liquidation(_) => {
                 // A buyer escrows its bid from the firm treasury; only the owner may commit firm money to a takeover.
                 require!(env::predecessor_account_id() == f.owner, "owner only for takeover bids");
                 self.debit(&f.account, amount.0);
+                f.escrow = U128(f.escrow.0 + amount.0);
             }
             AuctionKind::Order(oid) => {
                 // The firm escrows what it promises to deliver: settlement cannot fail.
                 let o = self.order(oid);
                 self.check_policy(&f, &o, amount.0);
-                self.debit_t(tokens(o.side).1, &f.account, amount.0);
+                let out = tokens(o.side).1;
+                self.debit_t(out, &f.account, amount.0);
+                if out == Token::Stable {
+                    f.escrow = U128(f.escrow.0 + amount.0);
+                } else {
+                    f.escrow_asset = U128(f.escrow_asset.0 + amount.0);
+                }
             }
         }
+        let owner = f.owner.clone();
+        self.save_firm(f);
         a.bids[i].revealed = Some(amount);
         self.auctions.replace(auction_id as u32, a);
+        self.charge(&owner, s0);
         emit("bid_revealed", json!({"auction_id": auction_id, "firm_id": firm_id, "amount": amount}));
     }
 
@@ -1087,20 +1127,24 @@ impl Tender {
     /// The owner's limits on an order bid: price band around the last clearing price, inventory cap.
     fn check_policy(&self, f: &Firm, o: &Order, out: u128) {
         let unit = self.config.asset_unit.0;
-        // Stable per asset unit implied by this bid.
+        // Stable per asset unit implied by this bid, against the reference price when the order was posted.
         let price = match o.side {
-            Side::Buy => o.amount_in.0 * unit / out,
-            Side::Sell => out * unit / o.amount_in.0,
+            Side::Buy => o.amount_in.0.saturating_mul(unit) / out,
+            Side::Sell => out.saturating_mul(unit) / o.amount_in.0,
         };
+        let anchor = o.price.0;
         let band = f.policy.band_bps as u128;
         if band > 0 {
-            require!(price.abs_diff(self.last_price) * BPS <= band * self.last_price, "bid outside the firm's price band");
+            require!(price.abs_diff(anchor).saturating_mul(BPS) <= band * anchor, "bid outside the firm's price band");
         }
         if o.side == Side::Sell {
-            // The firm would hold more asset: check the share of its net asset value after the fill.
-            let asset = self.value(self.asset_of(&f.account) + o.amount_in.0);
-            let nav = self.balances.get(&f.account).copied().unwrap_or(0).saturating_sub(out) + asset;
-            require!(asset * BPS <= f.policy.max_asset_bps as u128 * nav, "fill over the firm's inventory limit");
+            let stable = self.balances.get(&f.account).copied().unwrap_or(0);
+            // Lenders are repaid from the stable treasury: a firm cannot turn the cash it owes into asset.
+            require!(stable.saturating_sub(out) >= Self::owed_total(f), "the firm must keep the cash it owes its lenders");
+            // The firm would hold more asset: check the share of its value after the fill, at the order's price.
+            let asset = (self.asset_of(&f.account) + o.amount_in.0).saturating_mul(anchor) / unit;
+            let nav = stable.saturating_sub(out) + asset;
+            require!(asset.saturating_mul(BPS) <= f.policy.max_asset_bps as u128 * nav, "fill over the firm's inventory limit");
         }
     }
 
@@ -1124,29 +1168,39 @@ impl Tender {
         let winner_idx = result.map(|(i, _)| i);
         // What revealed bids escrowed: the order's output token, or stable for a takeover.
         let escrow = order.as_ref().map_or(Token::Stable, |o| tokens(o.side).1);
-        // Release every lock; refund losers' escrow and the winner's surplus; slash unrevealed order bids.
+        // Release every lock; release escrows (refund losers and the winner's surplus); slash unrevealed order bids.
         for (i, b) in a.bids.clone().iter().enumerate() {
             self.lock(&b.owner, false);
+            let mut f = self.firm(b.firm_id);
             match (b.revealed, &order) {
                 (Some(v), _) => {
-                    let acct = self.firm(b.firm_id).account;
+                    if escrow == Token::Stable {
+                        f.escrow = U128(f.escrow.0 - v.0);
+                    } else {
+                        f.escrow_asset = U128(f.escrow_asset.0 - v.0);
+                    }
                     let refund = if Some(i) == winner_idx { v.0 - a.price.unwrap().0 } else { v.0 };
-                    self.credit_t(escrow, &acct, refund);
+                    self.credit_t(escrow, &f.account, refund);
+                    self.save_firm(f);
                 }
-                (None, Some(o)) => self.slash_no_reveal(o, b),
-                (None, None) => {}
+                // A firm put in liquidation or closed after its commit could not reveal: no slash.
+                (None, Some(o)) if f.status != FirmStatus::Liquidating && f.status != FirmStatus::Closed => self.slash_no_reveal(o, b),
+                _ => {}
             }
         }
         let kind = a.kind.clone();
         self.auctions.replace(auction_id as u32, a.clone());
         emit("auction_settled", json!({"auction_id": auction_id, "winner": a.winner, "price": a.price}));
-        match kind {
-            AuctionKind::Order(oid) => self.on_order_auction(oid, a.winner, a.price),
-            AuctionKind::Liquidation(firm_id) => self.on_liquidation_auction(firm_id, a.winner, a.price),
-        }
-        // An order nobody filled did no work: paying it would let anyone farm rewards with dust orders
-        // (audit finding 07).
-        if order.is_none() || a.winner.is_some() {
+        // A keeper is paid for a liquidation, or for a fill whose fee covers the reward: an order nobody
+        // filled, or a self-filled dust order, would let anyone farm rewards (audit findings 07, 10).
+        let pay_keeper = match kind {
+            AuctionKind::Order(oid) => self.on_order_auction(oid, a.winner, a.price).map_or(false, |fee| fee >= self.config.keeper_reward.0),
+            AuctionKind::Liquidation(firm_id) => {
+                self.on_liquidation_auction(firm_id, a.winner, a.price);
+                true
+            }
+        };
+        if pay_keeper {
             self.reward_keeper();
         }
     }
@@ -1197,7 +1251,17 @@ impl Tender {
     /// Escrow what the client sells and open the auction; `min_out` is its reserve.
     fn post_order_from(&mut self, client: AccountId, p: PostOrder) -> u64 {
         require!(p.amount_in.0 > 0 && p.min_out.0 > 0, "amount_in and min_out must be > 0");
-        self.debit_t(tokens(p.side).0, &client, p.amount_in.0);
+        let notional = if p.side == Side::Buy { p.amount_in.0 } else { p.min_out.0 };
+        require!(notional >= self.config.min_order.0, "order below the minimum size");
+        require!(p.commit_secs <= MAX_ORDER_PHASE_SECS && p.reveal_secs <= MAX_ORDER_PHASE_SECS, "order phases at most 10 minutes");
+        let (tin, tout) = tokens(p.side);
+        self.debit_t(tin, &client, p.amount_in.0);
+        // The ledger entry the fill credits, created now so the client pays its storage.
+        if tout == Token::Asset && self.assets.get(&client).is_none() {
+            self.assets.insert(client.clone(), 0);
+        } else if tout == Token::Stable && self.balances.get(&client).is_none() {
+            self.balances.insert(client.clone(), 0);
+        }
         let id = self.orders.len() as u64;
         let auction = self.new_auction(AuctionKind::Order(id), p.min_out.0, p.commit_secs, p.reveal_secs);
         self.orders.push(Order {
@@ -1207,6 +1271,7 @@ impl Tender {
             amount_in: p.amount_in,
             min_out: p.min_out,
             reference_out: p.reference_out,
+            price: U128(self.last_price),
             auction,
             status: OrderStatus::Open,
             firm: None,
@@ -1227,7 +1292,8 @@ impl Tender {
     /// (`price`), keeps the rest, and receives what the client sold, minus Tontine's fee. The fill's edge
     /// against the previous clearing price is the firm's realized result: 30% of a positive edge goes to
     /// its shareholders at once.
-    fn on_order_auction(&mut self, id: u64, winner: Option<u32>, price: Option<U128>) {
+    /// Returns Tontine's fee on the fill, None when the order is refunded.
+    fn on_order_auction(&mut self, id: u64, winner: Option<u32>, price: Option<U128>) -> Option<u128> {
         let mut o = self.order(id);
         let (tin, tout) = tokens(o.side);
         let (Some(fid), Some(out)) = (winner, price) else {
@@ -1235,7 +1301,7 @@ impl Tender {
             o.status = OrderStatus::Refunded;
             emit("order_refunded", json!({"order_id": id, "client": o.client}));
             self.orders.replace(id as u32, o);
-            return;
+            return None;
         };
         let mut f = self.firm(fid);
         let (amount_in, out) = (o.amount_in.0, out.0);
@@ -1247,10 +1313,13 @@ impl Tender {
         let unit = self.config.asset_unit.0;
         let (edge, notional, price) = match o.side {
             // Received stable, delivered asset.
-            Side::Buy => ((amount_in - fee) as i128 - self.value(out) as i128, amount_in, amount_in * unit / out),
+            Side::Buy => ((amount_in - fee) as i128 - self.value(out) as i128, amount_in, amount_in.saturating_mul(unit) / out),
             // Received asset, delivered stable.
-            Side::Sell => (self.value(amount_in - fee) as i128 - out as i128, out, out * unit / amount_in),
+            Side::Sell => (self.value(amount_in - fee) as i128 - out as i128, out, out.saturating_mul(unit) / amount_in),
         };
+        // The reference price follows fills, at most max_move_bps per fill.
+        let m = self.config.max_move_bps as u128;
+        let price = if m == 0 { price } else { price.clamp(self.last_price * (BPS - m) / BPS, self.last_price * (BPS + m) / BPS) };
         if edge > 0 {
             let div = (edge as u128 * self.config.dividend_bps as u128 / BPS).min(self.balances.get(&f.account).copied().unwrap_or(0));
             let dust = Self::distribute(&mut f, div);
@@ -1270,6 +1339,7 @@ impl Tender {
         );
         self.save_firm(f);
         self.orders.replace(id as u32, o);
+        Some(fee)
     }
 
     // ---------------------------------------------------------------- epochs & liquidation
@@ -1291,8 +1361,9 @@ impl Tender {
                 self.save_firm(f);
                 continue;
             }
-            // Net asset value: the stable treasury plus the asset inventory at the last clearing price.
-            if self.nav(&f) < self.config.treasury_floor.0 {
+            // The floor is a cash requirement: the stable treasury, escrows of open bids included. It never
+            // depends on a price, so no fill elsewhere can push a firm into liquidation.
+            if self.balances.get(&f.account).copied().unwrap_or(0) + f.escrow.0 < self.config.treasury_floor.0 {
                 f.epochs_below_floor += 1;
                 f.status = FirmStatus::Illiquid;
                 if f.epochs_below_floor >= self.config.epochs_before_liquidation {
@@ -1310,9 +1381,8 @@ impl Tender {
 
     fn start_liquidation(&mut self, f: &mut Firm) {
         let (c, r) = (self.config.liquidation_commit_secs, self.config.liquidation_reveal_secs);
-        // The buyer gets the firm with its asset inventory: it pays at least what that inventory is worth.
-        let reserve = self.value(self.asset_of(&f.account)).max(1);
-        let id = self.new_auction(AuctionKind::Liquidation(f.id), reserve, c, r);
+        // The asset inventory goes to the shareholders in kind, not to the buyer: any bid buys the firm.
+        let id = self.new_auction(AuctionKind::Liquidation(f.id), 1, c, r);
         f.liquidation_auction = Some(id);
         emit("liquidation_started", json!({"firm_id": f.id, "auction_id": id}));
     }
@@ -1320,6 +1390,8 @@ impl Tender {
     /// Cascade: fee, then creditors, then shareholders. The buyer firm gets 100% of the shares and the owner field.
     fn on_liquidation_auction(&mut self, firm_id: u32, winner: Option<u32>, price: Option<U128>) {
         let mut f = self.firm(firm_id);
+        // Escrows of its own open bids would come back to the firm after the sale: settle them first.
+        require!(f.escrow.0 == 0 && f.escrow_asset.0 == 0, "the firm has open bids: settle them first");
         f.liquidation_auction = None;
         let (Some(buyer_id), Some(price)) = (winner, price) else {
             // Nobody wants it: wind it up.
@@ -1342,6 +1414,8 @@ impl Tender {
             self.settle_holding(&mut f, i);
         }
         self.credit(&f.account.clone(), dust);
+        // The asset inventory goes to the old shareholders in kind: the buyer cannot take it for any price.
+        let asset_out = self.asset_to_holders(&f);
         for h in &f.holdings {
             emit_mt(
                 "mt_transfer",
@@ -1358,7 +1432,7 @@ impl Tender {
         f.owner_synced = false;
         emit(
             "liquidated",
-            json!({"firm_id": f.id, "buyer_firm_id": buyer_id, "old_owner": old_owner, "new_owner": buyer.owner, "price": price, "fee": U128(fee), "to_shareholders": U128(rest - dust)}),
+            json!({"firm_id": f.id, "buyer_firm_id": buyer_id, "old_owner": old_owner, "new_owner": buyer.owner, "price": price, "fee": U128(fee), "to_shareholders": U128(rest - dust), "asset_to_shareholders": U128(asset_out)}),
         );
         let id = f.id;
         self.save_firm(f);
@@ -1395,6 +1469,7 @@ impl Tender {
     }
 
     fn wind_up(&mut self, f: &mut Firm, reason: &str) {
+        require!(f.escrow.0 == 0 && f.escrow_asset.0 == 0, "the firm has open bids: settle them first");
         let treasury = self.balances.get(&f.account).copied().unwrap_or(0);
         self.debit(&f.account.clone(), treasury);
         let rest = self.pay_creditors(f, treasury);
@@ -1406,21 +1481,28 @@ impl Tender {
             self.settle_holding(f, i);
         }
         self.credit(&self.config.admin.clone(), dust);
-        // The asset inventory goes to the shareholders in kind, pro rata (creditors are owed stable only).
-        let asset = self.asset_of(&f.account);
-        let mut given = 0;
-        if asset > 0 {
-            self.debit_t(Token::Asset, &f.account.clone(), asset);
-            for h in f.holdings.clone() {
-                let part = asset * h.shares as u128 / SHARES as u128;
-                self.credit_t(Token::Asset, &h.account, part);
-                given += part;
-            }
-            self.credit_t(Token::Asset, &self.config.admin.clone(), asset - given);
-        }
+        let given = self.asset_to_holders(f);
         f.status = FirmStatus::Closed;
         f.liquidation_auction = None;
         emit("firm_closed", json!({"firm_id": f.id, "reason": reason, "to_shareholders": U128(rest - dust), "asset_to_shareholders": U128(given)}));
+    }
+
+    /// The asset inventory goes to the shareholders in kind, pro rata; the rounding remainder to Tontine.
+    /// Lenders are owed stable only, and a firm cannot turn the cash it owes them into asset (check_policy).
+    fn asset_to_holders(&mut self, f: &Firm) -> u128 {
+        let asset = self.asset_of(&f.account);
+        if asset == 0 {
+            return 0;
+        }
+        self.debit_t(Token::Asset, &f.account.clone(), asset);
+        let mut given = 0;
+        for h in f.holdings.clone() {
+            let part = asset * h.shares as u128 / SHARES as u128;
+            self.credit_t(Token::Asset, &h.account, part);
+            given += part;
+        }
+        self.credit_t(Token::Asset, &self.config.admin.clone(), asset - given);
+        given
     }
 
     /// The firm contract has no full access key: ownership changes only through this call.

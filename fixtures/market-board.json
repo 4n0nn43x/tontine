@@ -1,7 +1,0 @@
-{
-  "note": "Hand-written sample in the shape of GET /v1/jobs/board (PlaceBid/Job schemas of market.near.ai). Not captured from the live API.",
-  "jobs": [
-    { "jobId": "00000000-0000-4000-8000-000000000001", "title": "Translate a README to French", "description": "Translate a 300-word README from English to French, keep the markdown.", "budgetAmount": "8.000000000000", "budgetToken": "USDC" },
-    { "jobId": "00000000-0000-4000-8000-000000000002", "title": "Write unit tests for a parser", "description": "Add 5 unit tests for a JSON-lines parser in TypeScript.", "budgetAmount": "15.000000000000", "budgetToken": "USDC" }
-  ]
-}

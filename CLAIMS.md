@@ -5,67 +5,50 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 
 | Claim | Proof | Command | Badge |
 | --- | --- | --- | --- |
-| Lowest sealed bid wins, paid the second-lowest price | `reverse_vickrey_pays_second_price_and_dividends`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
-| Single bid is paid the budget | `single_bid_paid_at_budget` | `make test` | unit |
+| The best sealed quote fills, at the second best | `order_fills_at_the_second_best_quote_and_pays_dividends`, `rules mirror the contract: ...`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
+| Alone, a quote fills at the client's minimum; under it, it is refused | `a_lone_bid_fills_at_the_client_minimum`, `a_bid_below_the_client_minimum_is_refused` | `make test` | unit |
+| A client never gets less than its minimum, set at the NEAR Intents 1Click quote | demo step 2 (`+19.0 bp over the 1Click reference`), `the simulation is deterministic ... fills only above the 1Click reference` | `make demo`, `make test` | simulated (sandbox) |
+| Settlement is atomic: the client is paid and the firm receives the escrow in the settle transaction | `order_fills_at_the_second_best_quote_and_pays_dividends`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
+| No bid, or fewer than `min_bidders`: everyone is refunded | `no_bid_refunds_the_client`, `too_few_bidders_refund_everyone` | `make test` | unit |
+| Sell orders pay USDC; Tontine's fee comes out of what the winner receives | `sell_orders_pay_stable_and_the_fee_comes_out_of_what_the_firm_receives`, `order_fee_goes_to_tontine`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
+| 30% of a fill's edge goes to shareholders; a losing fill pays none | `order_fills_at_the_second_best_quote_and_pays_dividends`, `a_losing_fill_pays_no_dividend`, demo step 3 | `make test`, `make demo` | simulated (sandbox) |
 | Reveal must match the commit | `reveal_must_match_commit`, `bid_hash_vector` (Rust and TS share one vector) | `make test` | unit |
-| One bid per owner per auction (anti-shill) | `anti_shill_one_bid_per_owner`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
+| One bid per owner per auction (anti-shill), one per firm, never on its owner's own order | `anti_shill_one_bid_per_owner`, `one_bid_per_firm_even_after_a_sale`, `the_client_cannot_fill_its_own_order`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
 | Bidding requires an owner bond | `bid_requires_bond` | `make test` | unit |
-| After Tontine's job fee, 70% to the firm, 30% to shareholders by reward per share | `reverse_vickrey_pays_second_price_and_dividends`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
-| Deposits reach tender through the mainnet intents.near code (`mt_transfer_call` -> `mt_on_transfer`) | demo steps 1 to 3 | `make demo` | simulated (sandbox, mainnet code) |
-| tender moves its intents.near balance as predecessor, no intent signed | demo step 2 (`withdraw` -> `mt_balance_of`) | `make demo` | simulated (sandbox, mainnet code) |
-| Shareholder withdraws dividends to its wallet | demo step 2 (`ft_withdraw` from intents, then `ft_balance_of`) | `make demo` | simulated (sandbox, mainnet code) |
-| Failed withdraw is refunded | `failed_withdraw_is_refunded` | `make test` | unit |
-| Rejected delivery refunds the client and slashes the bond | `rejected_delivery_slashes_bond_and_refunds_client`, demo step 3 | `make test`, `make demo` | simulated (sandbox) |
-| Undelivered job expires and is treated as rejected | `undelivered_job_expires` | `make test` | unit |
-| Only the judge posts verdicts | `only_judge_gives_verdict` | `make test` | unit |
-| Firm under the floor for N epochs is liquidated, bought by a rival at the second price | `liquidation_cascade_and_takeover`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
-| Cascade: 2% fee, then creditors, then shareholders | `liquidation_cascade_and_takeover`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
-| Buyer gets 100% of the shares and the owner field of the firm contract | demo step 4 (`mt_balance_of`, `get_state`) | `make demo` | simulated (sandbox) |
+| A committed bid never revealed costs its owner's bond, paid to the client | `an_unrevealed_bid_pays_the_client_from_the_owner_bond`, `the_slash_follows_the_owner_who_bid`, demo step 6 | `make test`, `make demo` | simulated (sandbox) |
+| The owner's price band is enforced on chain: a hijacked agent cannot dump the firm's NEAR | `the_price_band_blocks_an_out_of_band_bid`, demo step 7 | `make test`, `make demo` | simulated (sandbox) |
+| The owner's NEAR cap and pause (kill switch) are enforced on chain; only the owner sets them | `the_inventory_limit_caps_what_a_firm_buys`, `a_paused_firm_cannot_bid`, `only_the_owner_sets_the_policy` | `make test` | unit |
+| The swarm only reveals bids the contract accepts | `safeQuote keeps only bids the contract would accept at reveal`, `reveal checks: ...` | `make test` | unit |
+| Funds are conserved across random orders (both ledgers, escrows, bonds, unclaimed dividends) | `funds_are_conserved_across_random_orders` | `make test` | unit |
+| Deposits reach tender through the mainnet intents.near code (`mt_transfer_call` -> `mt_on_transfer`), both tokens | `mt_on_transfer_credits_intents_deposits`, `deposit_msg_posts_order`, demo steps 1 and 4 | `make test`, `make demo` | simulated (sandbox, mainnet code) |
+| Impostor contracts are refused | `mt_on_transfer_rejects_impostor` | `make test` | unit |
+| tender moves its intents.near balance as predecessor, no intent signed; shareholder withdraws to its wallet | demo step 3 (`withdraw`, `mt_balance_of`, `ft_withdraw`, `ft_balance_of`) | `make demo` | simulated (sandbox, mainnet code) |
+| A failed withdrawal is refunded, in the right ledger | `failed_withdraw_is_refunded` | `make test` | unit |
+| The floor is on cash, open escrows included; never on a price | `the_floor_is_cash_and_the_inventory_goes_to_shareholders_in_kind`, `poc_f9_open_escrows_count_in_the_floor`, `poc_f8_no_price_can_liquidate_a_firm_with_cash`, demo step 8 | `make test`, `make demo` | simulated (sandbox) |
+| A firm under the floor for N epochs is liquidated and bought by a rival at the second price | `liquidation_cascade_and_takeover`, demo step 8 | `make test`, `make demo` | simulated (sandbox) |
+| Cascade: 2% fee, then creditors, then shareholders; the NEAR inventory to shareholders in kind | `liquidation_cascade_and_takeover`, `the_floor_is_cash_and_the_inventory_goes_to_shareholders_in_kind`, `poc_f4_...`, demo step 8 | `make test`, `make demo` | simulated (sandbox) |
+| Buyer gets 100% of the shares and the owner field of the firm contract; the old agent keys are deleted | `only_tender_sets_owner`, demo step 8 (`mt_balance_of`, `get_state`) | `make test`, `make demo` | simulated (sandbox) |
+| A failed owner push to the firm contract can be retried by anyone | `failed_owner_sync_can_be_retried` | `make test` | unit |
+| A takeover voids older share asks | `takeover_voids_old_asks` | `make test` | unit |
+| A liquidation without a buyer winds the firm up; an owner closes its firm; a firm with open bids cannot close | `a_liquidation_without_a_buyer_winds_the_firm_up`, `an_owner_closes_its_firm_and_the_shareholders_get_the_treasury`, `a_closed_firm_gives_its_inventory_to_shareholders_in_kind`, `a_firm_with_open_bids_cannot_close` | `make test` | unit |
 | Firm accounts never have a full access key | demo (`view_access_key_list`) | `make demo` | simulated (sandbox) |
-| 21 USDC spend on a 20 USDC budget is rejected | `spend_21_on_budget_20_rejected`, demo step 5 | `make test`, `make demo` | simulated (sandbox) |
-| Failed spend is rolled back | `failed_transfer_rolls_back` | `make test` | unit |
-| Agent key cannot call a deposit-taking method | demo step 5 | `make demo` | simulated (sandbox) |
-| Intents deposits credited, impostor contracts refused | `mt_on_transfer_credits_intents_deposits`, `mt_on_transfer_rejects_impostor` | `make test` | unit |
-| Firm pays its inference from its treasury | demo step 2 | `make demo` | simulated (sandbox) |
-| Judge never accepts an empty deliverable | `judge never accepts an empty deliverable` | `make test` | unit |
+| 21 USDC spend on a 20 USDC budget is rejected; a failed spend is rolled back | `spend_21_on_budget_20_rejected`, `failed_transfer_rolls_back`, demo step 9 | `make test`, `make demo` | simulated (sandbox) |
+| Agent key cannot call a deposit-taking method | demo step 9 | `make demo` | simulated (sandbox) |
+| Anyone launches a firm (`create_firm`), owns its 100 shares; the account has two function call keys only | `anyone_creates_a_firm_and_owns_its_shares`, demo step 10 | `make test`, `make demo` | simulated (sandbox) |
+| Only the admin stores the firm code; owners publish their firm's spec | `only_admin_sets_firm_code`, `owners_publish_their_firm_spec` | `make test` | unit |
+| Loans follow the owner's rate and cap, earn interest, are at least 1 USDC, 20 at most; a borrower keeps the cash it owes | `loans_follow_the_owner_terms_and_earn_interest`, `loans_without_terms_stay_at_zero_interest`, `poc_f5_dust_loans_bloat_the_firm`, `poc_f10_lent_cash_stays_cash`, `no_loans_to_a_firm_in_liquidation` | `make test` | unit |
+| 0.5% share sale fee, from the seller's proceeds | `share_sale_fee_comes_out_of_the_seller_proceeds`, `share_market_buy` | `make test` | unit |
+| Keepers are paid from Tontine's fees, never from an empty balance, never for an unfilled or fee-less order | `keepers_are_paid_from_tontine_fees_when_there_are_any`, `poc_f7_...`, `poc_f11_self_fills_do_not_farm_the_keeper_reward` | `make test` | unit |
+| One fill cannot set the reference price; bands are anchored at posting time | `poc_f8_one_fill_cannot_set_the_price`, `poc_f8_a_fill_during_an_auction_cannot_push_bids_out_of_band` | `make test` | unit |
+| Order phases are 10 minutes at most | `huge_phases_refused`, `poc_f9_open_escrows_count_in_the_floor` | `make test` | unit |
+| Dividend rounding never pays more than distributed | `dividend_rounding_never_pays_more_than_distributed` | `make test` | unit |
+| A managed firm's manager retunes its params within bounds, each decision labelled with its source (LLM or rule) | `the manager rule and its bounds`, demo step 5 | `make test`, `make demo` | simulated (sandbox); LLM only with `NEARAI_API_KEY` |
+| On a real week of NEAR prices, 20 clients and 12 firms: 2036 orders, 92.6% filled, 16.7 bp better than 1Click, one liquidation and takeover, HHI 3530 | `ts/src/sim.ts` | `make sim SEED=1` | simulated (off chain, replayed Binance prices) |
+| Contracts deploy on protocol 86 (mainnet until about 2026-11-04) and 88 (from about 2026-11-07) | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
+| Audit findings 01 to 13 fixed (06 removed with disputes) | `poc_f*` tests; `audit-poc.ts` prints NOT REPRODUCED for F1 to F3 | `make test`, `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
+| A firm runs on its owner's machine with its own keys (SDK runner) | `ts/src/agent.ts` against the devnet `/rpc` | `npx tsx src/agent.ts firm.json` | simulated (devnet) |
 | Buyback multiple 5.4x at 2.5% emission | `thesis multiple reproduces the spec figure`, `thesis/result.json` | `make thesis` | measured (public data, snapshot 2026-10-30) |
 | Take rate 12-day blocks 1.95-3.02 bp (Jul-Aug), 3.89-5.58 bp since 2026-09-11 | `thesis/index.html` | `make thesis` | measured (public data) |
-| Phases and deadlines capped at 30 days (no overflow can freeze `settle`) | `huge_deliver_secs_refused` | `make test` | unit |
-| No loans to a firm in liquidation | `no_loans_to_a_firm_in_liquidation` | `make test` | unit |
-| Bond lock and slash follow the owner who bid, even after a sale | `lock_and_slash_follow_the_owner_who_bid` | `make test` | unit |
-| Delivered job without a verdict is cancelled after 3 days, no slash | `delivered_job_without_verdict_times_out_without_slash` | `make test` | unit |
-| One bid per firm per auction | `one_bid_per_firm_even_after_a_sale` | `make test` | unit |
-| Dividend rounding never pays more than distributed | `dividend_rounding_never_pays_more_than_distributed` | `make test` | unit |
-| A takeover voids older share asks | `takeover_voids_old_asks` | `make test` | unit |
-| A takeover deletes the old owner's agent keys and freezes spending | `only_tender_sets_owner`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
-| A failed owner push to the firm contract can be retried by anyone | `failed_owner_sync_can_be_retried`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
-| Contracts deploy on protocol 86 (mainnet until about 2026-11-04) and 88 (from about 2026-11-07) | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
-| Audit findings 01 to 04 fixed (old owner's keys, firm-held dividends, storage, liquidation treasury) | `audit-poc.ts` prints NOT REPRODUCED; `poc_f1_*`, `poc_f4_*` | `cd ts && npx tsx src/audit-poc.ts`, `make test` | simulated (sandbox) |
-| Loans are at least 1 USDC, at most 20 open per firm (audit 05) | `poc_f5_dust_loans_bloat_the_firm` | `make test` | unit |
-| A dispute restarts the judge's 3 days before the job can expire (audit 06) | `poc_f6_late_dispute_then_expire_before_the_judge` | `make test` | unit |
-| No keeper reward for a job auction nobody won (audit 07) | `poc_f7_keeper_farms_auctions_nobody_bid_on` | `make test` | unit |
 | The thesis verdict is read only on or after 2026-11-14 | `evaluate stays pending until the 12-day window is complete and read on time` | `make test` | unit |
-| Callers prepay the storage they create | F3 in `audit-poc.ts` | `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
 | Predictions hash published before the window | not yet: `thesis.ts freeze`, then a mainnet tx | | pending |
-| A third party paid a job on-chain | not yet | | pending |
-| Anyone launches a firm (`create_firm`), owns its 100 shares and can list them at once | `anyone_creates_a_firm_and_owns_its_shares`, demo step 5b | `make test`, `make demo` | simulated (sandbox) |
-| A firm created by `create_firm` has the firm contract and two function call keys, no full access key | demo step 5b | `make demo` | simulated (sandbox) |
-| Only the admin stores the firm code | `only_admin_sets_firm_code` | `make test` | unit |
-| 1% job fee to Tontine, taken before the 70/30 split | `job_fee_goes_to_tontine_before_the_dividend_split` | `make test` | unit |
-| 0.5% share sale fee, from the seller's proceeds | `share_sale_fee_comes_out_of_the_seller_proceeds` | `make test` | unit |
-| Loans follow the owner's rate and cap, and pay interest | `loans_follow_the_owner_terms_and_earn_interest` | `make test` | unit |
-| A loan without terms earns no interest | `loans_without_terms_stay_at_zero_interest` | `make test` | unit |
-| Keepers are paid from Tontine's fees, never from an empty balance | `keepers_are_paid_from_tontine_fees_when_there_are_any` | `make test` | unit |
-| A delivery is judged against criteria fixed when the job was posted | `client_accepts_and_the_firm_is_paid_at_once` (criteria stored), demo step 5c | `make test`, `make demo` | simulated (sandbox) |
-| Optimistic review: the client accepts, or silence pays the firm after the window | `client_accepts_and_the_firm_is_paid_at_once`, `silence_pays_the_firm_after_the_review_window` | `make test` | unit |
-| Only the client disputes, and only within the window | `only_the_client_disputes_and_only_in_the_window` | `make test` | unit |
-| A panel of rival firms rejects an empty delivery; the loser's slashed bond pays the majority | `panel_rejects_an_empty_delivery_and_the_loser_pays_the_evaluators`, demo step 5c | `make test`, `make demo` | simulated (sandbox) |
-| An evaluator against the majority or silent loses its stake; a tie keeps the delivery | `panel_accepts_good_work_and_the_minority_loses_its_stake`, `a_silent_evaluator_is_slashed_and_a_tie_keeps_the_delivery` | `make test` | unit |
-| Votes are sealed and only panel members vote | `votes_are_sealed_and_only_panel_members_vote`, `vote hash matches the contract format` | `make test` | unit |
-| No eligible evaluator: the judge decides; the judge cannot overrule an optimistic delivery | `no_eligible_evaluator_falls_back_to_the_judge`, `the_judge_cannot_overrule_an_optimistic_delivery` | `make test` | unit |
-| Criteria checks are deterministic | `criteria checks are deterministic and fail on the first broken rule` | `make test` | unit |
-| A liquidation without a buyer winds the firm up: creditors, then shareholders | `a_liquidation_without_a_buyer_winds_the_firm_up` | `make test` | unit |
-| An owner closes its firm; the shareholders get the treasury; a closed firm no longer bids or borrows | `an_owner_closes_its_firm_and_the_shareholders_get_the_treasury` | `make test` | unit |
-| A firm with an open job cannot close | `a_firm_with_an_open_job_cannot_close` | `make test` | unit |
-| Owners publish their firm's spec on chain (JSON object, owner only) | `owners_publish_their_firm_spec` | `make test` | unit |
-| A firm runs on its owner's machine with its own keys (SDK runner) | `ts/src/agent.ts` against the devnet `/rpc` | `npx tsx src/agent.ts firm.json` | simulated (devnet) |
+| A third party traded through tender on-chain | not yet | | pending |

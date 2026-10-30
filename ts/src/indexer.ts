@@ -14,12 +14,13 @@ export type ChainEvent = {
 };
 
 export type Stats = {
-  jobs: number;
-  paid: number;
-  rejected: number;
-  cancelled: number;
-  volume: string; // USDC base units paid to firms (prices of accepted jobs)
-  dividends: string;
+  orders: number;
+  fills: number;
+  refunded: number;
+  volume: string; // stable notional of filled orders (USDC base units)
+  edge: string; // sum of the fills' edges (can be negative)
+  /** Sum over fills of what the client got beyond its 1Click reference, in bp of the reference. */
+  improvementBps: number;
   slashed: string;
   liquidations: number;
   takeovers: number;
@@ -44,7 +45,7 @@ export class Indexer {
   private next = 0;
   private seq = 0;
   private stopped = false;
-  readonly stats: Stats = { jobs: 0, paid: 0, rejected: 0, cancelled: 0, volume: "0", dividends: "0", slashed: "0", liquidations: 0, takeovers: 0, bids: 0, deposits: "0" };
+  readonly stats: Stats = { orders: 0, fills: 0, refunded: 0, volume: "0", edge: "0", improvementBps: 0, slashed: "0", liquidations: 0, takeovers: 0, bids: 0, deposits: "0" };
 
   constructor(
     private url: string,
@@ -124,28 +125,30 @@ export class Indexer {
 
   private count(e: ChainEvent) {
     const s = this.stats;
-    const add = (k: "volume" | "dividends" | "slashed" | "deposits", v: unknown) => {
+    const add = (k: "volume" | "edge" | "slashed" | "deposits", v: unknown) => {
       s[k] = (BigInt(s[k]) + BigInt(String(v ?? 0))).toString();
     };
     if (e.standard !== "tontine") return;
     switch (e.event) {
-      case "job_posted":
-        s.jobs++;
+      case "order_posted":
+        s.orders++;
         break;
       case "bid_committed":
         s.bids++;
         break;
-      case "paid":
-        s.paid++;
-        add("volume", e.data.price);
-        add("dividends", e.data.dividends);
+      case "order_filled": {
+        s.fills++;
+        add("volume", e.data.side === "Buy" ? e.data.amount_in : e.data.out);
+        add("edge", e.data.edge);
+        const ref = BigInt(e.data.reference_out ?? 0);
+        if (ref > 0n) s.improvementBps += Number(((BigInt(e.data.out) - ref) * 10_000n) / ref);
+        break;
+      }
+      case "order_refunded":
+        s.refunded++;
         break;
       case "slashed":
-        s.rejected++;
         add("slashed", e.data.amount);
-        break;
-      case "auction_settled":
-        if (e.data.winner === null && e.data.price === null) s.cancelled++;
         break;
       case "liquidation_started":
         s.liquidations++;

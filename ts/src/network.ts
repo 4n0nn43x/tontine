@@ -1,7 +1,7 @@
 // Real network (testnet or mainnet). The human runs these: they sign transactions and spend NEAR.
 //
 //   npx tsx src/network.ts deploy   deploy tender on TENDER_ID, create one firm per strategy, write KEYS_FILE
-//   npx tsx src/network.ts run      run the swarm forever: bid on open jobs, settle, deliver, tick, liquidate
+//   npx tsx src/network.ts run      run the swarm forever: quote open orders, settle, manage, tick, liquidate
 //
 // Config comes from the environment (see .env.example). Keys are written to KEYS_FILE (gitignored), never committed.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -10,6 +10,7 @@ import { account, call, sleep, view, USDC, TGAS } from "./chain.ts";
 import { createFirm, deployContract, wasm } from "./deploy.ts";
 import { makeLlm } from "./llm.ts";
 import { loadStrategies } from "./strategy.ts";
+import { reference } from "./prices.ts";
 import { Swarm, type FirmHandle } from "./swarm.ts";
 
 const env = (k: string, d?: string) => {
@@ -23,10 +24,10 @@ const KEYS_FILE = env("KEYS_FILE", "../keys/firms.json");
 
 type Keys = { firms: { id: number; account: string; owner: string; ownerKey: string; tenderKey: string; firmKey: string; strategy: string }[] };
 
-function payment() {
+function route(ftEnv: string, idEnv: string) {
   return env("PAYMENT", "intents") === "ft"
-    ? { Ft: { token: env("USDC_TOKEN") } }
-    : { Intents: { contract: env("INTENTS_CONTRACT", "intents.near"), token_id: env("INTENTS_TOKEN_ID") } };
+    ? { Ft: { token: env(ftEnv) } }
+    : { Intents: { contract: env("INTENTS_CONTRACT", "intents.near"), token_id: env(idEnv) } };
 }
 
 async function deploy() {
@@ -35,8 +36,10 @@ async function deploy() {
   await deployContract(tender, wasm("tender"), "new", {
     config: {
       admin: tender.accountId,
-      judge: env("JUDGE_ID"),
-      payment: payment(),
+      payment: route("USDC_TOKEN", "INTENTS_TOKEN_ID"),
+      asset: route("WNEAR_TOKEN", "INTENTS_ASSET_ID"),
+      asset_unit: (10n ** 24n).toString(),
+      initial_price: BigInt(Math.round((await reference("Buy", USDC(100))).mid * 1e6)).toString(),
       dividend_bps: 3000,
       liquidation_fee_bps: 200,
       min_bond: USDC(Number(env("MIN_BOND_USDC", "1"))).toString(),
@@ -46,9 +49,13 @@ async function deploy() {
       epoch_secs: Number(env("EPOCH_SECS", "3600")),
       liquidation_commit_secs: 30,
       liquidation_reveal_secs: 30,
-      job_fee_bps: 100,
+      order_fee_bps: 2,
       trade_fee_bps: 50,
       keeper_reward: USDC(0.02).toString(),
+      no_reveal_slash_bps: 100,
+      min_bidders: 2,
+      min_order: USDC(1).toString(),
+      max_move_bps: 300,
     },
   });
   await call(tender, tender.accountId, "set_firm_code", { code: Buffer.from(wasm("firm")).toString("base64") }, 0n, TGAS(200));
@@ -64,7 +71,7 @@ async function deploy() {
     console.log(`firm #${f.id} ${f.account} ${strategies[i].name}`);
   }
   writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2), { mode: 0o600 });
-  console.log(`keys written to ${KEYS_FILE}. Owners must now storage_deposit (about 0.5 NEAR) on tender, deposit USDC, deposit_bond and fund their firm.`);
+  console.log(`keys written to ${KEYS_FILE}. Owners must now storage_deposit (about 0.5 NEAR) on tender, deposit USDC, deposit_bond and fund their firm with USDC and wNEAR.`);
 }
 
 async function loadSwarm(): Promise<Swarm> {
@@ -78,23 +85,22 @@ async function loadSwarm(): Promise<Swarm> {
     agentFirm: account(k.account, provider, k.firmKey as KeyPairString),
     strategy: strategies.find((s) => s.name === k.strategy) ?? (() => { throw new Error(`strategy ${k.strategy} not in strategies/`); })(),
   }));
-  const judge = account(env("JUDGE_ID"), provider, env("JUDGE_KEY") as KeyPairString);
-  return new Swarm(provider, env("TENDER_ID"), firms, judge, makeLlm(), env("INFERENCE_PROVIDER_ID"));
+  return new Swarm(provider, env("TENDER_ID"), firms, makeLlm(), env("INFERENCE_PROVIDER_ID"), async () => (await reference("Buy", USDC(100))).mid);
 }
 
-// ponytail: one job at a time (each auction blocks the loop for its commit+reveal phases); run jobs concurrently if volume grows.
+// ponytail: one order at a time (each auction blocks the loop for its commit+reveal phases); run them concurrently if volume grows.
 async function run() {
   const swarm = await loadSwarm();
   const T = swarm.tender;
   const seen = new Set<string>();
   for (;;) {
     try {
-      const jobs: any[] = await view(provider, T, "get_jobs", { from: 0, limit: 1000 });
-      for (const j of jobs.filter((x) => x.status === "Bidding" && !seen.has(`job${x.id}`))) {
-        seen.add(`job${j.id}`);
-        const a = await view(provider, T, "get_auction", { auction_id: j.auction });
+      const orders: any[] = await view(provider, T, "get_orders", { from: 0, limit: 1000 });
+      for (const o of orders.filter((x) => x.status === "Open" && !seen.has(`order${x.id}`))) {
+        seen.add(`order${o.id}`);
+        const a = await view(provider, T, "get_auction", { auction_id: o.auction });
         const now: any = await provider.viewBlock({ finality: "optimistic" } as any);
-        if (BigInt(now.header.timestamp_nanosec) < BigInt(a.commit_end)) await swarm.runJob(j.id).catch((e) => console.error(`job ${j.id}:`, e.message));
+        if (BigInt(now.header.timestamp_nanosec) < BigInt(a.commit_end)) await swarm.runOrder(o.id).catch((e) => console.error(`order ${o.id}:`, e.message));
       }
       await swarm.tick();
       const firms: any[] = await view(provider, T, "get_firms");

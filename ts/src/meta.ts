@@ -2,23 +2,24 @@
 // server writes each page's title, description and Open Graph tags into index.html, from the cached chain state.
 
 export type Meta = { title: string; description: string };
-export type MetaData = { state: { firms: any[]; jobs: any[] }; stats: Record<string, any>; thesis: { result: any } };
+export type MetaData = { state: { firms: any[]; orders: any[] }; stats: Record<string, any>; thesis: { result: any } };
 
 const HOME: Meta = {
   title: "Tontine | The Firm Layer Of The Agent Economy",
-  description: "AI micro-firms win jobs by sealed bid, pay dividends, go bankrupt and get bought by their rivals, all settled on NEAR.",
+  description: "AI market-making firms with shares and dividends quote NEAR swaps by sealed bid, go bankrupt and get bought by their rivals, all settled on NEAR.",
 };
 const IMAGE_ALT = "A pixel-art city at dusk where every tower is an AI firm, under the words The Firm Layer Of The Agent Economy.";
-const STATUS: Record<string, string> = { Solvent: "Solvent", Illiquid: "Under its treasury floor", Liquidating: "In liquidation", Closed: "Closed" };
+const STATUS: Record<string, string> = { Solvent: "Solvent", Illiquid: "Under its cash floor", Liquidating: "In liquidation", Closed: "Closed" };
 
 const usdc = (base: unknown) => (Number(base ?? 0) / 1e6).toFixed(2);
+const near = (base: unknown) => (Number(BigInt(String(base ?? 0))) / 1e24).toFixed(3);
 /** At most `n` characters, cut at the end of a word. */
 function clip(s: string, n: number): string {
   if (s.length <= n) return s;
   const cut = s.lastIndexOf(" ", n - 1);
   return s.slice(0, cut > n / 2 ? cut : n - 1).replace(/[\s,.:;]+$/, "") + "…";
 }
-const jobs = (n: unknown) => `${Number(n ?? 0)} job${Number(n) === 1 ? "" : "s"}`;
+const count = (n: unknown, word: string) => `${Number(n ?? 0)} ${word}${Number(n) === 1 ? "" : "s"}`;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 export function firmName(f: any): string {
@@ -29,55 +30,54 @@ export function firmName(f: any): string {
   return f?.strategy?.name ?? `Firm #${f?.id}`;
 }
 
-function job(id: number, d: MetaData): Meta {
-  const j = d.state.jobs.find((x) => x.id === id);
-  if (!j) return { title: `Job #${id}`, description: "A job on Tontine: sealed bids, the winner, the second price it is paid, the deliverable and the 70/30 split." };
-  const a = j.auctionState ?? {};
-  const firm = d.state.firms.find((f) => f.id === a.winner);
-  const won = firm ? `Won by ${firmName(firm)} at ${usdc(a.price)} USDC, the second-lowest of ${a.bids?.length ?? 0} sealed bids` : "";
+function order(id: number, d: MetaData): Meta {
+  const o = d.state.orders.find((x) => x.id === id);
+  if (!o) return { title: `Order #${id}`, description: "A NEAR/USDC order on Tontine: AI firms quote by sealed bid, the best fills at the second best, never worse than NEAR Intents 1Click." };
+  const what = o.side === "Buy" ? `Buy NEAR with ${usdc(o.amount_in)} USDC` : `Sell ${near(o.amount_in)} NEAR for USDC`;
+  const got = (v: unknown) => (o.side === "Buy" ? `${near(v)} NEAR` : `${usdc(v)} USDC`);
+  const firm = d.state.firms.find((f) => f.id === o.firm);
+  const bids = o.auctionState?.bids?.length ?? 0;
+  const ref = o.reference_out ? BigInt(o.reference_out) : 0n;
+  const better = o.out && ref > 0n ? ` That is ${((Number(BigInt(o.out) - ref) / Number(ref)) * 1e4).toFixed(1)} bp better than NEAR Intents 1Click.` : "";
   const outcome: Record<string, string> = {
-    Bidding: `Open auction with a ${usdc(j.budget)} USDC budget: AI firms are sealing their bids, the lowest wins and is paid the second-lowest price.`,
-    Assigned: `${won}. The firm is doing the work.`,
-    Delivered: `${won}. Delivered, under review.`,
-    Disputed: `${won}. The client disputed the delivery and a panel of rival firms is voting.`,
-    Paid: `${won}, and paid on delivery: after Tontine's fee, 70% to the firm and 30% to its shareholders.`,
-    Rejected: `${won}. The delivery was rejected: the client was refunded and the owner's bond slashed.`,
-    Cancelled: "Cancelled: the client got its money back.",
+    Open: `Open auction: AI firms are sealing their quotes. The best fills at the second best, and never under ${got(o.min_out)}.`,
+    Filled: `Filled by ${firm ? firmName(firm) : `firm #${o.firm}`} out of ${count(bids, "sealed bid")}: the client got ${got(o.out)}, the second best quote.${better}`,
+    Refunded: "No quote beat the client's minimum: refunded.",
   };
-  return { title: `Job #${id}: ${clip(j.brief, 60)}`, description: outcome[j.status] ?? HOME.description };
+  return { title: `Order #${id}: ${what}`, description: outcome[o.status] ?? HOME.description };
 }
 
 function firm(id: number, d: MetaData): Meta {
   const f = d.state.firms.find((x) => x.id === id);
-  if (!f) return { title: `Firm #${id}`, description: "An AI firm on Tontine: 100 shares, a treasury, dividends, a bond, and a takeover if it goes bankrupt." };
+  if (!f) return { title: `Firm #${id}`, description: "An AI market-making firm on Tontine: 100 shares, a cash treasury, a NEAR inventory, dividends, a bond, and a takeover if it fails." };
   let pitch = "";
   try {
     const spec = f.profile ? JSON.parse(f.profile) : null;
     if (typeof spec?.description === "string") pitch = clip(spec.description, 120) + " ";
   } catch {}
-  const figures = `${STATUS[f.status] ?? f.status}, ${usdc(f.treasury)} USDC in its treasury, ${usdc(f.revenue)} USDC earned, ${usdc(f.dividends)} USDC paid to its shareholders, ${jobs(f.delivered)} delivered.`;
+  const figures = `${STATUS[f.status] ?? f.status}, ${usdc(f.treasury)} USDC and ${near(f.inventory)} NEAR, ${count(f.fills, "fill")}, ${usdc(f.dividends)} USDC paid to its shareholders.`;
   return { title: firmName(f), description: pitch + "AI firm with 100 shares. " + figures };
 }
 
 export function pageMeta(pathname: string, d: MetaData): Meta {
   const p = pathname.replace(/\/+$/, "") || "/";
   const id = (prefix: string) => (p.startsWith(prefix) && /^\d+$/.test(p.slice(prefix.length)) ? Number(p.slice(prefix.length)) : null);
-  const jobId = id("/app/jobs/");
-  if (jobId !== null) return job(jobId, d);
+  const orderId = id("/app/orders/");
+  if (orderId !== null) return order(orderId, d);
   const firmId = id("/app/firms/");
   if (firmId !== null) return firm(firmId, d);
   const s = d.stats;
   switch (p) {
     case "/app":
-      return { title: "Live market", description: `${jobs(s.paid)} paid, ${usdc(s.volume)} USDC settled and ${usdc(s.dividends)} USDC paid to shareholders so far on a live NEAR devnet. Every figure is read from the chain.` };
-    case "/app/jobs":
-      return { title: "Jobs", description: "Every job: the sealed bids, the winner, the second price it is paid, the deliverable and the 70/30 split." };
-    case "/app/post":
-      return { title: "Post a job", description: "Pay in USDC through NEAR Intents, and AI firms bid for the work in a sealed second-price auction." };
+      return { title: "Live market", description: `${count(s.fills, "order")} filled, ${usdc(s.volume)} USDC traded and ${usdc(s.dividends)} USDC paid to shareholders so far on a live NEAR devnet. Every figure is read from the chain.` };
+    case "/app/orders":
+      return { title: "Orders", description: "Every NEAR/USDC order: the sealed quotes, the winner, the second best it delivers, and how it compares with NEAR Intents 1Click." };
+    case "/app/trade":
+      return { title: "Trade", description: "Swap NEAR and USDC through NEAR Intents: AI firms quote by sealed bid, and you never get less than the 1Click price." };
     case "/app/firms":
-      return { title: "Firms", description: `${d.state.firms.length} AI firms with 100 shares each: treasuries, dividends, bonds and takeovers. Buy shares, lend, or launch your own.` };
+      return { title: "Firms", description: `${d.state.firms.length} AI market-making firms with 100 shares each: cash, inventory, dividends, bonds and takeovers. Buy shares, lend, or launch your own.` };
     case "/app/portfolio":
-      return { title: "Portfolio", description: "Your wallet, NEAR Intents and Tontine balances, your jobs and your shares." };
+      return { title: "Portfolio", description: "Your wallet, NEAR Intents and Tontine balances, your orders and your shares." };
     case "/thesis": {
       const r = d.thesis.result;
       const multiple = r ? `Intents volume must grow ${r.multiple_2_5.toFixed(1)}x for buybacks to match NEAR emission. ` : "";

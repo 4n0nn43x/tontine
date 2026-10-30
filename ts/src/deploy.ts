@@ -11,7 +11,7 @@ const WASM_DIR = process.env.WASM_DIR ?? path.join(path.dirname(fileURLToPath(im
 export const wasm = (name: string) => new Uint8Array(readFileSync(path.join(WASM_DIR, `${name}.wasm`)));
 
 /** Methods a firm agent may call on tender. None of them takes a deposit, so none moves money out. */
-export const AGENT_TENDER_METHODS = ["commit_bid", "reveal_bid", "deliver", "settle", "epoch_tick", "expire", "settle_dividends", "commit_vote", "reveal_vote", "finalize", "resolve_dispute"];
+export const AGENT_TENDER_METHODS = ["commit_bid", "reveal_bid", "settle", "epoch_tick", "settle_dividends"];
 
 export async function createAccount(parent: Account, id: string, near: string, provider: JsonRpcProvider) {
   const kp = KeyPair.fromRandom("ed25519");

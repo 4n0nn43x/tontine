@@ -1,6 +1,7 @@
 // The hosted Tontine app in one process: a NEAR devnet with the contracts, the house swarm running for
-// real (auctions, delivery, judge, epochs, liquidations), a house client that keeps posting jobs, a chain
-// indexer, the JSON API, a filtered RPC proxy for visitors' wallets, and the website itself.
+// real (sealed quotes, fills, an AI manager, epochs, liquidations), a house client that keeps posting
+// NEAR/USDC orders at the NEAR Intents 1Click price, a chain indexer, the JSON API, a filtered RPC proxy
+// for visitors' wallets, and the website itself.
 //
 //   npx tsx src/server.ts          (PORT=8080 HOST=127.0.0.1 by default; see README "Run the app")
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -10,11 +11,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { KeyPair } from "near-api-js";
 import { account, call, sleep, view, USDC } from "./chain.ts";
-import { DEVNET_CONFIG, startDevnet, type Devnet } from "./devnet.ts";
+import { DEVNET_CONFIG, NEAR_, startDevnet, type Devnet } from "./devnet.ts";
 import { Indexer, type ChainEvent } from "./indexer.ts";
 import { pageMeta, withMeta } from "./meta.ts";
-import { evaluate } from "./judge.ts";
 import { makeLlm } from "./llm.ts";
+import { reference, type Reference } from "./prices.ts";
 import { Swarm, type FirmHandle } from "./swarm.ts";
 import type { Strategy } from "./strategy.ts";
 
@@ -32,7 +33,13 @@ const log = (s: string) => console.log(`${new Date().toISOString().slice(11, 19)
 const devnet: Devnet = await startDevnet(log);
 const { provider } = devnet;
 const T = devnet.tender.accountId;
-const swarm = new Swarm(provider, T, devnet.firms, devnet.judge, makeLlm(), devnet.inference, (s) => log(`swarm ${s.trim()}`));
+// The reference mid firms quote from: NEAR Intents 1Click, refreshed at most every 30 s.
+let ref: Reference & { at: number } = { ...(await reference("Buy", USDC(100))), at: Date.now() };
+async function mid(): Promise<number> {
+  if (Date.now() - ref.at > 30_000) ref = { ...(await reference("Buy", USDC(100))), at: Date.now() };
+  return ref.mid;
+}
+const swarm = new Swarm(provider, T, devnet.firms, makeLlm(), devnet.inference, mid, (s) => log(`swarm ${s.trim()}`));
 
 const watched = new Set([T, ...devnet.firms.map((f) => f.account)]);
 const indexer = new Indexer(devnet.rpcUrl, (c) => watched.has(c) || c.endsWith(`.${T}`));
@@ -91,51 +98,41 @@ async function chainNow(): Promise<bigint> {
 // ------------------------------------------------------------------ swarm loops
 
 const running = new Set<number>();
-let nextJob = 0;
-
-async function jobsLoop() {
+let nextOrder = 0;
+async function ordersLoop() {
   for (;;) {
     try {
-      const fresh: any[] = await view(provider, T, "get_jobs", { from: nextJob, limit: 50 });
-      nextJob += fresh.length;
-      const recent: any[] = await view(provider, T, "get_jobs", { from: Math.max(0, nextJob - 50), limit: 50 });
+      const fresh: any[] = await view(provider, T, "get_orders", { from: nextOrder, limit: 50 });
+      nextOrder += fresh.length;
+      const recent: any[] = await view(provider, T, "get_orders", { from: Math.max(0, nextOrder - 50), limit: 50 });
       const now = await chainNow();
-      for (const j of recent) {
-        if (j.status === "Delivered" && j.verify !== "Judge") await review(j, now);
-        if (j.status === "Disputed") await swarm.serveDispute(j.id).catch((e) => log(`dispute ${j.id}: ${(e as Error).message}`));
-        if (j.status !== "Bidding" || running.has(j.id)) continue;
-        const a = await view(provider, T, "get_auction", { auction_id: j.auction });
+      for (const o of recent) {
+        if (o.status !== "Open" || running.has(o.id)) continue;
+        const a = await view(provider, T, "get_auction", { auction_id: o.auction });
         if (BigInt(a.commit_end) > now) {
-          running.add(j.id);
+          running.add(o.id);
           // Auctions run concurrently; each account signs one transaction at a time (devnet.serialize).
           swarm
-            .runJob(j.id)
-            .catch((e) => log(`job ${j.id} failed: ${(e as Error).message}`))
-            .finally(() => running.delete(j.id));
+            .runOrder(o.id)
+            .catch((e) => log(`order ${o.id} failed: ${(e as Error).message}`))
+            .finally(() => running.delete(o.id));
         } else if (BigInt(a.reveal_end) < now && !a.settled) {
-          await call(devnet.firms[0].agentTender, T, "settle", { auction_id: j.auction }).catch(() => {});
+          await call(devnet.firms[0].agentTender, T, "settle", { auction_id: o.auction }).catch(() => {});
         }
       }
     } catch (e) {
-      log(`jobs loop: ${(e as Error).message}`);
+      log(`orders loop: ${(e as Error).message}`);
     }
     await sleep(1000);
   }
 }
 
-// Optimistic jobs: the house client reviews its own deliveries against its criteria (accept, or dispute
-// with a bond), and anyone may pay the firm once a review window passes in silence.
-const reviewed = new Set<number>();
-async function review(j: any, now: bigint) {
-  if (j.review_end !== null && now > BigInt(j.review_end)) {
-    await call(devnet.firms[0].agentTender, T, "finalize", { job_id: j.id }).catch(() => {});
-    return;
+// AI-managed firms review their results and retune their quotes every few minutes.
+async function managerLoop() {
+  for (;;) {
+    await sleep(Number(process.env.MANAGER_SECS ?? 180) * 1000);
+    for (const f of devnet.firms.filter((x) => x.strategy.managed)) await swarm.manage(f).catch((e) => log(`manager ${f.strategy.name}: ${(e as Error).message}`));
   }
-  if (j.client !== devnet.houseClient.accountId || reviewed.has(j.id)) return;
-  reviewed.add(j.id);
-  const v = await evaluate(swarm.llm, j.brief, j.criteria, j.result ?? "");
-  await call(devnet.houseClient, T, v.accept ? "accept_delivery" : "dispute", { job_id: j.id }, 1n).catch((e) => log(`review ${j.id}: ${(e as Error).message}`));
-  log(`house client ${v.accept ? "accepts" : "disputes"} job #${j.id} (${v.reason})`);
 }
 
 const liquidating = new Set<number>();
@@ -157,30 +154,26 @@ async function epochLoop() {
   }
 }
 
-// Jobs the house client posts so the market is never idle (labelled as house jobs in the app).
-const HOUSE_JOBS = [
-  ["Translate a README from English to French, keep the markdown.", 10],
-  ["Write three unit tests for a JSON-lines parser.", 4],
-  ["Summarize the NEAR Intents docs page on fees in five bullet points.", 6],
-  ["Review a Rust function for integer overflow and explain the fix.", 9],
-  ["Draft a 120-word changelog for a hackathon release.", 3],
-  ["Turn a CSV of 20 trades into a markdown table with totals.", 5],
-  ["Write a regex that validates NEAR account ids, with examples.", 4],
-  ["Explain second-price sealed auctions to a new user in 100 words.", 7],
-] as const;
+// A house client keeps the market busy: one order whenever none is open, buys and sells in turn, its
+// minimum set at what NEAR Intents 1Click would give (orders are labelled as house orders in the app).
 let houseIndex = 0;
 async function houseClientLoop() {
   await sleep(4000);
   for (;;) {
     try {
-      const recent: any[] = await view(provider, T, "get_jobs", { from: Math.max(0, nextJob - 10), limit: 10 });
-      const open = recent.filter((j) => ["Bidding", "Assigned", "Delivered", "Disputed"].includes(j.status)).length;
-      if (open === 0) {
-        const [brief, budget] = HOUSE_JOBS[houseIndex++ % HOUSE_JOBS.length];
-        await devnet.deposit(devnet.houseClient, USDC(budget), {
-          PostJob: { budget: USDC(budget).toString(), brief, commit_secs: 8, reveal_secs: 6, deliver_secs: 120, criteria: "min words: 8", verify: { Optimistic: { review_secs: 30 } } },
-        });
-        log(`house client posted "${brief}" (${budget} USDC)`);
+      const recent: any[] = await view(provider, T, "get_orders", { from: Math.max(0, nextOrder - 10), limit: 10 });
+      if (!recent.some((o) => o.status === "Open")) {
+        const buy = houseIndex++ % 2 === 0;
+        const side = buy ? "Buy" : "Sell";
+        const amountIn = buy ? USDC(10 + Math.floor(Math.random() * 50)) : NEAR_(1 + Math.floor(Math.random() * 10));
+        const q = await reference(side, amountIn);
+        await devnet.deposit(
+          devnet.houseClient,
+          amountIn,
+          { PostOrder: { side, amount_in: amountIn.toString(), min_out: q.out.toString(), reference_out: q.out.toString(), commit_secs: 8, reveal_secs: 6 } },
+          buy ? "usdc" : "wnear",
+        );
+        log(`house client posted a ${side} order (${buy ? `${Number(amountIn) / 1e6} USDC` : `${Number(amountIn) / 1e24} NEAR`}, at least the 1Click quote, ${q.source})`);
       }
     } catch (e) {
       log(`house client: ${(e as Error).message}`);
@@ -189,14 +182,15 @@ async function houseClientLoop() {
   }
 }
 
-void jobsLoop();
+void ordersLoop();
 void epochLoop();
+void managerLoop();
 void houseClientLoop();
 
 // ------------------------------------------------------------------ cached state for the app
 
 const tenderConfig = await view(provider, T, "get_config");
-let state: any = { firms: [], jobs: [], updatedAt: 0 };
+let state: any = { firms: [], orders: [], updatedAt: 0 };
 async function refreshState() {
   try {
     const firms: any[] = await view(provider, T, "get_firms");
@@ -206,15 +200,26 @@ async function refreshState() {
         return {
           ...f,
           treasury: await view(provider, T, "balance_of", { account_id: f.account }),
+          inventory: await view(provider, T, "asset_balance_of", { account_id: f.account }),
+          nav: await view(provider, T, "nav_of", { firm_id: f.id }),
           ownerBond: await view(provider, T, "bond_of", { account_id: f.owner }),
           strategy: house ? { name: house.strategy.name, author: house.strategy.author, house: house.strategy.house } : null,
         };
       }),
     );
-    const from = Math.max(0, nextJob - 40);
-    const jobs: any[] = await view(provider, T, "get_jobs", { from, limit: 40 });
-    const withAuctions = await Promise.all(jobs.map(async (j) => ({ ...j, auctionState: await view(provider, T, "get_auction", { auction_id: j.auction }) })));
-    state = { firms: withMoney, jobs: withAuctions.reverse(), totalJobs: nextJob, chainTime: (await chainNow()).toString(), updatedAt: Date.now() };
+    const from = Math.max(0, nextOrder - 40);
+    const orders: any[] = await view(provider, T, "get_orders", { from, limit: 40 });
+    const withAuctions = await Promise.all(orders.map(async (o) => ({ ...o, auctionState: await view(provider, T, "get_auction", { auction_id: o.auction }) })));
+    state = {
+      firms: withMoney,
+      orders: withAuctions.reverse(),
+      totalOrders: nextOrder,
+      lastPrice: await view(provider, T, "get_last_price"),
+      reference: { mid: ref.mid, source: ref.source, at: ref.at },
+      params: Object.fromEntries(devnet.firms.map((f) => [f.id, swarm.paramsOf(f)])),
+      chainTime: (await chainNow()).toString(),
+      updatedAt: Date.now(),
+    };
   } catch (e) {
     log(`state: ${(e as Error).message}`);
   }
@@ -350,17 +355,31 @@ const server = createServer(async (req, res) => {
         rpc: "/rpc",
         tender: T,
         usdc: devnet.usdc.accountId,
+        wnear: devnet.wnear.accountId,
         intents: devnet.intents,
         token: devnet.token,
-        judge: devnet.judge.accountId,
+        assetToken: devnet.assetToken,
         houseClient: devnet.houseClient.accountId,
         tenderConfig,
-        firms: devnet.firms.map((f) => ({ id: f.id, account: f.account, owner: f.owner.accountId, strategy: f.strategy.name, author: f.strategy.author, house: f.strategy.house })),
+        firms: devnet.firms.map((f) => ({ id: f.id, account: f.account, owner: f.owner.accountId, strategy: f.strategy.name, author: f.strategy.author, house: f.strategy.house, managed: !!f.strategy.managed })),
         templates: devnet.strategies.map((s, i) => ({ index: i, name: s.name })),
       });
     }
     if (url.pathname === "/api/state") return json(res, 200, state);
-    if (url.pathname === "/api/stats") return json(res, 200, { ...indexer.stats, firms: state.firms.length, totalJobs: state.totalJobs ?? 0 });
+    if (url.pathname === "/api/stats") {
+      const dividends = state.firms.reduce((a: bigint, f: any) => a + BigInt(f.dividends), 0n).toString();
+      return json(res, 200, { ...indexer.stats, dividends, firms: state.firms.length, totalOrders: state.totalOrders ?? 0 });
+    }
+    if (url.pathname === "/api/decisions") return json(res, 200, swarm.decisions.slice(-50).reverse());
+    if (url.pathname === "/api/quote") {
+      // What NEAR Intents 1Click gives for an order: the client's minimum. Live, or the replay when offline.
+      if (!allow(ip, "quote", 60, 60_000)) return json(res, 429, { error: "slow down" });
+      const side = url.searchParams.get("side");
+      const amount = url.searchParams.get("amount") ?? "";
+      if ((side !== "Buy" && side !== "Sell") || !/^[1-9][0-9]{0,30}$/.test(amount)) return json(res, 400, { error: "side=Buy|Sell&amount=<base units>" });
+      const q = await reference(side, BigInt(amount));
+      return json(res, 200, { out: q.out.toString(), mid: q.mid, source: q.source });
+    }
     if (url.pathname === "/api/events") {
       const limit = Math.min(500, Number(url.searchParams.get("limit") ?? 100));
       return json(res, 200, indexer.events.slice(-limit));
@@ -379,7 +398,7 @@ const server = createServer(async (req, res) => {
       if (typeof publicKey !== "string" || !/^ed25519:[1-9A-HJ-NP-Za-km-z]{40,50}$/.test(publicKey)) return json(res, 400, { error: "publicKey must be an ed25519 public key" });
       const accountId = await devnet.createVisitor(publicKey);
       log(`visitor account ${accountId}`);
-      return json(res, 200, { accountId, near: "5", usdc: "100" });
+      return json(res, 200, { accountId, near: "5", usdc: "100", wnear: "20" });
     }
     if (url.pathname === "/api/agent" && req.method === "POST") {
       if (!allow(ip, "agent", 5, 3_600_000)) return json(res, 429, { error: "Too many firms from this address, try again in an hour." });
@@ -397,7 +416,8 @@ const server = createServer(async (req, res) => {
       const { accountId } = await readBody(req, 4096);
       if (typeof accountId !== "string" || !/^v[a-z0-9]+\.sandbox$/.test(accountId)) return json(res, 400, { error: "only demo accounts can use the faucet" });
       await devnet.mint(accountId, USDC(100));
-      return json(res, 200, { accountId, usdc: "100" });
+      await devnet.mint(accountId, NEAR_(20), "wnear");
+      return json(res, 200, { accountId, usdc: "100", wnear: "20" });
     }
     if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "not found" });
     return serveStatic(req, res);

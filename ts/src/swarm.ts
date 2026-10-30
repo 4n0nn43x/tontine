@@ -1,11 +1,11 @@
 // The single swarm process: runs every firm's strategy against the tender contract.
-// Firm agents sign with function call keys only (no deposit possible): commit, reveal, deliver, spend.
+// Firm agents sign with function call keys only (no deposit possible): commit, reveal, settle, spend.
 import { randomBytes, createHash } from "node:crypto";
 import type { Account, JsonRpcProvider } from "near-api-js";
-import { call, chainTime, view, waitUntilChainTime, fmt } from "./chain.ts";
-import { evaluate, judge, type Verdict } from "./judge.ts";
+import { call, view, waitUntilChainTime } from "./chain.ts";
 import type { Llm } from "./llm.ts";
-import { safeBid, type FirmCtx, type JobView, type Strategy } from "./strategy.ts";
+import { decide, type Decision, type Results } from "./manager.ts";
+import { owedOf, safeQuote, type FirmCtx, type Market, type OrderView, type Params, type Strategy } from "./strategy.ts";
 
 export type FirmHandle = {
   id: number;
@@ -18,22 +18,27 @@ export type FirmHandle = {
   strategy: Strategy;
 };
 
-/** Inference price per completion paid by the firm from its treasury (USDC base units). */
+/** Inference price per manager decision, paid by the firm from its treasury (USDC base units). */
 export const INFERENCE_COST = 50_000n;
 
 export const bidHash = (amount: bigint, salt: string) => createHash("sha256").update(`${amount}:${salt}`).digest("hex");
-/** Sealed vote of an evaluator, as `tender.vote_hash`: 1 accepts the delivery, 0 rejects it. */
-export const voteHash = (accept: boolean, salt: string) => createHash("sha256").update(`${accept ? 1 : 0}:${salt}`).digest("hex");
+
+const fmtAsset = (v: bigint, side: "Buy" | "Sell") => (side === "Buy" ? `${(Number(v) / 1e24).toFixed(4)} NEAR` : `${(Number(v) / 1e6).toFixed(2)} USDC`);
 
 export class Swarm {
+  /** Current params per firm, and what each did since its manager's last decision. */
+  params = new Map<number, Params>();
+  results = new Map<number, Results>();
+  decisions: Decision[] = [];
+
   constructor(
     public provider: JsonRpcProvider,
     public tender: string,
     public firms: FirmHandle[],
-    /** The oracle account for judge-mode jobs; null for an agent that only runs its own firm. */
-    public judgeAccount: Account | null,
     public llm: Llm,
     public inferenceProvider: string,
+    /** Reference mid (USDC per NEAR) when quoting. */
+    public mid: () => Promise<number>,
     public log: (s: string) => void = console.log,
   ) {}
 
@@ -43,20 +48,37 @@ export class Swarm {
     return f;
   }
 
-  async ctx(f: FirmHandle): Promise<FirmCtx> {
-    const v = await view(this.provider, this.tender, "get_firm", { firm_id: f.id });
-    const treasury = BigInt(await view(this.provider, this.tender, "balance_of", { account_id: f.account }));
-    return { id: f.id, account: f.account, treasury, delivered: v.delivered, rejected: v.rejected, status: v.status };
+  paramsOf(f: FirmHandle): Params {
+    if (!this.params.has(f.id)) this.params.set(f.id, { ...f.strategy.params });
+    return this.params.get(f.id)!;
   }
 
-  async job(id: number): Promise<JobView & { auction: number; status: string; criteria: string; judged: boolean }> {
-    const j = await view(this.provider, this.tender, "get_job", { job_id: id });
-    // `verify` is "Judge" or {"Optimistic": {...}}: only judge-mode jobs get an oracle verdict.
-    return { id: j.id, client: j.client, budget: BigInt(j.budget), brief: j.brief, auction: j.auction, status: j.status, criteria: j.criteria ?? "", judged: j.verify === "Judge" };
+  async ctx(f: FirmHandle): Promise<FirmCtx> {
+    const v = await view(this.provider, this.tender, "get_firm", { firm_id: f.id });
+    const [stable, asset] = await Promise.all([
+      view(this.provider, this.tender, "balance_of", { account_id: f.account }),
+      view(this.provider, this.tender, "asset_balance_of", { account_id: f.account }),
+    ]);
+    return { id: f.id, account: f.account, stable: BigInt(stable), asset: BigInt(asset), fills: v.fills, edge: BigInt(v.edge), status: v.status, policy: v.policy, owed: owedOf(v.debts) };
+  }
+
+  async market(): Promise<Market> {
+    const [mid, last, cfg] = await Promise.all([this.mid(), view(this.provider, this.tender, "get_last_price"), view(this.provider, this.tender, "get_config")]);
+    return { mid, last: BigInt(last), unit: BigInt(cfg.asset_unit) };
+  }
+
+  /** The band anchor of an order: the reference price when it was posted. */
+  async anchor(orderId: number): Promise<bigint> {
+    return BigInt((await view(this.provider, this.tender, "get_order", { order_id: orderId })).price);
+  }
+
+  async order(id: number): Promise<OrderView & { auction: number; status: string }> {
+    const o = await view(this.provider, this.tender, "get_order", { order_id: id });
+    return { id: o.id, client: o.client, side: o.side, amountIn: BigInt(o.amount_in), minOut: BigInt(o.min_out), referenceOut: o.reference_out ? BigInt(o.reference_out) : null, auction: o.auction, status: o.status };
   }
 
   /** Commit then reveal one sealed bid per willing firm, then settle. Returns the auction after settlement. */
-  async auction(auctionId: number, prices: Map<number, bigint>, byOwner: boolean, afterCommit?: () => Promise<void>) {
+  async auction(auctionId: number, prices: Map<number, bigint>, byOwner: boolean, afterCommit?: () => Promise<void>, label = (v: bigint) => v.toString()) {
     const salts = new Map<number, string>();
     await Promise.all(
       [...prices].map(async ([id, price]) => {
@@ -79,8 +101,12 @@ export class Swarm {
       [...salts].map(async ([id, salt]) => {
         const f = this.firm(id);
         const amount = prices.get(id)!;
-        await call(byOwner ? f.owner : f.agentTender, this.tender, "reveal_bid", { auction_id: auctionId, firm_id: id, amount: amount.toString(), salt });
-        this.log(`  reveal  ${f.strategy.name.padEnd(18)} ${fmt(amount)} USDC`);
+        try {
+          await call(byOwner ? f.owner : f.agentTender, this.tender, "reveal_bid", { auction_id: auctionId, firm_id: id, amount: amount.toString(), salt });
+          this.log(`  reveal  ${f.strategy.name.padEnd(18)} ${label(amount)}`);
+        } catch (e) {
+          this.log(`  reveal  ${f.strategy.name.padEnd(18)} refused: ${(e as Error).message}`);
+        }
       }),
     );
     await waitUntilChainTime(this.provider, a0.reveal_end);
@@ -93,84 +119,62 @@ export class Swarm {
     return { ...a, events: r?.events ?? [], txHash: r?.txHash ?? "" };
   }
 
-  async runJob(jobId: number, afterCommit?: () => Promise<void>) {
-    const job = await this.job(jobId);
-    this.log(`job #${jobId} "${job.brief}" budget ${fmt(job.budget)} USDC`);
+  /** Every firm quotes the order (keeping only bids the contract would accept), then the auction runs. */
+  async runOrder(orderId: number, afterCommit?: () => Promise<void>) {
+    const o = await this.order(orderId);
+    // Bands are checked against the price when the order was posted, not the latest fill.
+    const market = { ...(await this.market()), last: await this.anchor(orderId) };
+    this.log(`order #${orderId} ${o.side} ${fmtAsset(o.amountIn, o.side === "Buy" ? "Sell" : "Buy")}, at least ${fmtAsset(o.minOut, o.side)}`);
     const prices = new Map<number, bigint>();
     for (const f of this.firms) {
       const me = await this.ctx(f);
-      if (me.status === "Closed" || me.status === "Liquidating") continue;
-      const p = safeBid(f.strategy, job, me);
-      if (p !== null) prices.set(f.id, p);
+      // Only a solvent firm may commit; the contract refuses the others.
+      if (me.status !== "Solvent" || f.owner.accountId === o.client) continue;
+      const v = safeQuote(f.strategy, o, me, market, this.paramsOf(f));
+      const r = this.results.get(f.id) ?? { quoted: 0, filled: 0, edge: 0n, assetShare: 0 };
+      if (v !== null) {
+        prices.set(f.id, v);
+        r.quoted++;
+      }
+      this.results.set(f.id, r);
     }
-    const a = await this.auction(job.auction, prices, false, afterCommit);
-    if (a.winner === null) {
-      this.log(`  no bids: job cancelled, client refunded`);
-      return { auction: a, verdict: null as Verdict | null };
+    const a = await this.auction(o.auction, prices, false, afterCommit, (v) => fmtAsset(v, o.side));
+    const after = await view(this.provider, this.tender, "get_order", { order_id: orderId });
+    if (after.status !== "Filled") {
+      this.log(`  no fill: order refunded`);
+      return { auction: a, order: after };
     }
     const w = this.firms.find((x) => x.id === a.winner);
-    if (!w) {
-      this.log(`  winner  firm #${a.winner}, run by another agent`);
-      return { auction: a, verdict: null as Verdict | null };
+    const filled = a.events.find((e: any) => e.event === "order_filled")?.data?.[0];
+    if (w) {
+      const r = this.results.get(w.id)!;
+      r.filled++;
+      r.edge += BigInt(filled?.edge ?? 0);
     }
-    this.log(`  winner  ${w.strategy.name} paid the second price ${fmt(a.price)} USDC`);
-    const verdict = await this.deliverAndJudge(jobId, w, job);
-    return { auction: a, verdict };
+    this.log(`  filled  ${w?.strategy.name ?? `firm #${a.winner}`} delivers ${fmtAsset(BigInt(after.out), o.side)} (second best), edge ${(Number(filled?.edge ?? 0) / 1e6).toFixed(4)} USDC`);
+    return { auction: a, order: after };
   }
 
-  async deliverAndJudge(jobId: number, w: FirmHandle, job: JobView): Promise<Verdict | null> {
-    const result = await w.strategy.work(job, this.llm);
-    if (result.trim() && this.inferenceProvider) {
-      // The firm pays its own inference from its treasury, through its on-chain budget.
-      await call(w.agentFirm, w.account, "spend", { receiver_id: this.inferenceProvider, amount: INFERENCE_COST.toString(), memo: `inference job ${jobId}` });
+  /**
+   * A managed firm's manager reviews its results and retunes its params. The firm pays the inference from
+   * its treasury through its own contract (`spend`, under its budget), and the decision is kept as a receipt.
+   */
+  async manage(f: FirmHandle): Promise<Decision> {
+    const me = await this.ctx(f);
+    const market = await this.market();
+    const assetValue = (me.asset * BigInt(Math.round(market.mid * 1e6))) / market.unit;
+    const r = { ...(this.results.get(f.id) ?? { quoted: 0, filled: 0, edge: 0n, assetShare: 0 }), assetShare: Number(assetValue) / Number(me.stable + assetValue || 1n) };
+    const d = await decide(this.llm, f.strategy.name, this.paramsOf(f), r, me.policy.max_asset_bps / 10_000);
+    if (d.source === "near-ai-cloud" && this.inferenceProvider) {
+      await call(f.agentFirm, f.account, "spend", { receiver_id: this.inferenceProvider, amount: INFERENCE_COST.toString(), memo: `manager decision ${d.chatId ?? ""}` }).catch((e) =>
+        this.log(`  manager ${f.strategy.name}: inference not paid (${(e as Error).message})`),
+      );
     }
-    await call(w.agentTender, this.tender, "deliver", { job_id: jobId, result });
-    this.log(`  deliver ${w.strategy.name}: ${result ? JSON.stringify(result.slice(0, 60)) + "..." : "(empty)"}`);
-    // Optimistic jobs: the client reviews, and a dispute goes to a panel of firms (serveDispute).
-    if (!(await this.job(jobId)).judged || !this.judgeAccount) return null;
-    const v = await judge(this.llm, job.brief, result);
-    const r = await call(this.judgeAccount, this.tender, "verdict", { job_id: jobId, accept: v.accept, attestation: v.attestation });
-    this.log(`  verdict ${v.accept ? "ACCEPTED" : "REJECTED"} (${v.reason})`);
-    return { ...v, attestation: r.txHash };
-  }
-
-  private ballots = new Map<string, { accept: boolean; salt: string }>(); // `${job}:${firm}`
-
-  /** Evaluator duty for one disputed job: our firms on the panel vote (sealed, then revealed), and the
-   * dispute is closed once the votes are in. Call it repeatedly; each call does what the phase allows. */
-  async serveDispute(jobId: number) {
-    const d = await view(this.provider, this.tender, "get_dispute", { job_id: jobId });
-    if (!d || d.resolved || !d.panel.length) return;
-    const now = await chainTime(this.provider);
-    for (const b of d.panel) {
-      const f = this.firms.find((x) => x.id === b.firm_id);
-      if (!f) continue;
-      const key = `${jobId}:${f.id}`;
-      if (now < BigInt(d.commit_end) && !b.hash && !this.ballots.has(key)) {
-        const j = await this.job(jobId);
-        const raw = await view(this.provider, this.tender, "get_job", { job_id: jobId });
-        const result: string = raw.result ?? "";
-        const accept = f.strategy.evaluate ? await f.strategy.evaluate(j, result, this.llm) : (await evaluate(this.llm, j.brief, j.criteria, result)).accept;
-        const salt = randomBytes(16).toString("hex");
-        this.ballots.set(key, { accept, salt });
-        const args = { job_id: jobId, firm_id: f.id, hash: voteHash(accept, salt) };
-        // After a takeover the old agent keys are gone: the owner votes itself until it adds new ones.
-        try {
-          await call(f.agentTender, this.tender, "commit_vote", args).catch(() => call(f.owner, this.tender, "commit_vote", args));
-          this.log(`  vote    ${f.strategy.name.padEnd(18)} sealed on job #${jobId}`);
-        } catch (e) {
-          this.log(`  vote    ${f.strategy.name.padEnd(18)} refused: ${(e as Error).message}`);
-        }
-      } else if (now >= BigInt(d.commit_end) && now < BigInt(d.reveal_end) && b.vote === null && this.ballots.has(key)) {
-        const { accept, salt } = this.ballots.get(key)!;
-        const args = { job_id: jobId, firm_id: f.id, accept, salt };
-        await call(f.agentTender, this.tender, "reveal_vote", args).catch(() => call(f.owner, this.tender, "reveal_vote", args)).catch(() => {});
-        this.log(`  vote    ${f.strategy.name.padEnd(18)} ${accept ? "accepts" : "rejects"} job #${jobId}`);
-      }
-    }
-    if (now >= BigInt(d.reveal_end)) {
-      await call(this.firms[0].agentTender, this.tender, "resolve_dispute", { job_id: jobId }).catch(() => {});
-    }
+    this.params.set(f.id, d.after);
+    this.results.set(f.id, { quoted: 0, filled: 0, edge: 0n, assetShare: r.assetShare });
+    this.decisions.push(d);
+    this.log(`  manager ${f.strategy.name} (${d.source}): spread ${d.before.spreadBps} -> ${d.after.spreadBps} bp, ${d.reason}`);
+    return d;
   }
 
   /** epoch_tick, ignoring "epoch not over". */
@@ -186,16 +190,22 @@ export class Swarm {
 
   async runLiquidation(firmId: number) {
     const target = await view(this.provider, this.tender, "get_firm", { firm_id: firmId });
-    const t = { id: firmId, account: target.account, delivered: target.delivered, rejected: target.rejected, revenue: BigInt(target.revenue), treasury: BigInt(await view(this.provider, this.tender, "balance_of", { account_id: target.account })) };
-    this.log(`liquidation of firm #${firmId} (${this.firm(firmId).strategy.name})`);
+    const a0 = await view(this.provider, this.tender, "get_auction", { auction_id: target.liquidation_auction });
+    const [stable, asset] = await Promise.all([
+      view(this.provider, this.tender, "balance_of", { account_id: target.account }),
+      view(this.provider, this.tender, "asset_balance_of", { account_id: target.account }),
+    ]);
+    const t = { id: firmId, account: target.account, fills: target.fills, edge: BigInt(target.edge), stable: BigInt(stable), asset: BigInt(asset), reserve: BigInt(a0.reserve) };
+    this.log(`liquidation of firm #${firmId} (${this.firms.find((f) => f.id === firmId)?.strategy.name ?? target.account}), reserve ${(Number(t.reserve) / 1e6).toFixed(2)} USDC`);
     const prices = new Map<number, bigint>();
     for (const f of this.firms) {
       if (f.id === firmId || !f.strategy.takeover) continue;
       try {
-        const p = f.strategy.takeover(t, await this.ctx(f));
-        if (p && p > 0n) prices.set(f.id, p);
+        const me = await this.ctx(f);
+        const p = f.strategy.takeover(t, me);
+        if (p && p >= t.reserve && p <= me.stable && me.status !== "Liquidating" && me.status !== "Closed") prices.set(f.id, p);
       } catch {}
     }
-    return this.auction(target.liquidation_auction, prices, true);
+    return this.auction(target.liquidation_auction, prices, true, undefined, (v) => `${(Number(v) / 1e6).toFixed(2)} USDC`);
   }
 }

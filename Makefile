@@ -2,7 +2,7 @@
 WASM_TARGET := contracts/target/wasm32-unknown-unknown/release
 export TMPDIR := $(CURDIR)/ts/node_modules/.cache/tmp
 
-.PHONY: build build-repro test demo verify-wasm deps thesis app app-dev serve
+.PHONY: build build-repro test demo sim verify-wasm deps thesis app app-dev serve
 
 deps:
 	cd ts && npm ci
@@ -35,6 +35,12 @@ demo: verify-wasm
 
 thesis:
 	cd ts && npx tsx src/thesis.ts
+
+# The swarm's market off chain, with the contract's rules, on NEAR's real price path (RULES.md).
+SEED ?= 1
+sim:
+	@test -d ts/node_modules || $(MAKE) deps
+	cd ts && SEED=$(SEED) npx tsx src/sim.ts
 
 # The website (Vite + React), built into app/dist.
 app:

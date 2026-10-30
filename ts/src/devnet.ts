@@ -6,23 +6,28 @@ import { account, call, USDC, TGAS } from "./chain.ts";
 import { createAccount, createFirm, deployContract, wasm } from "./deploy.ts";
 import { loadStrategies, type Strategy } from "./strategy.ts";
 import type { FirmHandle } from "./swarm.ts";
+import { reference } from "./prices.ts";
+
+export const NEAR_ = (n: number) => BigInt(Math.round(n * 1e6)) * 10n ** 18n;
 
 export const DEVNET_CONFIG = {
   dividendBps: 3000,
   liquidationFeeBps: 200,
   minBond: USDC(5),
-  slash: USDC(5),
-  floor: USDC(2),
+  /** Smallest slash for an unrevealed order bid; otherwise 1% of the order. */
+  slash: USDC(1),
+  noRevealSlashBps: 100,
+  /** Cash floor: a firm whose stable treasury stays under it for 3 epochs is liquidated. */
+  floor: USDC(40),
   epochsBeforeLiquidation: 3,
   epochSecs: Number(process.env.EPOCH_SECS ?? 30),
   liquidationPhaseSecs: 6,
-  jobFeeBps: 100,
+  orderFeeBps: 2,
   tradeFeeBps: 50,
   keeperReward: USDC(0.02),
-  disputeBond: USDC(1),
-  evalStake: USDC(1),
-  panelSize: 3,
-  voteSecs: 8,
+  minBidders: 2,
+  minOrder: USDC(1),
+  maxMoveBps: 300,
 };
 
 export type Devnet = {
@@ -32,18 +37,20 @@ export type Devnet = {
   root: Account;
   tender: Account;
   usdc: Account;
+  wnear: Account;
   intents: string;
+  /** intents.near token ids of the stable token and the asset. */
   token: string;
-  judge: Account;
+  assetToken: string;
   inference: string;
   houseClient: Account;
   firms: FirmHandle[];
   strategies: Strategy[];
-  /** Deposit USDC from `from`'s wallet into tender, with an optional tender message (two steps, mainnet path). */
-  deposit(from: Account, amount: bigint, msg?: object): Promise<unknown>;
+  /** Deposit from `from`'s wallet into tender, with an optional tender message (two steps, mainnet path). */
+  deposit(from: Account, amount: bigint, msg?: object, t?: "usdc" | "wnear"): Promise<any>;
   /** Create a visitor account controlled by a key the visitor generated in their browser. */
   createVisitor(publicKey: string): Promise<string>;
-  mint(accountId: string, amount: bigint): Promise<void>;
+  mint(accountId: string, amount: bigint, t?: "usdc" | "wnear"): Promise<void>;
 };
 
 /** One transaction at a time per account: concurrent auctions share firm keys, and nonces must not race. */
@@ -80,8 +87,8 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
     return serialize(a.acct);
   };
   const usdc = await mk("usdc", "20");
+  const wnear = await mk("wnear", "20");
   const tender = await mk("tender", "80");
-  const judge = await mk("judge", "20");
   const inferenceAcct = await mk("inference", "5");
   const houseClient = await mk("client", "40");
   const intentsAcct = await mk("intents", "100");
@@ -92,15 +99,22 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
   const I = intentsAcct.accountId;
   const T = tender.accountId;
   const token = `nep141:${usdc.accountId}`;
+  const assetToken = `nep141:${wnear.accountId}`;
   await deployContract(intentsAcct, wasm("intents_mainnet"), "new", {
     config: { wnear_id: `wrap.${DEFAULT_ACCOUNT_ID}`, fees: { fee: 0, fee_collector: I }, roles: {} },
   });
+  // Two mock NEP-141 tokens: USDC (6 decimals) and wNEAR (24 decimals by convention).
   await deployContract(usdc, wasm("mock_ft"), "new", {});
+  await deployContract(wnear, wasm("mock_ft"), "new", {});
+  // The real NEAR price to start from: a NEAR Intents 1Click quote, or the replay when offline.
+  const start = await reference("Buy", USDC(100));
   await deployContract(tender, wasm("tender"), "new", {
     config: {
       admin: T,
-      judge: judge.accountId,
       payment: { Intents: { contract: I, token_id: token } },
+      asset: { Intents: { contract: I, token_id: assetToken } },
+      asset_unit: (10n ** 24n).toString(),
+      initial_price: BigInt(Math.round(start.mid * 1e6)).toString(),
       dividend_bps: DEVNET_CONFIG.dividendBps,
       liquidation_fee_bps: DEVNET_CONFIG.liquidationFeeBps,
       min_bond: DEVNET_CONFIG.minBond.toString(),
@@ -110,18 +124,18 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
       epoch_secs: DEVNET_CONFIG.epochSecs,
       liquidation_commit_secs: DEVNET_CONFIG.liquidationPhaseSecs,
       liquidation_reveal_secs: DEVNET_CONFIG.liquidationPhaseSecs,
-      job_fee_bps: DEVNET_CONFIG.jobFeeBps,
+      order_fee_bps: DEVNET_CONFIG.orderFeeBps,
       trade_fee_bps: DEVNET_CONFIG.tradeFeeBps,
       keeper_reward: DEVNET_CONFIG.keeperReward.toString(),
-      dispute_bond: DEVNET_CONFIG.disputeBond.toString(),
-      eval_stake: DEVNET_CONFIG.evalStake.toString(),
-      panel_size: DEVNET_CONFIG.panelSize,
-      vote_secs: DEVNET_CONFIG.voteSecs,
+      no_reveal_slash_bps: DEVNET_CONFIG.noRevealSlashBps,
+      min_bidders: DEVNET_CONFIG.minBidders,
+      min_order: DEVNET_CONFIG.minOrder.toString(),
+      max_move_bps: DEVNET_CONFIG.maxMoveBps,
     },
   });
   // The code `create_firm` deploys when anyone launches a firm.
   await call(tender, T, "set_firm_code", { code: Buffer.from(wasm("firm")).toString("base64") }, 0n, TGAS(200));
-  log(`contracts: tender=${T} intents=${I} (mainnet code) usdc=${usdc.accountId} (mock)`);
+  log(`contracts: tender=${T} intents=${I} (mainnet code) usdc, wnear (mocks), NEAR ${start.mid.toFixed(3)} USD (${start.source})`);
 
   const firms: FirmHandle[] = [];
   for (let i = 0; i < strategies.length; i++) {
@@ -131,28 +145,34 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
     firms.push(f);
   }
 
-  const mint = async (accountId: string, amount: bigint) => {
-    await call(usdc, usdc.accountId, "mint", { account_id: accountId, amount: amount.toString() });
+  const ft = (t: "usdc" | "wnear") => (t === "usdc" ? usdc : wnear);
+  const mint = async (accountId: string, amount: bigint, t: "usdc" | "wnear" = "usdc") => {
+    await call(ft(t), ft(t).accountId, "mint", { account_id: accountId, amount: amount.toString() });
   };
-  const deposit = async (from: Account, amount: bigint, msg?: object) => {
-    await call(from, usdc.accountId, "ft_transfer_call", { receiver_id: I, amount: amount.toString(), msg: "" }, 1n, TGAS(100));
-    return call(from, I, "mt_transfer_call", { receiver_id: T, token_id: token, amount: amount.toString(), approval: null, memo: null, msg: msg ? JSON.stringify(msg) : "" }, 1n, TGAS(250));
+  const deposit = async (from: Account, amount: bigint, msg?: object, t: "usdc" | "wnear" = "usdc") => {
+    await call(from, ft(t).accountId, "ft_transfer_call", { receiver_id: I, amount: amount.toString(), msg: "" }, 1n, TGAS(100));
+    return call(from, I, "mt_transfer_call", { receiver_id: T, token_id: t === "usdc" ? token : assetToken, amount: amount.toString(), approval: null, memo: null, msg: msg ? JSON.stringify(msg) : "" }, 1n, TGAS(250));
   };
   const storage = (payer: Account, forId: string) => call(payer, T, "storage_deposit", { account_id: forId }, nearToYocto("0.5"));
 
   await mint(I, 0n);
+  await mint(I, 0n, "wnear");
   for (const a of [houseClient, ...owners]) await storage(root, a.accountId);
   for (const f of firms) await storage(root, f.account);
   await mint(houseClient.accountId, USDC(1_000_000));
-  // A ledger buffer for the house client's dispute bonds.
-  await deposit(houseClient, USDC(20));
+  await mint(houseClient.accountId, NEAR_(200_000), "wnear");
   for (let i = 0; i < firms.length; i++) {
     const f = firms[i];
-    await mint(f.owner.accountId, USDC(1000));
+    await mint(f.owner.accountId, USDC(2000));
+    await mint(f.owner.accountId, NEAR_(500), "wnear");
     await deposit(f.owner, USDC(30));
     await call(f.owner, T, "deposit_bond", { amount: USDC(10).toString() }, 1n);
-    // Gambler Inc starts thin (1 USDC, under the 2 USDC floor): it will be liquidated and bought.
-    await deposit(f.owner, i === 2 ? USDC(1) : USDC(20), { Credit: f.account });
+    // Gambler Inc starts with 60 USDC of cash (the floor is 40) and spends it on NEAR: it will be
+    // illiquid, liquidated and bought. The others hold 400 USDC and 60 NEAR.
+    const gambler = f.strategy.name === "Gambler Inc";
+    await deposit(f.owner, gambler ? USDC(60) : USDC(400), { Credit: f.account });
+    await deposit(f.owner, gambler ? NEAR_(2) : NEAR_(60), { Credit: f.account }, "wnear");
+    if (gambler) await call(f.owner, T, "set_policy", { firm_id: f.id, policy: { max_asset_bps: 10000, band_bps: 1000, paused: false } }, 1n);
   }
   // Each owner publishes its firm's spec on chain (name, description, skills, model).
   for (const f of firms) if (f.strategy.spec) await call(f.owner, T, "set_firm_profile", { firm_id: f.id, profile: JSON.stringify(f.strategy.spec) }, 1n);
@@ -165,6 +185,7 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
     const id = `v${Date.now().toString(36)}${(visitors++).toString(36)}.${DEFAULT_ACCOUNT_ID}`;
     await root.createAccount({ newAccountId: id, publicKey, nearToTransfer: nearToYocto("5") }); // enough to launch a firm (3 NEAR)
     await mint(id, USDC(100));
+    await mint(id, NEAR_(20), "wnear");
     await storage(root, id);
     return id;
   };
@@ -176,9 +197,10 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
     root,
     tender,
     usdc,
+    wnear,
     intents: I,
     token,
-    judge,
+    assetToken,
     inference: inferenceAcct.accountId,
     houseClient,
     firms,

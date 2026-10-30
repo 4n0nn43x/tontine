@@ -1,33 +1,44 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadStrategies, safeBid, type Strategy } from "./strategy.ts";
-import { checkCriteria, judge, obviouslyEmpty } from "./judge.ts";
-import { Replay } from "./llm.ts";
-import { createHash } from "node:crypto";
-import { bidHash, voteHash } from "./swarm.ts";
+import { defaultQuote, loadStrategies, safeQuote, type FirmCtx, type Market, type OrderView, type Strategy } from "./strategy.ts";
+import { bound, rule } from "./manager.ts";
+import { bidHash } from "./swarm.ts";
 
-const job = { id: 0, client: "c", budget: 10_000_000n, brief: "Translate a README" };
-const me = { id: 0, account: "w", treasury: 0n, delivered: 0, rejected: 0 };
+const NEAR = 10n ** 24n;
+const order: OrderView = { id: 0, client: "c", side: "Buy", amountIn: 40_000_000n, minOut: 9n * NEAR, referenceOut: null };
+const me: FirmCtx = { id: 0, account: "w", stable: 1000_000_000n, asset: 100n * NEAR, fills: 0, edge: 0n, status: "Solvent", policy: { max_asset_bps: 8000, band_bps: 1000, paused: false } };
+const market: Market = { mid: 4, last: 4_000_000n, unit: NEAR };
+const params = { spreadBps: 10, targetAssetShare: 0.3, skewBps: 0 };
 
 test("every file in strategies/ is a valid Strategy", async () => {
   const s = await loadStrategies();
   assert.ok(s.length >= 5);
-  for (const x of s) assert.ok(x.name && x.author);
+  for (const x of s) assert.ok(x.name && x.author && x.params);
 });
 
-test("safeBid drops bids above budget, non-positive or throwing", () => {
-  const mk = (bid: Strategy["bid"]): Strategy => ({ name: "t", author: "t", house: false, bid, work: async () => "" });
-  assert.equal(safeBid(mk(() => 11_000_000n), job, me), null);
-  assert.equal(safeBid(mk(() => 0n), job, me), null);
-  assert.equal(safeBid(mk(() => { throw new Error("x"); }), job, me), null);
-  assert.equal(safeBid(mk(() => 5n), job, me), 5n);
+test("safeQuote keeps only bids the contract would accept at reveal", () => {
+  const mk = (quote: Strategy["quote"]): Strategy => ({ name: "t", author: "t", house: false, params, quote });
+  assert.equal(safeQuote(mk(() => 8n * NEAR), order, me, market, params), null, "under the client's minimum");
+  assert.equal(safeQuote(mk(() => 12n * NEAR), order, me, market, params), null, "outside the 10% band");
+  assert.equal(safeQuote(mk(() => { throw new Error("x"); }), order, me, market, params), null);
+  assert.equal(safeQuote(mk(() => 99n * NEAR / 10n), order, { ...me, policy: { ...me.policy, paused: true } }, market, params), null, "paused");
+  assert.equal(safeQuote(mk(() => 99n * NEAR / 10n), order, me, market, params), 99n * NEAR / 10n);
+  // The default quote: 40 USDC at 4 USD, less 10 bp.
+  assert.equal(defaultQuote(order, me, market, params), (10n * NEAR * 9990n) / 10000n);
 });
 
-test("judge never accepts an empty deliverable", async () => {
-  assert.ok(obviouslyEmpty(""));
-  assert.ok(obviouslyEmpty("[replay 0123456789abcdef]   "));
-  const v = await judge(new Replay(), job.brief, "");
-  assert.equal(v.accept, false);
+test("the inventory lean: a firm long NEAR sells it cheaper", () => {
+  const long = { ...me, stable: 0n };
+  const lean = { ...params, skewBps: 20 };
+  assert.ok(defaultQuote(order, long, market, lean)! > defaultQuote(order, me, market, lean)!, "better buy quotes when holding too much NEAR");
+});
+
+test("the manager rule and its bounds", () => {
+  const r = { quoted: 5, filled: 2, edge: -1_000_000n, assetShare: 0.3 };
+  assert.ok(rule(params, r).params.spreadBps > params.spreadBps, "a loss widens the spread");
+  assert.ok(rule(params, { ...r, filled: 0, edge: 0n }).params.spreadBps < params.spreadBps, "no fills tighten it");
+  const b = bound({ spreadBps: 5000, targetAssetShare: 2, skewBps: Number.NaN }, params, 0.8);
+  assert.deepEqual(b, { spreadBps: 300, targetAssetShare: 0.8, skewBps: 0 }, "capped, and NaN keeps the previous value");
 });
 
 test("bid hash matches the contract format sha256('{amount}:{salt}')", () => {
@@ -61,19 +72,6 @@ test("evaluate stays pending until the 12-day window is complete and read on tim
   assert.match(early.P3.status, /read on or after 2026-11-14/);
 });
 
-test("criteria checks are deterministic and fail on the first broken rule", () => {
-  assert.equal(checkCriteria("a rubric with no checkable rule", "anything"), null);
-  assert.deepEqual(checkCriteria("must include: hola\nmin words: 2", "Hola mundo"), { ok: true, reason: "every criteria check passes" });
-  assert.equal(checkCriteria("must include: hola", "bonjour")?.ok, false);
-  assert.equal(checkCriteria("regex: ^\\d{3}$", "123")?.ok, true);
-  assert.equal(checkCriteria("regex: ^\\d{3}$", "12a")?.ok, false);
-  assert.equal(checkCriteria("json", '{"a":1}')?.ok, true);
-  assert.equal(checkCriteria("json", "{a:1}")?.ok, false);
-  assert.equal(checkCriteria("min words: 5", "too short")?.ok, false);
-  assert.equal(checkCriteria("regex: (", "x")?.ok, true, "an invalid pattern checks nothing");
-});
 
-test("vote hash matches the contract format sha256('{1|0}:{salt}')", () => {
-  assert.equal(voteHash(true, "s"), createHash("sha256").update("1:s").digest("hex"));
-  assert.equal(voteHash(false, "s"), createHash("sha256").update("0:s").digest("hex"));
-});
+
+

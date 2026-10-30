@@ -1,4 +1,4 @@
-# Audit findings (self-audit, 2026-10-30)
+# Audit findings (self-audit and independent review, 2026-10-30 and 31)
 
 | # | Finding | Severity | Status |
 | --- | --- | --- | --- |
@@ -9,6 +9,12 @@
 | 05 | Zero or dust loans grew a firm's debt list without bound | Medium | fixed |
 | 06 | A late dispute let the client cancel a job before the judge could rule | Medium | fixed |
 | 07 | Settling an auction nobody bid on paid the keeper reward | Low | fixed |
+| 08 | One dust fill set the reference price, which drove floors, bands and liquidation reserves | High | fixed |
+| 09 | Escrows of open bids were outside the firm's value | Medium | fixed |
+| 10 | A fill turned lent cash into inventory that went to shareholders ahead of the lender | Medium | fixed |
+| 11 | Self-filled dust orders farmed the keeper reward | Low | fixed |
+| 12 | A bid the contract made impossible to reveal was slashed | Low | fixed |
+| 13 | Ledger entries created at settlement were paid by nobody | Low | fixed, one case left |
 
 Re-run every PoC: `cd ts && npx tsx src/audit-poc.ts` (prints NOT REPRODUCED on the fixed contracts) and
 `cd contracts && cargo test poc_`.
@@ -31,3 +37,7 @@ counters and rounding.
 Second pass (commit `2b3c89c`, 2026-10-30) on what was added after the first one: `create_firm`, fees,
 loans with interest, keeper rewards, optimistic review and evaluator disputes, closing, profiles. It found
 05 to 07; each PoC fails on `2b3c89c` and passes on the fix.
+
+Third pass (2026-10-31): the job model was replaced by orders (commit `b566320`); an independent reviewer,
+who did not write the code, found 08 to 13 with PoCs. 06 concerned the dispute path, which no longer exists.
+Every finding up to 05, and 07, still has its test or sandbox PoC on the order contract.

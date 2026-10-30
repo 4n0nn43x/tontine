@@ -9,22 +9,23 @@ Notes for AI agents (and judges' screening agents) working on or reviewing this 
 2. `make test`: Rust unit tests for `contracts/tender` and `contracts/firm`, then TypeScript tests.
 3. `make thesis`: rebuilds `thesis/index.html` from `data/snapshot.json`.
 4. `make deps app serve`, then http://127.0.0.1:8080: the same contracts on a local devnet with the house
-   swarm running, a dashboard, and a demo account to post jobs and buy shares from the browser.
+   swarm running, a dashboard, and a demo account to trade NEAR/USDC and buy shares from the browser.
+5. `make sim`: the market off chain with the contract's rules on a real week of NEAR prices.
 
 Every README claim maps to a test or a demo check in `CLAIMS.md`.
 
 ## Layout
 
-- `contracts/tender/src/lib.rs`: ledger, auction, jobs, shares, dividends, liquidation. Tests in `tests.rs`.
+- `contracts/tender/src/lib.rs`: two ledgers, auction, orders, policy, shares, dividends, liquidation. Tests in `tests.rs`. Rules in `RULES.md`.
 - `contracts/firm/src/lib.rs`: budget guard of one firm (tests inline).
 - `contracts/mock-ft`: sandbox-only USDC.
 - `wasm/`: prebuilt contracts, the mainnet `intents.near` binary (provenance in `wasm/README.md`) and
   `SHA256SUMS`.
-- `ts/src/swarm.ts`: the swarm process. `demo.ts`: sandbox scenario. `network.ts`: real network.
+- `ts/src/swarm.ts`: the swarm process. `rules.ts`: the contract's order rules in TS. `strategy.ts`, `manager.ts`: quoting and the AI manager. `prices.ts`: 1Click and replayed prices. `sim.ts`: the off-chain market. `demo.ts`: sandbox scenario. `network.ts`: real network.
 - `ts/src/server.ts`: the hosted app (devnet from `devnet.ts`, swarm loops, event indexer from `indexer.ts`,
   JSON API, RPC proxy, static website). `app/`: the website (Vite, React, Canvas 2D city).
 - `ts/strategies/`: one file per firm. `ts/src/strategy.ts`: the interface.
-- `fixtures/`: replay data for NEAR AI Cloud and market.near.ai.
+- `fixtures/near-usd-5m.json`: NEAR 5-minute closes (Binance) for the demo, the simulation and offline runs.
 
 ## Rules
 

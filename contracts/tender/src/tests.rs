@@ -48,6 +48,8 @@ impl T {
             keeper_reward: U128(0),
             no_reveal_slash_bps: 0,
             min_bidders: 0,
+            min_order: U128(0),
+            max_move_bps: 0,
         });
         let mut t = T { c, t: 1_000 * SEC };
         // Every caller now prepays the storage it creates (storage_deposit, NEP-145 style).
@@ -255,7 +257,8 @@ fn no_commit_after_deadline() {
 }
 
 #[test]
-#[should_panic(expected = "phase too long")]
+// Orders now cap their phases at 10 minutes, a stricter check than the 30-day bound it used to hit.
+#[should_panic(expected = "order phases at most 10 minutes")]
 fn huge_phases_refused() {
     let mut t = T::new();
     t.as_("client.near", 1);
@@ -422,21 +425,16 @@ fn failed_withdraw_is_refunded() {
     assert_eq!(t.asset("o1.near"), NEAR, "a failed asset withdrawal comes back to the asset ledger");
 }
 
-/// A firm whose treasury is under the floor but whose inventory is worth more is solvent: the floor is on
-/// net asset value. When it is liquidated, the reserve is what its inventory is worth.
+/// The floor is a cash requirement: a firm with 1 USDC and 100 NEAR is illiquid. It is liquidated, and its
+/// inventory goes to its shareholders in kind: whoever buys the firm does not get it (audit finding 08).
 #[test]
-fn the_floor_counts_the_inventory_and_sets_the_takeover_reserve() {
+fn the_floor_is_cash_and_the_inventory_goes_to_shareholders_in_kind() {
     let mut t = T::new();
     for w in ["w1", "w2", "w4", "w5"] {
         t.c.balances.insert(acc(&format!("{w}.tender.near")), 50 * USDC);
     }
-    t.c.assets.insert(acc("w3.tender.near"), NEAR); // 0 USDC + 1 NEAR = 4 USDC >= floor 2
-    for _ in 0..2 {
-        t.wait(10);
-        t.c.epoch_tick();
-    }
-    assert_eq!(t.c.get_firm(2).status, FirmStatus::Solvent);
-    t.c.assets.insert(acc("w3.tender.near"), NEAR / 4); // worth 1 USDC
+    t.c.balances.insert(acc("w3.tender.near"), USDC);
+    t.c.assets.insert(acc("w3.tender.near"), 100 * NEAR);
     for _ in 0..2 {
         t.wait(10);
         t.c.epoch_tick();
@@ -444,10 +442,12 @@ fn the_floor_counts_the_inventory_and_sets_the_takeover_reserve() {
     let f = t.c.get_firm(2);
     assert_eq!(f.status, FirmStatus::Liquidating);
     let a = f.liquidation_auction.unwrap();
-    assert_eq!(t.c.get_auction(a).reserve.0, USDC, "the inventory's value");
-    t.bid(a, 1, "o2.near", USDC / 2);
-    t.wait(2);
-    assert!(panics(|| t.reveal(a, 1, "o2.near", USDC / 2)), "below the inventory value");
+    assert_eq!(t.c.get_auction(a).reserve.0, 1);
+    t.run(a, &[(1, "o2.near", 3 * USDC)]);
+    assert_eq!(t.c.get_firm(2).owner, acc("o2.near"));
+    assert_eq!(t.asset("o3.near"), 100 * NEAR, "the old shareholder keeps the inventory");
+    assert_eq!(t.asset("w3.tender.near"), 0);
+    assert_eq!(t.asset("w2.tender.near"), 0, "the buyer bought the firm, not its NEAR");
 }
 
 #[test]
@@ -991,4 +991,158 @@ fn poc_f5_dust_loans_bloat_the_firm() {
     t.as_("lender.near", 1);
     t.c.lend(1, U128(USDC));
     assert_eq!(t.c.get_firm(1).debts.len(), 20, "a repaid loan frees its slot");
+}
+
+// ---------------------------------------------------------------- audit findings 08 to 13 (second review)
+
+/// Attacker: sybil client x.near and its own firm w4 (owner o4, no band). Posts an order and fills it itself.
+fn self_fill(t: &mut T, side: Side, amount_in: u128, out: u128) {
+    t.as_("o4.near", 1);
+    t.c.set_policy(3, Policy { max_asset_bps: 10000, band_bps: 0, paused: false });
+    t.as_("x.near", 1);
+    let id = t.c.post_order(PostOrder { side, amount_in: U128(amount_in), min_out: U128(out), reference_out: None, commit_secs: 1, reveal_secs: 1 });
+    let a = t.c.get_order(id).auction;
+    t.bid(a, 3, "o4.near", out);
+    t.wait(1);
+    t.reveal(a, 3, "o4.near", out);
+    t.wait(1);
+    t.c.settle(a);
+}
+
+/// F8 PoC: one dust fill set the reference price at will (1e24 bricked settle and epoch_tick; 0 made
+/// victims liquidatable). Now orders have a minimum size and one fill moves the price by 5% at most.
+#[test]
+fn poc_f8_one_fill_cannot_set_the_price() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.c.config.min_order = U128(USDC);
+    t.c.config.max_move_bps = 500;
+    t.deposit("x.near", 10 * USDC);
+    t.as_("x.near", 1);
+    assert!(panics(|| {
+        t.c.post_order(PostOrder { side: Side::Buy, amount_in: U128(1), min_out: U128(1), reference_out: None, commit_secs: 1, reveal_secs: 1 });
+    }), "dust order refused");
+    self_fill(&mut t, Side::Buy, USDC, 1); // 1 USDC for 1 yocto: a price of 1e24
+    assert_eq!(t.c.get_last_price().0, 4 * USDC * 105 / 100, "moved 5% at most");
+    // Honest orders still fill and epochs still tick.
+    let (_, a) = t.post(Side::Buy, 40 * USDC, 9 * NEAR);
+    t.run(a, &[(1, "o2.near", 95 * NEAR / 10)]);
+    assert_eq!(t.c.get_auction(a).winner, Some(1));
+    t.wait(10);
+    t.c.epoch_tick();
+}
+
+/// F8 PoC (band): a fill elsewhere during an auction pushed honest reveals out of band, and their bonds
+/// went to the attacker. The band is now checked against the price when the order was posted.
+#[test]
+fn poc_f8_a_fill_during_an_auction_cannot_push_bids_out_of_band() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.deposit("client.near", 300 * USDC);
+    t.as_("client.near", 1);
+    let id = t.c.post_order(PostOrder { side: Side::Buy, amount_in: U128(400 * USDC), min_out: U128(90 * NEAR), reference_out: None, commit_secs: 4, reveal_secs: 4 });
+    let a = t.c.get_order(id).auction;
+    t.bid(a, 1, "o2.near", 98 * NEAR);
+    t.bid(a, 2, "o3.near", 97 * NEAR);
+    t.deposit("x.near", USDC);
+    self_fill(&mut t, Side::Buy, USDC, 1); // 2 s, moves the last price far away (no max_move here)
+    t.wait(2);
+    t.reveal(a, 1, "o2.near", 98 * NEAR);
+    t.reveal(a, 2, "o3.near", 97 * NEAR);
+    t.wait(4);
+    t.c.settle(a);
+    assert_eq!(t.c.get_auction(a).winner, Some(1));
+    assert_eq!(t.c.bond_of(acc("o2.near")).0, 10 * USDC, "no slash");
+}
+
+/// F8 PoC (theft): a victim pushed under the floor by the price was bought for 1 unit with its 100 NEAR.
+/// The floor no longer depends on a price, and the inventory never goes to the buyer.
+#[test]
+fn poc_f8_no_price_can_liquidate_a_firm_with_cash() {
+    let mut t = T::new();
+    for w in ["w1", "w2", "w4", "w5"] {
+        t.c.balances.insert(acc(&format!("{w}.tender.near")), 50 * USDC);
+    }
+    t.c.balances.insert(acc("w3.tender.near"), 10 * USDC);
+    t.c.assets.insert(acc("w3.tender.near"), 100 * NEAR);
+    t.c.assets.insert(acc("w4.tender.near"), 2 * NEAR);
+    t.deposit("x.near", USDC);
+    self_fill(&mut t, Side::Buy, 1, 2 * NEAR); // a price of 0
+    for _ in 0..3 {
+        t.wait(10);
+        t.c.epoch_tick();
+    }
+    assert_eq!(t.c.get_firm(2).status, FirmStatus::Solvent, "10 USDC of cash is above the floor whatever the price");
+}
+
+/// F9 PoC: escrows of open bids were outside the firm's value: a long reveal phase pushed a victim under
+/// the floor. Escrows now count in the floor, and order phases last 10 minutes at most.
+#[test]
+fn poc_f9_open_escrows_count_in_the_floor() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.c.balances.insert(acc("w2.tender.near"), 5 * USDC); // floor 2
+    t.c.assets.insert(acc("w2.tender.near"), 0);
+    t.as_("client.near", 1);
+    assert!(panics(|| {
+        t.c.post_order(PostOrder { side: Side::Sell, amount_in: U128(NEAR), min_out: U128(2 * USDC), reference_out: None, commit_secs: 2, reveal_secs: 601 });
+    }), "phases capped at 10 minutes");
+    t.as_("client.near", 1);
+    let id = t.c.post_order(PostOrder { side: Side::Sell, amount_in: U128(NEAR), min_out: U128(38 * USDC / 10), reference_out: None, commit_secs: 2, reveal_secs: 600 });
+    let a = t.c.get_order(id).auction;
+    t.bid(a, 1, "o2.near", 39 * USDC / 10);
+    t.wait(2);
+    t.reveal(a, 1, "o2.near", 39 * USDC / 10); // 1.1 USDC left in the treasury, 3.9 in escrow
+    assert_eq!(t.c.get_firm(1).escrow.0, 39 * USDC / 10);
+    for _ in 0..3 {
+        t.wait(10);
+        t.c.epoch_tick();
+    }
+    assert_eq!(t.c.get_firm(1).status, FirmStatus::Solvent);
+    t.wait(600);
+    t.c.settle(a);
+    assert_eq!(t.c.get_firm(1).escrow.0, 0, "released at settlement");
+}
+
+/// F9 PoC: a firm wound up with an open escrow received the refund after closing, where nothing could move it.
+#[test]
+#[should_panic(expected = "the firm has open bids")]
+fn poc_f9_no_wind_up_with_open_escrows() {
+    let mut t = T::new();
+    for w in ["w1", "w2", "w4", "w5"] {
+        t.c.balances.insert(acc(&format!("{w}.tender.near")), 50 * USDC);
+    }
+    t.c.firms.get_mut(2).unwrap().escrow_asset = U128(NEAR);
+    for _ in 0..2 {
+        t.wait(10);
+        t.c.epoch_tick();
+    }
+    let a = t.c.get_firm(2).liquidation_auction.unwrap();
+    t.wait(5);
+    t.c.settle(a); // no buyer: the wind-up must wait for the escrow
+}
+
+/// F10 PoC: a fill turned lent cash into inventory, and closing the firm gave it to the shareholders
+/// ahead of the lender. A firm now keeps the cash it owes.
+#[test]
+#[should_panic(expected = "the firm must keep the cash it owes its lenders")]
+fn poc_f10_lent_cash_stays_cash() {
+    let mut t = T::new();
+    t.as_("lender.near", 1);
+    t.c.lend(2, U128(10 * USDC)); // w3: 10 USDC, all lent
+    let (_, a) = t.post(Side::Sell, 25 * NEAR / 10, 95 * USDC / 10);
+    t.run(a, &[(2, "o3.near", 99 * USDC / 10)]);
+}
+
+/// F11 PoC: self-filled dust orders farmed the keeper reward. A fill pays it only if its fee covers it.
+#[test]
+fn poc_f11_self_fills_do_not_farm_the_keeper_reward() {
+    let mut t = with_fees();
+    t.c.balances.insert(acc("admin.near"), USDC);
+    t.c.assets.insert(acc("w4.tender.near"), 10);
+    t.deposit("x.near", 10);
+    for _ in 0..3 {
+        self_fill(&mut t, Side::Buy, 1, 1);
+    }
+    assert_eq!(t.bal("admin.near"), USDC, "no reward paid on fee-less fills");
 }
