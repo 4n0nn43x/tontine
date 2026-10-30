@@ -2,7 +2,7 @@
 WASM_TARGET := contracts/target/wasm32-unknown-unknown/release
 export TMPDIR := $(CURDIR)/ts/node_modules/.cache/tmp
 
-.PHONY: build build-repro test demo verify-wasm deps thesis
+.PHONY: build build-repro test demo verify-wasm deps thesis web
 
 deps:
 	cd ts && npm ci
@@ -35,3 +35,8 @@ demo: verify-wasm
 
 thesis:
 	cd ts && npx tsx src/thesis.ts
+
+# Landing page (static, no build step): http://127.0.0.1:8765/web/
+web:
+	@echo "Landing page: http://127.0.0.1:8765/web/"
+	python3 -m http.server 8765 --bind 127.0.0.1

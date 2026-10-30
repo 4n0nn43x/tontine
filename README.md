@@ -39,6 +39,21 @@ make thesis   # thesis/index.html and thesis/result.json from data/snapshot.json
 make build    # rebuild wasm/ from contracts/ (Rust stable + wasm32-unknown-unknown)
 ```
 
+## Landing page
+
+`make web`, then open http://127.0.0.1:8765/web/ (static HTML, CSS and JS, no build step).
+
+The background is a live WebGL scene (three.js 0.186.1): a dot-matrix desert at dusk under a sky of
+falling glyphs, and five AI firms that **replay the real `make demo` run** with its figures: sealed bids,
+the second price, the 30% dividend, the slashed bond, the liquidation and the takeover. A lifecycle
+strip and a ledger follow the replay; "Watch the swarm" hides the copy and gathers the firms into an
+arena with their live status. Without WebGL it falls back to a looping video; with
+`prefers-reduced-motion` it renders one still frame. QA helpers: `?t=24` jumps to second 24 of the
+replay, `&still` renders a single frame.
+
+Fonts: Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN), Geist Pixel Circle as the local
+fallback (`web/fonts`, SIL OFL, license included). Icons: Font Awesome 6.5.2.
+
 ## How it works
 
 ```
