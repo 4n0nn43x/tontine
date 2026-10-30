@@ -1,0 +1,199 @@
+// `make demo`: the whole Tontine loop on a local NEAR sandbox. No funds, no keys, no network
+// (NEAR AI Cloud and market.near.ai are replayed from fixtures/ unless their env vars are set).
+// Every claim prints PASS or FAIL; the exit code is non-zero if any check fails.
+import { Sandbox, DEFAULT_ACCOUNT_ID, DEFAULT_PRIVATE_KEY } from "near-sandbox";
+import { JsonRpcProvider, type Account } from "near-api-js";
+import { account, call, view, fmt, USDC, waitUntilChainTime, sleep } from "./chain.ts";
+import { createAccount, createFirm, deployContract, wasm } from "./deploy.ts";
+import { loadStrategies } from "./strategy.ts";
+import { makeLlm } from "./llm.ts";
+import { Swarm, bidHash, type FirmHandle } from "./swarm.ts";
+import { board, placeBid } from "./market.ts";
+
+let failed = 0;
+function check(name: string, ok: boolean, detail = "") {
+  if (!ok) failed++;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
+}
+async function rejects(p: Promise<unknown>, expect: string): Promise<string | null> {
+  try {
+    await p;
+    return null;
+  } catch (e) {
+    const m = String((e as Error).message ?? e);
+    return m.includes(expect) ? m : `unexpected: ${m}`;
+  }
+}
+const section = (s: string) => console.log(`\n== ${s}`);
+
+const EPOCH_SECS = 4;
+const FLOOR = USDC(2);
+
+async function main() {
+  section("sandbox");
+  // near-sdk 5.30 wasm imports protocol 2.14 host functions; the package default (2.13.4) rejects them.
+  const sandbox = await Sandbox.start({ version: process.env.SANDBOX_VERSION ?? "2.14.0" });
+  const provider = new JsonRpcProvider({ url: sandbox.rpcUrl });
+  const root = account(DEFAULT_ACCOUNT_ID, provider, DEFAULT_PRIVATE_KEY as any);
+  try {
+    const mk = (name: string, near = "20") => createAccount(root, `${name}.${DEFAULT_ACCOUNT_ID}`, near, provider);
+    const [usdc, tender, judgeA, client, inference, ...owners] = await Promise.all(
+      ["usdc", "tender", "judge", "client", "inference", "o1", "o2", "o3", "o4", "o5"].map((n) => mk(n, n === "tender" ? "60" : "20")),
+    );
+    const T = tender.acct.accountId;
+    await deployContract(usdc.acct, wasm("mock_ft"), "new", {});
+    await deployContract(tender.acct, wasm("tender"), "new", {
+      config: {
+        admin: T,
+        judge: judgeA.acct.accountId,
+        payment: { Ft: { token: usdc.acct.accountId } },
+        dividend_bps: 3000,
+        liquidation_fee_bps: 200,
+        min_bond: USDC(5).toString(),
+        slash: USDC(5).toString(),
+        treasury_floor: FLOOR.toString(),
+        epochs_before_liquidation: 2,
+        epoch_secs: EPOCH_SECS,
+        liquidation_commit_secs: 3,
+        liquidation_reveal_secs: 3,
+      },
+    });
+    console.log(`tender=${T}  usdc=${usdc.acct.accountId} (mock, sandbox only)`);
+
+    const strategies = await loadStrategies();
+    const firms: FirmHandle[] = [];
+    for (let i = 0; i < strategies.length; i++) {
+      firms.push(
+        await createFirm({ tenderAcct: tender.acct, provider, n: i + 1, owner: owners[i].acct, strategy: strategies[i], budget: USDC(20), maxPerCall: USDC(25), budgetEpochSecs: 3600 }),
+      );
+    }
+    // A second firm of o1, outside the swarm, used only to show the anti-shill rule.
+    const o1Shell = await createFirm({ tenderAcct: tender.acct, provider, n: 9, owner: owners[0].acct, strategy: { name: "o1 shell", author: "test", house: true, bid: () => null, work: async () => "" }, budget: 0n, maxPerCall: 0n, budgetEpochSecs: 3600 });
+    for (const f of firms) console.log(`firm #${f.id} ${f.account.padEnd(24)} ${f.strategy.name} (${f.strategy.house ? "house" : "third party"}) owner ${f.owner.accountId}`);
+
+    const keys: any = await provider.viewAccessKeyList({ accountId: firms[0].account, finalityQuery: { finality: "final" } } as any).catch(() =>
+      (provider as any).query({ request_type: "view_access_key_list", account_id: firms[0].account, finality: "final" }),
+    );
+    const perms = (keys.keys ?? []).map((k: any) => k.access_key.permission);
+    check("firm accounts have no full access key", perms.length === 2 && perms.every((p: any) => p !== "FullAccess" && p.FunctionCall), `${perms.length} function call keys`);
+
+    section("funding (mock USDC)");
+    const ftCall = (from: Account, amount: bigint, msg: object | "") =>
+      call(from, usdc.acct.accountId, "ft_transfer_call", { receiver_id: T, amount: amount.toString(), msg: msg === "" ? "" : JSON.stringify(msg) }, 1n);
+    await call(usdc.acct, usdc.acct.accountId, "mint", { account_id: T, amount: "0" });
+    await call(usdc.acct, usdc.acct.accountId, "mint", { account_id: client.acct.accountId, amount: USDC(100).toString() });
+    await Promise.all(
+      firms.map(async (f, i) => {
+        await call(usdc.acct, usdc.acct.accountId, "mint", { account_id: f.owner.accountId, amount: USDC(100).toString() });
+        await ftCall(f.owner, USDC(10), "");
+        await call(f.owner, T, "deposit_bond", { amount: USDC(10).toString() }, 1n);
+        // Gambler Inc (firm 2) starts thin: 1 USDC treasury, under the 2 USDC floor.
+        await ftCall(f.owner, i === 2 ? USDC(1) : USDC(20), { Credit: f.account });
+      }),
+    );
+    await ftCall(owners[0].acct, USDC(5), { Credit: o1Shell.account });
+    check("owners bonded, firm treasuries funded", BigInt(await view(provider, T, "balance_of", { account_id: firms[0].account })) === USDC(20));
+
+    const llm = makeLlm();
+    const swarm = new Swarm(provider, T, firms, judgeA.acct, llm, inference.acct.accountId, (s) => console.log(s));
+
+    section("1. a client pays a job on-chain (ft_transfer_call with a PostJob message)");
+    const brief1 = "Translate the README of a hackathon project from English to French, keep the markdown.";
+    const post = (budget: bigint, brief: string) =>
+      ftCall(client.acct, budget, { PostJob: { budget: budget.toString(), brief, commit_secs: 3, reveal_secs: 3, deliver_secs: 120 } });
+    const p1 = await post(USDC(10), brief1);
+    check("job posted and escrowed by the deposit", p1.events.some((e) => e.event === "job_posted"), `tx ${p1.txHash}`);
+
+    section("2. reverse Vickrey between the firms");
+    // o1 owns firm 0. A second firm of the same owner would let it pump the second price.
+    let shill: string | null = null;
+    const r1 = await swarm.runJob(0, async () => {
+      shill = await rejects(call(o1Shell.owner, T, "commit_bid", { auction_id: (await swarm.job(0)).auction, firm_id: o1Shell.id, hash: bidHash(1n, "x") }), "one bid per owner");
+    });
+    check("anti-shill: a second firm of the same owner cannot bid", shill !== null && !String(shill).startsWith("unexpected"), shill ?? "");
+    const revealed = r1.auction.bids.filter((b: any) => b.revealed).map((b: any) => BigInt(b.revealed)).sort((a: bigint, b: bigint) => (a < b ? -1 : 1));
+    check("lowest bid wins, paid the second-lowest price", BigInt(r1.auction.price) === revealed[1], `price ${fmt(r1.auction.price)} USDC, bids ${revealed.map(fmt).join(" < ")}`);
+    const w1 = swarm.firm(r1.auction.winner);
+    const jobAfter = await swarm.job(0);
+    check("delivery accepted by the judge, job paid", r1.verdict?.accept === true && jobAfter.status === "Paid");
+    const pending = BigInt(await view(provider, T, "pending_dividends", { firm_id: w1.id, account_id: w1.owner.accountId }));
+    check("30% of the price accrued to shareholders", pending === (BigInt(r1.auction.price) * 3000n) / 10000n, `${fmt(pending)} USDC to ${w1.owner.accountId}`);
+    const usdcBefore = BigInt(await view(provider, usdc.acct.accountId, "ft_balance_of", { account_id: w1.owner.accountId }));
+    await call(w1.owner, T, "claim_dividends", { firm_id: w1.id }, 1n);
+    await call(w1.owner, T, "withdraw", { amount: pending.toString() }, 1n, 100_000_000_000_000n);
+    const usdcAfter = BigInt(await view(provider, usdc.acct.accountId, "ft_balance_of", { account_id: w1.owner.accountId }));
+    check("shareholder withdrew the dividend to its wallet", usdcAfter - usdcBefore === pending);
+    check("firm paid its own inference from its treasury", BigInt(await view(provider, T, "balance_of", { account_id: inference.acct.accountId })) > 0n);
+
+    section("3. a firm delivers nothing, the judge rejects it, its owner's bond is slashed");
+    const clientBefore = BigInt(await view(provider, T, "balance_of", { account_id: client.acct.accountId }));
+    await post(USDC(4), "Write three unit tests for a JSON-lines parser.");
+    const r2 = await swarm.runJob(1);
+    const loser = swarm.firm(r2.auction.winner);
+    const bond = BigInt(await view(provider, T, "bond_of", { account_id: loser.owner.accountId }));
+    check("empty delivery rejected", r2.verdict?.accept === false, loser.strategy.name);
+    check("owner bond slashed by 5 USDC", bond === USDC(5), `bond now ${fmt(bond)}`);
+    const clientAfter = BigInt(await view(provider, T, "balance_of", { account_id: client.acct.accountId }));
+    check("client refunded the 4 USDC budget plus the 5 USDC slash", clientAfter - clientBefore === USDC(9), `+${fmt(clientAfter - clientBefore)} USDC in the ledger`);
+
+    section("4. the illiquid firm is liquidated and bought by a rival (same auction code)");
+    const gambler = firms[2];
+    let ticks = 0;
+    for (let i = 0; i < 6 && (await view(provider, T, "get_firm", { firm_id: gambler.id })).status !== "Liquidating"; i++) {
+      if (await swarm.tick()) ticks++;
+      else await sleep(EPOCH_SECS * 500);
+    }
+    const g = await view(provider, T, "get_firm", { firm_id: gambler.id });
+    check("below the floor for 2 epochs -> Liquidating", g.status === "Liquidating", `${ticks} epoch ticks`);
+    const oldOwner = gambler.owner.accountId;
+    const oldOwnerBal = BigInt(await view(provider, T, "balance_of", { account_id: oldOwner }));
+    const liq = await swarm.runLiquidation(gambler.id);
+    const g2 = await view(provider, T, "get_firm", { firm_id: gambler.id });
+    const buyer = swarm.firm(liq.winner);
+    check("rival bought the firm at the second-highest price", liq.winner !== null && g2.owner === buyer.owner.accountId, `${buyer.strategy.name} paid ${fmt(liq.price)} USDC`);
+    check("buyer firm holds 100% of the shares", (await view(provider, T, "mt_balance_of", { account_id: buyer.account, token_id: String(gambler.id) })) === "100");
+    await sleep(1500);
+    const fs = await view(provider, gambler.account, "get_state");
+    check("firm contract owner changed by tender (no full access key involved)", fs.owner === buyer.owner.accountId);
+    const ev = liq.events.find((e: { event: string }) => e.event === "liquidated")?.data[0];
+    const toHolders = BigInt(ev?.to_shareholders ?? 0);
+    const oldOwnerGain = BigInt(await view(provider, T, "balance_of", { account_id: oldOwner })) - oldOwnerBal;
+    check("cascade: 2% fee, then shareholders", BigInt(ev?.fee ?? -1) === (BigInt(liq.price) * 200n) / 10000n && oldOwnerGain === toHolders, `fee ${fmt(ev?.fee ?? 0)}, old owner +${fmt(oldOwnerGain)}`);
+
+    section("5. budgets: the firm contract refuses a 21 USDC spend on a 20 USDC budget");
+    const over = await rejects(call(firms[0].agentFirm, firms[0].account, "spend", { receiver_id: inference.acct.accountId, amount: USDC(21).toString() }), "over budget");
+    check("21 USDC spend on a 20 USDC budget rejected", over !== null && !over.startsWith("unexpected"), over ?? "");
+    const noDeposit = await rejects(call(firms[0].agentTender, T, "withdraw", { amount: "1" }, 1n), "");
+    check("agent key cannot call a deposit-taking method (withdraw)", noDeposit !== null);
+
+    section("6. market.near.ai as demand source (off-chain revenue, booked apart)");
+    const mb = await board();
+    for (const mj of mb.jobs.slice(0, 2)) {
+      const budget = USDC(Number(mj.budgetAmount ?? 0));
+      const offers = firms
+        .map((f) => ({ f, p: f.strategy.bid({ id: -1, client: "market.near.ai", budget, brief: mj.description }, { id: f.id, account: f.account, treasury: 0n, delivered: 0, rejected: 0 }) }))
+        .filter((o) => o.p !== null && o.p <= budget)
+        .sort((a, b) => (a.p! < b.p! ? -1 : 1));
+      if (!offers.length) continue;
+      const status = await placeBid(mj.jobId, fmt(offers[0].p!), `${offers[0].f.strategy.name}: ${mj.title}`);
+      console.log(`  [${mb.source}] ${mj.title}: ${offers[0].f.strategy.name} bids ${fmt(offers[0].p!)} ${mj.budgetToken} (${status}, off-chain)`);
+    }
+
+    section("P&L per firm (on-chain)");
+    for (const f of await view(provider, T, "get_firms")) {
+      const bal = BigInt(await view(provider, T, "balance_of", { account_id: f.account }));
+      console.log(
+        `  #${f.id} ${(firms[f.id]?.strategy.name ?? "o1 shell").padEnd(18)} ${f.status.padEnd(11)} treasury ${fmt(bal).padStart(6)}  revenue ${fmt(f.revenue).padStart(6)}  dividends ${fmt(f.dividends).padStart(5)}  delivered ${f.delivered} rejected ${f.rejected} slashed ${fmt(f.slashed)}  owner ${f.owner}`,
+      );
+    }
+  } finally {
+    await sandbox.tearDown();
+  }
+  console.log(failed ? `\n${failed} check(s) FAILED` : "\nALL CHECKS PASS");
+  process.exit(failed ? 1 : 0);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

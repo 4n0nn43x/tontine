@@ -1,17 +1,17 @@
 {
-  "name": "ts",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "tontine-swarm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "demo": "tsx src/demo.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "near-api-js": "^7.4.0",
-    "near-sandbox": "^0.3.4"
+    "near-api-js": "7.4.0",
+    "near-sandbox": "0.3.4"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

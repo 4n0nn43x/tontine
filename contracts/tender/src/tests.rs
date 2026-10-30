@@ -337,3 +337,10 @@ fn failed_withdraw_is_refunded() {
     assert!(!t.c.on_withdraw(acc("o1.near"), U128(USDC)));
     assert_eq!(t.bal("o1.near"), 91 * USDC);
 }
+
+#[test]
+fn bid_hash_vector() {
+    ctx("a.near", 0, 0);
+    // Same vector is asserted in ts/src/swarm.test.ts: the off-chain commit must match the contract.
+    assert_eq!(bid_hash(6_000_000, "s0"), "bb0041d21898d7bb4e1c67959ec2beaa5e433ead7084e524f13dfc179744f9fd");
+}
