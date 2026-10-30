@@ -2,6 +2,9 @@
 // the real `make demo` run (sealed bids, second price, dividends, slashing, liquidation, takeover).
 // Everything is GPU points: no textures, no postprocessing.
 import * as THREE from "three";
+
+// Colours here are written like CSS colours and output as is: no linear conversion.
+THREE.ColorManagement.enabled = false;
 import { FIRMS, JOB, STORY, STORY_LENGTH } from "./story.js";
 
 const TAU = Math.PI * 2;
@@ -608,7 +611,9 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
 
   // ------------------------------------------------------------------ tags (HTML labels)
 
-  function tag(key, text, cls, worldFn, seconds) {
+  // slot: "above", "below", "left" or "right" of the object (radius r in world units, turned into
+  // pixels on screen), or "center".
+  function tag(key, text, cls, worldFn, seconds, slot = "center", r = 0) {
     let t = tags.get(key);
     if (!t) {
       const el = document.createElement("div");
@@ -621,6 +626,8 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     t.w = undefined;
     t.el.className = `tag ${cls}`;
     t.worldFn = worldFn;
+    t.slot = slot;
+    t.r = r;
     t.until = seconds === Infinity ? Infinity : clock + seconds;
     requestAnimationFrame(() => {
       if (t.until > clock) t.el.classList.add("show");
@@ -644,20 +651,25 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         }
       }
       t.worldFn(tmp2);
+      const depth = -tmp.copy(tmp2).applyMatrix4(camera.matrixWorldInverse).z;
+      const pxPerUnit = height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.max(depth, 0.1));
+      const gap = t.r * pxPerUnit + 16;
+      const half = (t.w ??= t.el.offsetWidth) / 2;
+      const offY = t.slot === "above" ? -gap : t.slot === "below" ? gap : 0;
+      const offX = t.slot === "right" ? gap + half : t.slot === "left" ? -gap - half : 0;
       tmp2.project(camera);
       // In the hero view a label over the copy would fight with it: hide it there.
       const overCopy = explore < 0.5 && Math.abs(tmp2.x - calm.x) < calm.z + 0.04 && Math.abs(tmp2.y - calm.y) < calm.w + 0.06;
       t.el.classList.toggle("muted", overCopy || tmp2.z > 1);
-      const half = (t.w ??= t.el.offsetWidth) / 2 + 14;
-      const x = Math.min(width - half, Math.max(half, (tmp2.x * 0.5 + 0.5) * width));
-      const y = Math.min(height - 16, Math.max(16, (-tmp2.y * 0.5 + 0.5) * height));
+      const x = Math.min(width - half - 14, Math.max(half + 14, (tmp2.x * 0.5 + 0.5) * width + offX));
+      const y = Math.min(height - 16, Math.max(16, (-tmp2.y * 0.5 + 0.5) * height + offY));
       t.el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) translate(-50%, -50%)`;
     }
   }
 
   // Name tags carry the firm's current state, like a character with a live verb.
   for (const f of firms) {
-    tag(`name-${f.index}`, "", "name show", (o) => o.copy(f.anchor).add(tmp.set(0, -2.9, 0)), Infinity);
+    tag(`name-${f.index}`, "", "name show", (o) => o.copy(f.anchor), Infinity, "below", 2.3);
     const el = tags.get(`name-${f.index}`).el;
     el.innerHTML = "<b></b><span></span>";
     el.firstChild.textContent = f.name;
@@ -730,7 +742,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       job.born = clock;
       job.flash = 0;
       onPhase?.(0);
-      tag("job", `JOB #${id} · ${budget} USDC`, "win show", (o) => o.copy(job.pos).add(tmp.set(0, 2.9, 0)), 5);
+      tag("job", `JOB #${id} · ${budget} USDC`, "win show", (o) => o.copy(job.pos), 5, "right", 1.6);
       log(`<b>job #${id}</b> · ${budget} USDC · ${brief}`);
     },
     commit({ firm, target }) {
@@ -748,7 +760,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       if (b) b.state = "revealed";
       if (b?.to === "job") onPhase?.(2);
       status(f, `bid ${price}`);
-      tag(`price-${f.index}`, price, "price show", (o) => o.copy(f.anchor).add(tmp.set(0, 2.3, 0)), 6);
+      tag(`price-${f.index}`, price, "price show", (o) => o.copy(f.anchor), 6, f.priceSlot ?? "above", 2.3);
       log(`${firm} reveals <b>${price}</b>`);
     },
     win({ firm, price, label }) {
@@ -761,7 +773,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       status(f, `won at ${price}`);
       const at = beams.find((x) => x.from === f.index && x.state === "win");
       const where = at && at.to !== "job" ? firms[at.to].anchor : job.pos;
-      tag("toast", label ?? `2ND PRICE ${price}`, "win show", (o) => o.copy(where).add(tmp.set(0, 2.9, 0)), 3.2);
+      tag("toast", label ?? `2ND PRICE ${price}`, "win show", (o) => o.copy(where), 3.2, at && at.to !== "job" ? "above" : "right", at && at.to !== "job" ? 2.3 : 1.6);
       log(`<b>${firm}</b> wins at the 2nd price ${price}`);
     },
     work({ firm, empty }) {
@@ -787,9 +799,11 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     },
     pay({ firm, price, firmShare, dividends }) {
       const f = firmById(firm);
-      sparkFlow(job.pos, f.anchor, isMobile ? 40 : 90, hex("#f6d7a7"), { dur: 1.7, lift: 0.04 });
+      const n = isMobile ? 40 : 90;
+      sparkFlow(job.pos, f.anchor, Math.round(n * 0.7), hex("#f6d7a7"), { dur: 1.7, lift: 0.04 });
+      sparkFlow(job.pos, tmp2.copy(f.anchor).add(tmp.set(0, 4.2, 0)), Math.round(n * 0.3), hex("#ffe9c4"), { dur: 1.9, lift: 0.04, size: 1.3 });
       sparkRise(f.anchor, isMobile ? 30 : 70, hex("#ffe9c4"), { height: 9, delay: 1.2 });
-      tag("toast", `+${dividends} TO SHAREHOLDERS`, "good show", (o) => o.copy(f.anchor).add(tmp.set(0, -4.6, 0)), 3.6);
+      tag("toast", `+${dividends} TO SHAREHOLDERS`, "good show", (o) => o.copy(f.anchor), 3.6, "above", 2.3);
       log(`paid ${price} · <b>${dividends} to shareholders</b>`);
     },
     slash({ firm, bond }) {
@@ -799,7 +813,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       f.energy = 0.55;
       status(f, `bond −${bond}`);
       sparkFlow(f.anchor, job.pos, isMobile ? 24 : 50, hex("#ff7a7a"), { dur: 1.5, lift: 0.04 });
-      tag("toast", `−${bond} BOND SLASHED`, "bad show", (o) => o.copy(f.anchor).add(tmp.set(0, -4.6, 0)), 3.6);
+      tag("toast", `−${bond} BOND SLASHED`, "bad show", (o) => o.copy(f.anchor), 3.6, "above", 2.3);
       log(`owner bond <b>−${bond}</b> to the client`, "bad");
     },
     jobEnd() {
@@ -818,7 +832,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       f.pulseColor.set(liquidating ? "#ff5a5a" : "#f6b37a");
       if (liquidating) onPhase?.(5);
       status(f, liquidating ? "liquidating" : `under the floor ${n}/2`);
-      tag("toast", liquidating ? "LIQUIDATING" : `UNDER THE FLOOR ${n}/2`, "bad show", (o) => o.copy(f.anchor).add(tmp.set(0, -4.6, 0)), 2.6);
+      tag("toast", liquidating ? "LIQUIDATING" : `UNDER THE FLOOR ${n}/2`, "bad show", (o) => o.copy(f.anchor), 2.6, "above", 2.3);
       log(liquidating ? `${firm} · <b>liquidating</b>` : `${firm} under the floor ${n}/2`, "bad");
     },
     takeover({ buyer, target, price, fee, holders }) {
@@ -834,7 +848,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       t.pulse = 1;
       t.pulseColor.copy(b.baseTint);
       sparkRise(t.anchor, isMobile ? 26 : 60, hex("#ffe9c4"), { height: 8 });
-      tag("toast", `BOUGHT BY ${buyer.toUpperCase()} · ${price}`, "win show", (o) => o.copy(t.anchor).add(tmp.set(0, -4.6, 0)), 4);
+      tag("toast", `BOUGHT BY ${buyer.toUpperCase()} · ${price}`, "win show", (o) => o.copy(t.anchor), 4, "above", 2.3);
       log(`<b>${buyer}</b> buys ${target} · ${price}`);
       log(`fee ${fee} · old shareholders <b>+${holders}</b>`);
     },
@@ -847,7 +861,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       f.pulse = 1;
       f.pulseColor.set("#ff5a5a");
       status(f, "spend refused");
-      tag("toast", `${spend} > ${budget} BUDGET · REFUSED`, "bad show", (o) => o.copy(f.anchor).add(tmp.set(0, -4.6, 0)), 3);
+      tag("toast", `${spend} > ${budget} BUDGET · REFUSED`, "bad show", (o) => o.copy(f.anchor), 3, "above", 2.3);
       log(`spend ${spend} on a ${budget} budget · <b>refused</b>`, "bad");
     },
     done() {
@@ -1126,11 +1140,12 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     renderer.render(scene, camera);
   }
 
+  let pausedByUser = false;
   function onVisibility() {
     if (document.hidden) {
       cancelAnimationFrame(raf);
       raf = 0;
-    } else if (!raf && !reducedMotion) {
+    } else if (!raf && !reducedMotion && !pausedByUser) {
       last = performance.now();
       raf = requestAnimationFrame(frame);
     }
@@ -1180,10 +1195,19 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     },
     setHorizon(fraction) {
       if (!(fraction > 0.12 && fraction < 0.7) || Math.abs(fraction - HORIZON) < 0.004) return;
-      HORIZON = fraction;
-      duneAspect = 0; // the view moved: rebuild the ground for it
+      HORIZON = fraction; // only the camera pitch changes: the ground geometry stays
       layout();
       if (reducedMotion) step(0);
+    },
+    setPaused(paused) {
+      if (paused) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      } else if (!raf && !reducedMotion) {
+        last = performance.now();
+        raf = requestAnimationFrame(frame);
+      }
+      pausedByUser = paused;
     },
     setExplore(on) {
       exploreTarget = on ? 1 : 0;

@@ -5,10 +5,10 @@
 // screen/dist frame the copy on wide screens, arena/arenaDist gather the swarm when the copy is hidden
 // ("Watch the swarm"), screenMobile/distMobile are for portrait screens.
 export const FIRMS = [
-  { name: "Undercut & Co", color: "#9fd0ff", screen: [0.075, 0.41], dist: 40, arena: [0.2, 0.43], arenaDist: 34, screenMobile: [0.16, 0.42], distMobile: 32 },
+  { name: "Undercut & Co", color: "#9fd0ff", priceSlot: "right", screen: [0.075, 0.41], dist: 40, arena: [0.2, 0.43], arenaDist: 34, screenMobile: [0.16, 0.42], distMobile: 32 },
   { name: "Cost Plus Ltd", color: "#a9f2cb", screen: [0.1, 0.66], dist: 15, arena: [0.3, 0.66], arenaDist: 17, screenMobile: [0.13, 0.69], distMobile: 12 },
   { name: "Gambler Inc", color: "#ffb48c", screen: [0.9, 0.67], dist: 14, arena: [0.7, 0.66], arenaDist: 17, screenMobile: [0.87, 0.7], distMobile: 12 },
-  { name: "Premium Partners", color: "#d7bcff", screen: [0.925, 0.41], dist: 40, arena: [0.8, 0.43], arenaDist: 34, screenMobile: [0.84, 0.43], distMobile: 32 },
+  { name: "Premium Partners", color: "#d7bcff", priceSlot: "left", screen: [0.925, 0.41], dist: 40, arena: [0.8, 0.43], arenaDist: 34, screenMobile: [0.84, 0.43], distMobile: 32 },
   { name: "Sniper Holdings", color: "#ffe39d", screen: [0.185, 0.365], dist: 74, arena: [0.5, 0.4], arenaDist: 60, screenMobile: [0.5, 0.39], distMobile: 70 },
 ];
 

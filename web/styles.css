@@ -105,9 +105,9 @@ body.exploring .bg-scrim {
 
 /* ------------------------------------------------------------------ page */
 
+/* No z-index here: the burger must rise above the menu overlay, outside this stacking context. */
 .page {
   position: relative;
-  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -736,9 +736,38 @@ body.exploring .ledger {
   font-size: 12.5px;
 }
 
-.explore-exit {
+.motion-toggle {
   position: fixed;
   right: clamp(14px, 2vw, 28px);
+  bottom: clamp(16px, 2.4vh, 28px);
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--pill-dark);
+  color: var(--sign-in-text);
+  box-shadow: var(--nav-shadow);
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0;
+  animation: reveal 0.85s var(--ease) 1.2s forwards;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.motion-toggle:hover {
+  background: #323234;
+  color: #fff;
+}
+
+.explore-exit {
+  position: fixed;
+  right: calc(clamp(14px, 2vw, 28px) + 54px);
   bottom: clamp(16px, 2.4vh, 28px);
   z-index: 3;
   display: inline-flex;
@@ -840,6 +869,10 @@ body.exploring .ledger {
   animation-delay: 0.22s;
 }
 
+.mobile-menu .mobile-motion {
+  display: none;
+}
+
 .mobile-menu .mobile-signin {
   margin-top: 10px;
   padding: 15px 8px;
@@ -883,8 +916,27 @@ body.exploring .ledger {
 
 @media (max-width: 720px) {
   .nav,
-  .signin {
+  .signin,
+  .motion-toggle {
     display: none;
+  }
+
+  .explore-exit {
+    right: clamp(14px, 2vw, 28px);
+  }
+
+  .mobile-menu .mobile-motion {
+    display: block;
+    margin-top: 4px;
+    padding: 12px 8px;
+    border: 0;
+    background: none;
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 15px;
+    color: var(--nav-text);
+    opacity: 0.55;
+    cursor: pointer;
   }
 
   .header {
@@ -923,6 +975,11 @@ body.exploring .ledger {
       transform 0.3s var(--ease),
       opacity 0.2s ease,
       background 0.25s ease;
+  }
+
+  /* The header animates with a transform (its own stacking context): lift it above the overlay. */
+  body.menu-open .header {
+    z-index: 7;
   }
 
   body.menu-open .burger {
@@ -997,12 +1054,14 @@ body.exploring .ledger {
   .mobile-menu,
   .mobile-menu a,
   .menu-overlay,
-  .ledger-dot {
+  .ledger-dot,
+  .motion-toggle {
     animation: none !important;
   }
 
   .anim,
-  .ledger {
+  .ledger,
+  .motion-toggle {
     opacity: var(--o, 1);
     translate: none;
     scale: none;

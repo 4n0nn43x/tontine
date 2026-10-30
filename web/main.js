@@ -1,7 +1,8 @@
 // Landing page behaviour: mobile menu, stat counters, the "watch the swarm" mode, the replay ledger,
 // and the WebGL scene (with the original video as a fallback when WebGL is missing).
 const body = document.body;
-const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+const reducedMotion = motionQuery.matches;
 const isMobile = window.matchMedia("(max-width: 720px), (pointer: coarse)").matches;
 
 // ------------------------------------------------------------------ mobile menu
@@ -161,9 +162,11 @@ function useVideo() {
 }
 
 function webglAvailable() {
+  // Software-only WebGL is too slow for this scene: use the video there (?gl=force skips the check).
+  const force = new URLSearchParams(location.search).get("gl") === "force";
   try {
     const c = document.createElement("canvas");
-    return !!c.getContext("webgl2");
+    return !!c.getContext("webgl2", { failIfMajorPerformanceCaveat: !force });
   } catch {
     return false;
   }
@@ -208,3 +211,26 @@ async function startBackground() {
 }
 
 startBackground();
+
+// ------------------------------------------------------------------ pause (WCAG 2.2.2)
+
+const motionBtn = document.querySelector(".motion-toggle");
+const mobileMotion = document.querySelector(".mobile-motion");
+let paused = false;
+
+function setPaused(p) {
+  paused = p;
+  scene?.setPaused(p);
+  if (!video.hidden) p ? video.pause() : video.play().catch(() => {});
+  motionBtn.setAttribute("aria-pressed", String(p));
+  motionBtn.setAttribute("aria-label", p ? "Play the animation" : "Pause the animation");
+  motionBtn.innerHTML = `<i class="fa-solid ${p ? "fa-play" : "fa-pause"}" aria-hidden="true"></i>`;
+  mobileMotion.textContent = p ? "Play the animation" : "Pause the animation";
+}
+
+motionBtn.addEventListener("click", () => setPaused(!paused));
+mobileMotion.addEventListener("click", () => setPaused(!paused));
+motionQuery.addEventListener("change", (e) => setPaused(e.matches));
+document.addEventListener("visibilitychange", () => {
+  if (!video.hidden && !paused) document.hidden ? video.pause() : video.play().catch(() => {});
+});
