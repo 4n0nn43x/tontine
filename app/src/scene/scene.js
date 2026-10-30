@@ -5,7 +5,7 @@ import * as THREE from "three";
 
 // Colours here are written like CSS colours and output as is: no linear conversion.
 THREE.ColorManagement.enabled = false;
-import { FIRMS, JOB, STORY, STORY_LENGTH } from "./story.js";
+import { FIRMS, EXTRA_SLOTS, JOB, STORY, STORY_LENGTH } from "./story.js";
 
 const TAU = Math.PI * 2;
 // Horizon height as a fraction of the viewport from the top; main.js moves it between the trust row and the title.
@@ -313,7 +313,20 @@ function duneHeight(x, z) {
 
 // ------------------------------------------------------------------ scene
 
-export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion = false, isMobile = false }) {
+// mode "replay": plays the recorded `make demo` story in a loop. mode "live": driven from outside with
+// act(step), one call per chain event. firmNames: the firms in chain order (live mode).
+export function startScene({
+  canvas,
+  tagsLayer,
+  onEvent,
+  onPhase,
+  reducedMotion = false,
+  isMobile = false,
+  mode = "replay",
+  firmNames = null,
+  calmStrength = 0.72,
+  debugQuery = true,
+}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
   renderer.setClearColor(0x000000, 1);
   let pixelRatio = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
@@ -333,7 +346,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     uScale: { value: 260 },
     uMaxSize: { value: 64 },
     uCalm: { value: calm },
-    uCalmStrength: { value: 0.72 },
+    uCalmStrength: { value: calmStrength },
   };
 
   // Sky
@@ -500,7 +513,10 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
 
   // ------------------------------------------------------------------ state
 
-  const firms = FIRMS.map((f, i) => ({
+  const defs = firmNames
+    ? firmNames.map((name, i) => ({ ...(FIRMS.find((f) => f.name === name) ?? EXTRA_SLOTS[i % EXTRA_SLOTS.length]), name }))
+    : FIRMS;
+  const firms = defs.map((f, i) => ({
     ...f,
     index: i,
     anchor: new THREE.Vector3(),
@@ -559,8 +575,8 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   }
 
   function layout() {
-    width = Math.max(1, window.innerWidth);
-    height = Math.max(1, window.innerHeight);
+    width = Math.max(1, canvas.clientWidth || window.innerWidth);
+    height = Math.max(1, canvas.clientHeight || window.innerHeight);
     renderer.setPixelRatio(pixelRatio);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
@@ -1087,8 +1103,9 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
 
   function onPointer(e) {
-    pointer.tx = (e.clientX / width) * 2 - 1;
-    pointer.ty = (e.clientY / height) * 2 - 1;
+    const r = canvas.getBoundingClientRect();
+    pointer.tx = Math.max(-1, Math.min(1, ((e.clientX - r.left) / Math.max(1, r.width)) * 2 - 1));
+    pointer.ty = Math.max(-1, Math.min(1, ((e.clientY - r.top) / Math.max(1, r.height)) * 2 - 1));
   }
   window.addEventListener("pointermove", onPointer, { passive: true });
 
@@ -1128,14 +1145,14 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
 
   function step(dt) {
     clock += dt;
-    runStory(dt);
+    if (mode === "replay") runStory(dt);
     updateCamera(dt);
     simulate(dt);
     draw();
     skyUniforms.uTime.value = clock;
     duneUniforms.uTime.value = clock;
     terrainUniforms.uTime.value = clock;
-    shared.uCalmStrength.value = 0.72 * (1 - explore);
+    shared.uCalmStrength.value = calmStrength * (1 - explore);
     updateTags();
     renderer.render(scene, camera);
   }
@@ -1163,7 +1180,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     simulate(1 / 60);
   }
   // QA helpers: ?t=12 jumps to second 12 of the replay, &still renders one frame and stops.
-  const query = new URLSearchParams(location.search);
+  const query = new URLSearchParams(debugQuery ? location.search : "");
   if (query.has("still")) reducedMotion = true;
   if (query.has("debug")) window.__tontine = { beams, sparks, firms, job, decoCloud, agentsCloud, camera, get clock() { return clock; } };
   const forward = Number(query.get("t"));
@@ -1187,6 +1204,11 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   return {
     resize() {
       layout();
+      if (reducedMotion) step(0);
+    },
+    /** Live mode: play one story step ({ do: "commit", firm: "Cost Plus Ltd" }, ...). */
+    act(storyStep) {
+      ACTIONS[storyStep.do]?.(storyStep);
       if (reducedMotion) step(0);
     },
     setCalmRect(rect) {
@@ -1220,6 +1242,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       cancelAnimationFrame(raf);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pointermove", onPointer);
+      for (const t of tags.values()) t.el.remove();
       renderer.dispose();
     },
   };

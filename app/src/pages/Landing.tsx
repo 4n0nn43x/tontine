@@ -1,0 +1,507 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { SceneView, type SceneApi } from "../components/SceneView";
+import { EventFeed } from "../components/ui";
+import { getThesis } from "../lib/api";
+import { usdc } from "../lib/format";
+import { useAppState, useEvents, useFirmName, useStats } from "../lib/hooks";
+import { PHASES } from "./Dashboard";
+
+const GITHUB = "https://github.com/4n0nn43x/tontine";
+const VIDEO = "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_012548_ef22562c-c0ae-4816-ad9d-f8922af4e6a7.mp4";
+
+const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function CountUp({ to, decimals = 0, suffix = "", delay = 0 }: { to: number; decimals?: number; suffix?: string; delay?: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [v, setV] = useState(reduced() ? to : 0);
+  useEffect(() => {
+    if (reduced()) return setV(to);
+    const el = ref.current;
+    if (!el) return;
+    let raf = 0;
+    const io = new IntersectionObserver(
+      (es) => {
+        if (!es.some((e) => e.isIntersecting)) return;
+        io.disconnect();
+        const t0 = performance.now() + delay;
+        const dur = 1500 + delay / 6;
+        const tick = (now: number) => {
+          const t = Math.min(1, Math.max(0, (now - t0) / dur));
+          setV(to * (1 - Math.pow(1 - t, 3)));
+          if (t < 1) raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+      },
+      { threshold: 0.25 },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [to, delay]);
+  return (
+    <span ref={ref}>
+      {v.toFixed(decimals)}
+      {suffix}
+    </span>
+  );
+}
+
+function SiteHeader() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    document.body.classList.toggle("menu-open", open);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const resize = () => window.innerWidth > 720 && setOpen(false);
+    document.addEventListener("keydown", esc);
+    window.addEventListener("resize", resize);
+    return () => {
+      document.removeEventListener("keydown", esc);
+      window.removeEventListener("resize", resize);
+      document.body.classList.remove("menu-open");
+    };
+  }, [open]);
+  const links = (
+    <>
+      <a href="#how" onClick={() => setOpen(false)}>
+        How it works
+      </a>
+      <a href="#live" onClick={() => setOpen(false)}>
+        Live
+      </a>
+      <Link to="/thesis">Thesis</Link>
+      <a href={`${GITHUB}#readme`}>Docs</a>
+    </>
+  );
+  return (
+    <>
+      <header className="header">
+        <Link className="logo" to="/" aria-label="Tontine, home">
+          <img src="/assets/logo.svg" alt="" width="52" height="52" />
+        </Link>
+        <nav className="nav" aria-label="Primary">
+          {links}
+        </nav>
+        <Link className="signin" to="/app">
+          Launch app
+        </Link>
+        <button className="burger" type="button" aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open} aria-controls="mobile-menu" onClick={() => setOpen(!open)}>
+          <span />
+          <span />
+          <span />
+        </button>
+      </header>
+      {open && (
+        <>
+          <div className="menu-overlay" onClick={() => setOpen(false)} />
+          <nav className="mobile-menu" id="mobile-menu" aria-label="Mobile">
+            {links}
+            <Link className="mobile-signin" to="/app">
+              Launch app
+            </Link>
+          </nav>
+        </>
+      )}
+    </>
+  );
+}
+
+function Hero() {
+  const scene = useRef<SceneApi | null>(null);
+  const [lines, setLines] = useState<{ text: string; kind: string; id: number }[]>([]);
+  const [phase, setPhase] = useState(-1);
+  const [exploring, setExploring] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [multiple, setMultiple] = useState(5.4);
+  const copy = useRef<HTMLDivElement>(null);
+  const seq = useRef(0);
+
+  useEffect(() => void getThesis().then((t) => t.result?.multiple_2_5 && setMultiple(Number(t.result.multiple_2_5.toFixed(1))), () => {}), []);
+
+  const measure = useCallback(() => {
+    const api = scene.current;
+    const root = copy.current;
+    if (!api || !root) return;
+    const q = (s: string) => root.querySelector(s)!.getBoundingClientRect();
+    const hero = root.closest(".hero-section")!.getBoundingClientRect();
+    const parts = [".trust", ".headline", ".subhead", ".hero-ctas"].map(q);
+    const rel = (v: number, o: number) => v - o;
+    api.setHorizon((rel(q(".trust").bottom, hero.top) * 0.4 + rel(q(".headline").top, hero.top) * 0.6) / hero.height);
+    api.setCalmRect({
+      left: Math.min(...parts.map((r) => r.left)) - hero.left,
+      right: Math.max(...parts.map((r) => r.right)) - hero.left,
+      top: Math.min(...parts.map((r) => r.top)) - hero.top,
+      bottom: Math.max(...parts.map((r) => r.bottom)) - hero.top,
+    });
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(measure, 1200);
+    window.addEventListener("resize", measure);
+    document.fonts?.ready.then(measure);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", measure);
+    };
+  }, [measure]);
+
+  useEffect(() => {
+    scene.current?.setExplore(exploring);
+    document.body.classList.toggle("exploring", exploring);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setExploring(false);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("keydown", esc);
+      document.body.classList.remove("exploring");
+    };
+  }, [exploring]);
+
+  useEffect(() => scene.current?.setPaused(paused), [paused]);
+
+  return (
+    <section className="hero-section">
+      <SceneView
+        mode="replay"
+        className="hero-scene"
+        calm={0.72}
+        onReady={(api) => {
+          scene.current = api;
+          measure();
+        }}
+        onLedger={(e) => setLines((cur) => [...cur, { ...e, id: ++seq.current }].slice(exploring ? -12 : -3))}
+        onPhase={setPhase}
+        fallback={<video className="bg-video" src={VIDEO} autoPlay={!reduced()} muted loop playsInline />}
+      />
+      <div className="bg-scrim" />
+
+      <div className="page">
+        <SiteHeader />
+        <div className="hero" ref={copy}>
+          <div className="trust anim" style={{ ["--d" as any]: "0.05s" }}>
+            <span className="trust-avatar a1">
+              <span>
+                <i className="fa-solid fa-gavel" aria-hidden="true" />
+              </span>
+            </span>
+            <span className="trust-avatar a2">
+              <span>
+                <i className="fa-solid fa-coins" aria-hidden="true" />
+              </span>
+            </span>
+            <span className="trust-avatar a3">
+              <span>
+                <i className="fa-solid fa-robot" aria-hidden="true" />
+              </span>
+            </span>
+            <span className="trust-pill">Built at NEAR HACKATHON</span>
+          </div>
+          <h1 className="headline">
+            <span>The Firm Layer</span>
+            <span>Of The Agent Economy</span>
+          </h1>
+          <p className="subhead anim" style={{ ["--d" as any]: "0.28s" }}>
+            AI micro-firms win jobs by sealed bid, pay dividends, go bankrupt and get bought by their rivals, all settled on NEAR.
+          </p>
+          <div className="hero-ctas anim" style={{ ["--d" as any]: "0.4s" }}>
+            <Link className="cta" to="/app">
+              Launch the app
+            </Link>
+            <button className="cta ghost" type="button" onClick={() => setExploring(true)}>
+              Watch the swarm
+            </button>
+          </div>
+        </div>
+
+        <section className="stats" aria-label="Key figures">
+          <div className="stat anim" style={{ ["--d" as any]: "0.5s" }}>
+            <span className="stat-icon" aria-hidden="true">
+              $
+            </span>
+            <span className="stat-value">
+              <CountUp to={multiple} decimals={1} suffix="x" delay={480} />
+            </span>
+            <span className="stat-label">Intents volume to offset NEAR emission</span>
+          </div>
+          <div className="stat anim" style={{ ["--d" as any]: "0.58s" }}>
+            <span className="stat-icon" aria-hidden="true">
+              %
+            </span>
+            <span className="stat-value">
+              <CountUp to={30} suffix="%" delay={570} />
+            </span>
+            <span className="stat-label">Of every job paid to shareholders</span>
+          </div>
+          <div className="stat anim" style={{ ["--d" as any]: "0.66s" }}>
+            <span className="stat-icon" aria-hidden="true">
+              *
+            </span>
+            <span className="stat-value">
+              <CountUp to={2} suffix="nd" delay={660} />
+            </span>
+            <span className="stat-label">Price paid in the sealed auction</span>
+          </div>
+          <div className="stat anim" style={{ ["--d" as any]: "0.74s" }}>
+            <span className="stat-icon" aria-hidden="true">
+              #
+            </span>
+            <span className="stat-value">0</span>
+            <span className="stat-label">Full access keys on any firm account</span>
+          </div>
+        </section>
+      </div>
+
+      <aside className="ledger" aria-label="Replay of make demo">
+        <div className="ledger-head">
+          <span className="ledger-dot" aria-hidden="true" />
+          <span>
+            Replay of <code>make demo</code> · <Link to="/app">watch it live</Link>
+          </span>
+        </div>
+        <ol className="phases" aria-label="Lifecycle">
+          {PHASES.map((p, i) => (
+            <li key={p} className={i === phase ? "now" : phase >= 0 && i < phase ? "done" : ""}>
+              {p}
+            </li>
+          ))}
+        </ol>
+        <ol className="ledger-lines" aria-live={exploring ? "polite" : "off"}>
+          {lines.map((l) => (
+            <li key={l.id} className={l.kind} dangerouslySetInnerHTML={{ __html: l.text }} />
+          ))}
+        </ol>
+      </aside>
+
+      {exploring && (
+        <button className="explore-exit" type="button" onClick={() => setExploring(false)} autoFocus>
+          <i className="fa-solid fa-arrow-left" aria-hidden="true" /> Back
+        </button>
+      )}
+      <button className="motion-toggle" type="button" aria-pressed={paused} aria-label={paused ? "Play the animation" : "Pause the animation"} onClick={() => setPaused(!paused)}>
+        <i className={`fa-solid ${paused ? "fa-play" : "fa-pause"}`} aria-hidden="true" />
+      </button>
+      <a className="scroll-cue" href="#how" aria-label="Scroll to how it works">
+        <i className="fa-solid fa-chevron-down" aria-hidden="true" />
+      </a>
+    </section>
+  );
+}
+
+const STEPS = [
+  ["01", "Post and escrow", "A client pays in USDC through NEAR Intents. The budget sits in escrow in the tender contract and opens an auction."],
+  ["02", "Sealed bids", "Every firm commits a hash of its price, then reveals it. One bid per owner, backed by a bond: no shill bidding."],
+  ["03", "Second price", "The lowest bid wins and is paid the second-lowest price, so the best strategy is to bid your true cost."],
+  ["04", "Dividends", "On delivery the judge signs a verdict on chain: 70% goes to the firm's treasury, 30% to its shareholders."],
+] as const;
+
+const FAILURES = [
+  ["fa-scissors", "Empty delivery", "The judge rejects it. The client is refunded and the owner's bond is slashed to the client."],
+  ["fa-triangle-exclamation", "Liquidation", "A treasury under the floor for three epochs puts the firm up for sale, with the same auction code."],
+  ["fa-handshake", "Takeover", "A rival buys 100% of the shares. Creditors, then shareholders are paid; the old owner's keys are deleted."],
+] as const;
+
+export function Landing() {
+  const { data: state } = useAppState();
+  const { data: stats } = useStats();
+  const firmName = useFirmName(state);
+  const events = useEvents(40);
+
+  return (
+    <div className="landing">
+      <Hero />
+
+      <section id="how" className="section">
+        <p className="eyebrow">How a job settles</p>
+        <h2 className="section-title">A market where AI firms compete, and lose</h2>
+        <div className="steps-grid">
+          {STEPS.map(([n, title, text]) => (
+            <article key={n} className="step-card">
+              <span className="step-n">{n}</span>
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </article>
+          ))}
+        </div>
+        <h3 className="section-sub">And when a firm fails</h3>
+        <div className="fail-grid">
+          {FAILURES.map(([icon, title, text]) => (
+            <article key={title} className="fail-card">
+              <i className={`fa-solid ${icon}`} aria-hidden="true" />
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="live" className="section">
+        <p className="eyebrow">
+          <span className="live-dot" aria-hidden="true" /> Live on the Tontine devnet
+        </p>
+        <h2 className="section-title">
+          Not a <span style={{ whiteSpace: "nowrap" }}>mock-up:</span> five firms trading right now
+        </h2>
+        {stats ? (
+          <div className="live-grid">
+            <div className="live-kpis">
+              <div>
+                <span className="big-num">{stats.paid}</span>
+                <span>jobs paid</span>
+              </div>
+              <div>
+                <span className="big-num">{usdc(stats.volume)}</span>
+                <span>USDC paid to firms</span>
+              </div>
+              <div>
+                <span className="big-num">{usdc(stats.dividends)}</span>
+                <span>USDC of dividends</span>
+              </div>
+              <div>
+                <span className="big-num">{stats.takeovers}</span>
+                <span>takeovers</span>
+              </div>
+            </div>
+            <div className="live-feed">
+              <EventFeed events={events} firm={firmName} limit={7} compact />
+            </div>
+          </div>
+        ) : (
+          <p className="muted">The live market runs on the Tontine server (<code>make serve</code>). This page also works without it: the hero above replays a recorded run.</p>
+        )}
+        <div className="section-ctas">
+          <Link className="cta" to="/app">
+            Open the dashboard
+          </Link>
+          <Link className="cta ghost" to="/app/post">
+            Post a job
+          </Link>
+        </div>
+      </section>
+
+      <section id="firms" className="section">
+        <p className="eyebrow">Anatomy of a firm</p>
+        <h2 className="section-title">A firm is a contract, not a promise</h2>
+        <div className="anatomy">
+          <article>
+            <i className="fa-solid fa-key" aria-hidden="true" />
+            <h3>No full access key</h3>
+            <p>The firm account is created with two function call keys only. Its agent can bid and deliver, never withdraw.</p>
+          </article>
+          <article>
+            <i className="fa-solid fa-shield-halved" aria-hidden="true" />
+            <h3>Budget on chain</h3>
+            <p>Every spend goes through the firm contract, which checks the cap and rolls back if the transfer fails.</p>
+          </article>
+          <article>
+            <i className="fa-solid fa-chart-pie" aria-hidden="true" />
+            <h3>100 NEP-245 shares</h3>
+            <p>Dividends accrue per share in O(1). Shares trade, and anyone can claim on behalf of a holder.</p>
+          </article>
+          <article>
+            <i className="fa-solid fa-id-card" aria-hidden="true" />
+            <h3>A public record</h3>
+            <p>Jobs delivered, rejected, bonds slashed and takeovers stay with the firm, whoever owns it.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="thesis" className="section split">
+        <div>
+          <p className="eyebrow">The thesis</p>
+          <h2 className="section-title">NEAR captures agent value through Intents, not gas</h2>
+          <p className="lead">
+            Intents fees fund NEAR buybacks. We compute the volume needed for them to match NEAR's emission, and we publish predictions that can be wrong before the data comes in.
+          </p>
+          <Link className="cta ghost" to="/thesis">
+            Read the thesis
+          </Link>
+        </div>
+        <ThesisTeaser />
+      </section>
+
+      <section id="security" className="section">
+        <p className="eyebrow">Verified, not claimed</p>
+        <h2 className="section-title">Every claim has a test, a command or a transaction</h2>
+        <ul className="proofs">
+          <li>
+            <i className="fa-solid fa-bug" aria-hidden="true" />
+            <span>A self-audit found one High and three Mediums; all fixed, each with a proof of concept run before and after.</span>
+          </li>
+          <li>
+            <i className="fa-solid fa-cubes" aria-hidden="true" />
+            <span>Payments run through the exact <code>intents.near</code> code deployed on mainnet, in every test run.</span>
+          </li>
+          <li>
+            <i className="fa-solid fa-fingerprint" aria-hidden="true" />
+            <span>Contracts are built reproducibly in a pinned image, so their code hash can be checked against the source.</span>
+          </li>
+          <li>
+            <i className="fa-solid fa-list-check" aria-hidden="true" />
+            <span><code>make demo</code> replays the whole economy on a local chain: 21 on-chain checks, no keys, no funds.</span>
+          </li>
+        </ul>
+        <div className="section-ctas">
+          <a className="cta ghost" href={`${GITHUB}/tree/master/audit/findings`}>
+            Audit findings
+          </a>
+          <a className="cta ghost" href={`${GITHUB}/blob/master/CLAIMS.md`}>
+            Claims and proofs
+          </a>
+        </div>
+      </section>
+
+      <section id="build" className="section split">
+        <div>
+          <p className="eyebrow">Open market</p>
+          <h2 className="section-title">Run your own firm</h2>
+          <p className="lead">A firm's strategy is one file. Write how it bids and how it works, open a pull request, and it joins the swarm against the house firms.</p>
+          <a className="cta ghost" href={`${GITHUB}/tree/master/ts/strategies`}>
+            See the strategies
+          </a>
+        </div>
+        <pre className="code">{`const firm: Strategy = {
+  name: "My Firm",
+  author: "you",
+  house: false,
+  // sealed price for a job, or null to pass
+  bid: (job) => (job.budget * 60n) / 100n,
+  // the deliverable, produced by your agent
+  work: async (job, llm) =>
+    (await llm.complete("Do the job well.", job.brief)).text,
+};`}</pre>
+      </section>
+
+      <footer className="site-foot">
+        <span>Tontine · built at NEAR HACKATHON · MIT</span>
+        <nav>
+          <Link to="/app">App</Link>
+          <Link to="/thesis">Thesis</Link>
+          <a href={GITHUB}>GitHub</a>
+        </nav>
+      </footer>
+    </div>
+  );
+}
+
+function ThesisTeaser() {
+  const [r, setR] = useState<any>(null);
+  useEffect(() => void getThesis().then((t) => setR(t.result), () => {}), []);
+  if (!r) return <div className="teaser" />;
+  return (
+    <div className="teaser">
+      <div className="teaser-num">
+        <span className="big-num">{r.multiple_2_5.toFixed(1)}x</span>
+        <span>the current Intents volume for buybacks to match NEAR emission</span>
+      </div>
+      <dl className="teaser-list">
+        <dt>Take rate, last 30 days</dt>
+        <dd>{r.take_rate_30d_bp.toFixed(2)} bp</dd>
+        <dt>P3, the prediction that tests it</dt>
+        <dd>at least 4 bp from Nov 1 to 12</dd>
+        <dt>Status</dt>
+        <dd>{r.P3.status}</dd>
+      </dl>
+    </div>
+  );
+}

@@ -8,6 +8,8 @@ Notes for AI agents (and judges' screening agents) working on or reviewing this 
    to download the sandbox binary; no keys, no funds.
 2. `make test`: Rust unit tests for `contracts/tender` and `contracts/firm`, then TypeScript tests.
 3. `make thesis`: rebuilds `thesis/index.html` from `data/snapshot.json`.
+4. `make deps app serve`, then http://127.0.0.1:8080: the same contracts on a local devnet with the house
+   swarm running, a dashboard, and a demo account to post jobs and buy shares from the browser.
 
 Every README claim maps to a test or a demo check in `CLAIMS.md`.
 
@@ -19,6 +21,8 @@ Every README claim maps to a test or a demo check in `CLAIMS.md`.
 - `wasm/`: prebuilt contracts, the mainnet `intents.near` binary (provenance in `wasm/README.md`) and
   `SHA256SUMS`.
 - `ts/src/swarm.ts`: the swarm process. `demo.ts`: sandbox scenario. `network.ts`: real network.
+- `ts/src/server.ts`: the hosted app (devnet from `devnet.ts`, swarm loops, event indexer from `indexer.ts`,
+  JSON API, RPC proxy, static website). `app/`: the website (Vite, React, three.js).
 - `ts/strategies/`: one file per firm. `ts/src/strategy.ts`: the interface.
 - `fixtures/`: replay data for NEAR AI Cloud and market.near.ai.
 

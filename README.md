@@ -39,20 +39,135 @@ make thesis   # thesis/index.html and thesis/result.json from data/snapshot.json
 make build    # rebuild wasm/ from contracts/ (Rust stable + wasm32-unknown-unknown)
 ```
 
-## Landing page
+## Run the app
 
-`make web`, then open http://127.0.0.1:8765/web/ (static HTML, CSS and JS, no build step).
+```sh
+make deps app   # npm ci in ts/ and app/, then build the website into app/dist
+make serve      # http://127.0.0.1:8080
+```
 
-The background is a live WebGL scene (three.js 0.186.1): a dot-matrix desert at dusk under a sky of
+`make serve` runs one Node process (`ts/src/server.ts`) that:
+
+- starts a fresh NEAR sandbox (2.13.4, protocol 86) and deploys what `make demo` deploys: the mainnet
+  `intents.near` code, `tender` in Intents mode, a mock USDC and five house firms with bonded owners and
+  shares for sale. The default sandbox root key is public, so it is replaced first;
+- runs the house swarm for real (sealed bids, reveals, settlement, delivery, verdicts, epochs,
+  liquidations), and a house client that posts a job whenever the market is idle;
+- indexes the events of `tender` and the firm contracts from final blocks and serves them at `/api/*`,
+  live at `/api/stream` (server-sent events);
+- forwards an allowlist of JSON-RPC methods at `/rpc`, so a visitor's browser signs its own transactions;
+- serves the website from `app/dist`.
+
+| Page | What you do there |
+| --- | --- |
+| `/` | Landing: the swarm replays `make demo`, then live figures and the feed of the devnet |
+| `/app` | Dashboard: KPIs, the swarm driven by chain events, live feed, auctions in progress, firms |
+| `/app/post` | Post a job: pay through NEAR Intents, open the auction, follow it until the payment |
+| `/app/jobs`, `/app/jobs/:id` | Every job: bids, winner, second price, deliverable, 70/30 split, judge attestation |
+| `/app/firms`, `/app/firms/:id` | Treasury, bond, shareholders, history; buy shares, claim dividends, lend |
+| `/app/portfolio` | Balances (wallet, NEAR Intents, tender), deposit, withdraw, faucet, your jobs and shares |
+| `/thesis` | The thesis figures, the take rate by 12-day block and the pre-registered predictions |
+
+"Create demo account" generates an ed25519 key in the browser (stored in localStorage, never sent) and
+asks the server for a devnet account on its public key with 3 NEAR and 100 test USDC. Deposits, jobs,
+share trades, claims and withdrawals are then transactions signed in the browser. Per IP address: 5 accounts and 10 faucet calls per hour, 600 RPC
+calls per minute. Without `NEARAI_API_KEY`, work and verdicts come from the replay fixtures and the app
+labels them `replay`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PORT`, `HOST` | `8080`, `127.0.0.1` | Where the app listens |
+| `TRUST_PROXY` | unset | `1` behind a reverse proxy: rate limits use the first `X-Forwarded-For` address |
+| `HOUSE_CLIENT_SECS` | `70` | How often the house client checks for an idle market |
+| `EPOCH_SECS` | `30` | Devnet epoch; a firm under the treasury floor for 3 epochs is liquidated |
+| `SANDBOX_RPC_PORT` | `3030` | Sandbox RPC, bound to 127.0.0.1 |
+| `NEARAI_API_KEY` | unset | Real work and verdicts from NEAR AI Cloud instead of the replay |
+
+The devnet lives in the process: a restart starts a new chain (jobs and demo accounts start over; the
+app drops a saved demo account that no longer exists). `make app-dev` runs the Vite dev server with hot
+reload against a running `make serve`.
+
+The landing background is a WebGL scene (three.js 0.186.1): a dot-matrix desert at dusk under a sky of
 falling glyphs, and five AI firms that **replay the real `make demo` run** with its figures: sealed bids,
-the second price, the 30% dividend, the slashed bond, the liquidation and the takeover. A lifecycle
-strip and a ledger follow the replay; "Watch the swarm" hides the copy and gathers the firms into an
-arena with their live status. Without WebGL it falls back to a looping video; with
-`prefers-reduced-motion` it renders one still frame. QA helpers: `?t=24` jumps to second 24 of the
-replay, `&still` renders a single frame.
+the second price, the 30% dividend, the slashed bond, the liquidation and the takeover. On the dashboard
+the same scene is driven by the events of the devnet. Without WebGL the landing falls back to a looping
+video; with `prefers-reduced-motion` it renders one still frame. QA helpers on the landing: `?t=24` jumps
+to second 24 of the replay, `&still` renders a single frame, `?gl=force` accepts software WebGL.
 
 Fonts: Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN), Geist Pixel Circle as the local
-fallback (`web/fonts`, SIL OFL, license included). Icons: Font Awesome 6.5.2.
+fallback (`app/public/fonts`, SIL OFL, license included). Icons: Font Awesome 6.5.2.
+
+## Deploy on a VPS
+
+One small Linux server is enough (2 GB of RAM: the sandbox uses about 600 MB, the Node process about
+170 MB). Node 22 must be on the default `PATH` (`/usr/bin` or `/usr/local/bin`), for example from
+NodeSource; the first start downloads the sandbox binary.
+
+```sh
+sudo useradd --system --create-home --home-dir /opt/tontine tontine
+sudo -u tontine git clone https://github.com/4n0nn43x/tontine /opt/tontine/repo
+cd /opt/tontine/repo && sudo -u tontine make deps app
+```
+
+`/etc/systemd/system/tontine.service`:
+
+```ini
+[Unit]
+Description=Tontine (NEAR devnet, swarm, API and website)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=tontine
+WorkingDirectory=/opt/tontine/repo
+Environment=PORT=8080 HOST=127.0.0.1 TRUST_PROXY=1
+ExecStart=/usr/bin/make serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload && sudo systemctl enable --now tontine
+journalctl -u tontine -f   # "Tontine app on http://127.0.0.1:8080" after about a minute
+```
+
+nginx in front (`/etc/nginx/sites-available/tontine`, linked into `sites-enabled`), then HTTPS with
+`sudo certbot --nginx -d tontine.example.com`:
+
+```nginx
+server {
+    listen 80;
+    server_name tontine.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+    }
+
+    # Server-sent events: no buffering, long reads (the server pings every 20 s).
+    location /api/stream {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+`X-Forwarded-For $remote_addr` replaces whatever the client sent: with `$proxy_add_x_forwarded_for` a
+visitor could pick the address the rate limits see. Only nginx faces the internet (`ufw allow OpenSSH`,
+`ufw allow "Nginx Full"`, `ufw enable`): the app, the sandbox RPC and the sandbox network port listen on
+127.0.0.1. To update: `git pull && make app && sudo systemctl restart tontine` (the devnet starts over).
+A clean stop deletes the devnet data; after a crash, remove the leftover
+`ts/node_modules/.cache/tmp/near-sandbox-*` directories while the service is stopped (about 100 MB each).
 
 ## How it works
 

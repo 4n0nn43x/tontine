@@ -12,6 +12,13 @@ export const FIRMS = [
   { name: "Sniper Holdings", color: "#ffe39d", screen: [0.185, 0.365], dist: 74, arena: [0.5, 0.4], arenaDist: 60, screenMobile: [0.5, 0.39], distMobile: 70 },
 ];
 
+// Slots for firms that are not house firms (third-party strategies), used in live mode.
+export const EXTRA_SLOTS = [
+  { color: "#9ff0ff", screen: [0.3, 0.8], dist: 13, arena: [0.38, 0.8], arenaDist: 14, screenMobile: [0.3, 0.8], distMobile: 12 },
+  { color: "#ffc6e8", screen: [0.7, 0.8], dist: 13, arena: [0.62, 0.8], arenaDist: 14, screenMobile: [0.7, 0.8], distMobile: 12 },
+  { color: "#c8ff9f", screen: [0.85, 0.3], dist: 70, arena: [0.65, 0.33], arenaDist: 60, screenMobile: [0.75, 0.33], distMobile: 60 },
+];
+
 // The job orb: above the copy in the hero view, in the middle of the arena when exploring.
 export const JOB = { screen: [0.5, 0.165], dist: 32, arena: [0.5, 0.25], arenaDist: 26, screenMobile: [0.5, 0.15], distMobile: 32 };
 

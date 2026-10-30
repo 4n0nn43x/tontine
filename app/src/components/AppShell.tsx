@@ -1,0 +1,50 @@
+import { useState } from "react";
+import { Link, NavLink, Outlet } from "react-router-dom";
+import { useAppState } from "../lib/hooks";
+import { AccountMenu } from "./AccountMenu";
+
+const LINKS = [
+  { to: "/app", label: "Dashboard", icon: "fa-gauge-high", end: true },
+  { to: "/app/jobs", label: "Jobs", icon: "fa-briefcase" },
+  { to: "/app/firms", label: "Firms", icon: "fa-building" },
+  { to: "/app/portfolio", label: "Portfolio", icon: "fa-wallet" },
+  { to: "/thesis", label: "Thesis", icon: "fa-chart-line" },
+];
+
+export function AppShell() {
+  const { data, error } = useAppState();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="app">
+      <header className="topbar">
+        <Link className="logo small" to="/" aria-label="Tontine, home">
+          <img src="/assets/logo.svg" alt="" width="34" height="34" />
+        </Link>
+        <nav className={`appnav ${open ? "open" : ""}`} aria-label="App">
+          {LINKS.map((l) => (
+            <NavLink key={l.to} to={l.to} end={l.end} onClick={() => setOpen(false)}>
+              <i className={`fa-solid ${l.icon}`} aria-hidden="true" /> {l.label}
+            </NavLink>
+          ))}
+          <NavLink to="/app/post" className="post-link" onClick={() => setOpen(false)}>
+            <i className="fa-solid fa-plus" aria-hidden="true" /> Post a job
+          </NavLink>
+        </nav>
+        <span className={`netbadge ${error ? "down" : data ? "up" : ""}`} title={error ?? "Tontine devnet: a NEAR sandbox node with the real contracts"}>
+          <span className="live-dot" aria-hidden="true" /> {error ? "offline" : "devnet"}
+        </span>
+        <AccountMenu />
+        <button className="appnav-toggle" aria-label="Menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <i className={`fa-solid ${open ? "fa-xmark" : "fa-bars"}`} aria-hidden="true" />
+        </button>
+      </header>
+      <main className="app-main">
+        <Outlet />
+      </main>
+      <footer className="app-foot">
+        <span>Tontine · built at NEAR HACKATHON · MIT</span>
+        <a href="https://github.com/4n0nn43x/tontine">Source code</a>
+      </footer>
+    </div>
+  );
+}

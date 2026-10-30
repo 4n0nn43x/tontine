@@ -2,7 +2,7 @@
 WASM_TARGET := contracts/target/wasm32-unknown-unknown/release
 export TMPDIR := $(CURDIR)/ts/node_modules/.cache/tmp
 
-.PHONY: build build-repro test demo verify-wasm deps thesis web
+.PHONY: build build-repro test demo verify-wasm deps thesis app app-dev serve
 
 deps:
 	cd ts && npm ci
@@ -36,7 +36,18 @@ demo: verify-wasm
 thesis:
 	cd ts && npx tsx src/thesis.ts
 
-# Landing page (static, no build step): http://127.0.0.1:8765/web/
-web:
-	@echo "Landing page: http://127.0.0.1:8765/web/"
-	python3 -m http.server 8765 --bind 127.0.0.1
+# The website (Vite + React), built into app/dist.
+app:
+	cd app && npm ci && npm run build
+
+# The hosted app on one port (PORT=8080, HOST=127.0.0.1): a fresh NEAR devnet with the contracts, the
+# house swarm and client, the chain indexer, the API and the website. See README "Run the app".
+serve: verify-wasm
+	@test -d ts/node_modules || $(MAKE) deps
+	@test -f app/dist/index.html || $(MAKE) app
+	mkdir -p $(TMPDIR)
+	cd ts && npx tsx src/server.ts
+
+# Vite dev server with hot reload, proxied to a running `make serve` (TONTINE_API, default http://127.0.0.1:8080).
+app-dev:
+	cd app && npm run dev
