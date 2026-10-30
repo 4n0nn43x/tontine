@@ -4,3 +4,4 @@ node_modules/
 *.sqlite
 ts/dist/
 ts/node_modules/
+keys/

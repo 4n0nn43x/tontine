@@ -40,7 +40,7 @@ export async function createFirm(opts: {
   budget: bigint;
   maxPerCall: bigint;
   budgetEpochSecs: number;
-}): Promise<FirmHandle> {
+}): Promise<FirmHandle & { keys: { tender: string; firm: string } }> {
   const { tenderAcct, provider, n, owner } = opts;
   const id = `w${n}.${tenderAcct.accountId}`;
   const kTender = KeyPair.fromRandom("ed25519");
@@ -63,5 +63,5 @@ export async function createFirm(opts: {
     throwOnFailure: true,
   });
   const r = await call<number>(tenderAcct, tenderAcct.accountId, "register_firm", { account: id, owner: owner.accountId });
-  return { id: r.value, account: id, owner, agentTender: account(id, provider, kTender), agentFirm: account(id, provider, kFirm), strategy: opts.strategy };
+  return { id: r.value, account: id, owner, agentTender: account(id, provider, kTender), agentFirm: account(id, provider, kFirm), strategy: opts.strategy, keys: { tender: kTender.toString(), firm: kFirm.toString() } };
 }

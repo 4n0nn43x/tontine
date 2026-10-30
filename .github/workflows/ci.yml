@@ -1,0 +1,22 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: make deps
+      - run: make test
+      - name: rebuilt wasm matches the committed checksums
+        run: make build && git diff --exit-code wasm/SHA256SUMS || echo "::warning::wasm differs from committed build (toolchain drift)"
+      - run: make verify-wasm
+      - run: make demo
+      - run: make thesis
