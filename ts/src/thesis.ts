@@ -205,6 +205,10 @@ function report() {
     P2: e.P2,
     P3: e.P3,
     P4_leak_usd: leak,
+    blocks: blocks.map((b) => ({ from: b[0].date, to: b.at(-1)!.date, bp: bp(b) })),
+    sensitivity: sens.map((x) => ({ takeRateBp: x.t, emission: x.em, requiredPerDay: x.required, multiple: x.multiple })),
+    near_price: s.near_price,
+    avg_daily_volume_30d: base.avgDailyVol,
   };
   const row = (id: string, pr: string, ob: string, st: string) => `<tr><td>${id}</td><td>${esc(pr)}</td><td>${esc(ob)}</td><td><b>${esc(st)}</b></td></tr>`;
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tontine thesis</title>
