@@ -12,6 +12,7 @@ import { KeyPair } from "near-api-js";
 import { account, call, sleep, view, USDC } from "./chain.ts";
 import { DEVNET_CONFIG, startDevnet, type Devnet } from "./devnet.ts";
 import { Indexer, type ChainEvent } from "./indexer.ts";
+import { pageMeta, withMeta } from "./meta.ts";
 import { evaluate } from "./judge.ts";
 import { makeLlm } from "./llm.ts";
 import { Swarm, type FirmHandle } from "./swarm.ts";
@@ -315,12 +316,19 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
     return res.end("The app is not built yet: run `make app` (or `cd app && npm run build`).");
   }
   const ext = path.extname(file);
+  let body: Buffer | string = readFileSync(file);
+  if (file === path.join(DIST, "index.html")) {
+    // Link previews: crawlers do not run the app, so each page's title and Open Graph tags are written here.
+    const proto = TRUST_PROXY ? String(req.headers["x-forwarded-proto"] ?? "http").split(",")[0].trim() : "http";
+    const meta = pageMeta(url.pathname, { state, stats: indexer.stats, thesis: thesis() });
+    body = withMeta(body.toString(), meta, `${proto}://${req.headers.host ?? `${HOST}:${PORT}`}`, url.pathname);
+  }
   res.writeHead(200, {
     "Content-Type": TYPES[ext] ?? "application/octet-stream",
     "Cache-Control": file.includes(`${path.sep}assets${path.sep}`) ? "public, max-age=31536000, immutable" : "no-cache",
     "X-Content-Type-Options": "nosniff",
   });
-  res.end(readFileSync(file));
+  res.end(body);
 }
 
 const server = createServer(async (req, res) => {

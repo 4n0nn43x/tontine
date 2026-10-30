@@ -102,6 +102,10 @@ its tower goes dark for sale and turns into the buyer's colours. On the dashboar
 the events of the devnet. With `prefers-reduced-motion` it renders one still frame. QA helpers on the
 landing: `?t=24` jumps to second 24 of the replay, `&still` renders a single frame.
 
+Shared links get a preview (X, Discord, Slack, Telegram...): crawlers do not run the app, so the server writes each
+page's title, description and Open Graph tags into `index.html` (`ts/src/meta.ts`). A job or firm link describes
+that job or firm from the chain. The image, `app/public/og.png`, is a still of the landing (`/?t=24&still`).
+
 Fonts: Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN), Geist Pixel Circle as the local
 fallback (`app/public/fonts`, SIL OFL, license included). Icons: Font Awesome 6.5.2.
 
