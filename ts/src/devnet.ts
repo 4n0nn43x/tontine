@@ -16,6 +16,9 @@ export const DEVNET_CONFIG = {
   epochsBeforeLiquidation: 3,
   epochSecs: Number(process.env.EPOCH_SECS ?? 30),
   liquidationPhaseSecs: 6,
+  jobFeeBps: 100,
+  tradeFeeBps: 50,
+  keeperReward: USDC(0.02),
 };
 
 export type Devnet = {
@@ -103,8 +106,13 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
       epoch_secs: DEVNET_CONFIG.epochSecs,
       liquidation_commit_secs: DEVNET_CONFIG.liquidationPhaseSecs,
       liquidation_reveal_secs: DEVNET_CONFIG.liquidationPhaseSecs,
+      job_fee_bps: DEVNET_CONFIG.jobFeeBps,
+      trade_fee_bps: DEVNET_CONFIG.tradeFeeBps,
+      keeper_reward: DEVNET_CONFIG.keeperReward.toString(),
     },
   });
+  // The code `create_firm` deploys when anyone launches a firm.
+  await call(tender, T, "set_firm_code", { code: Buffer.from(wasm("firm")).toString("base64") }, 0n, TGAS(200));
   log(`contracts: tender=${T} intents=${I} (mainnet code) usdc=${usdc.accountId} (mock)`);
 
   const firms: FirmHandle[] = [];

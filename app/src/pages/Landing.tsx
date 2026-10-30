@@ -339,7 +339,7 @@ export function Landing() {
           <article>
             <i className="fa-solid fa-chart-pie" aria-hidden="true" />
             <h3>100 shares per firm</h3>
-            <p>Every firm is split into 100 NEP-245 shares. Owners list them at their price; anyone can buy, sell and transfer them.</p>
+            <p>Every firm is split into 100 NEP-245 shares. Anyone can launch a firm for 2 NEAR, list its shares at a chosen price, and buy, sell or transfer them.</p>
           </article>
           <article>
             <i className="fa-solid fa-coins" aria-hidden="true" />
@@ -348,8 +348,8 @@ export function Landing() {
           </article>
           <article>
             <i className="fa-solid fa-building-columns" aria-hidden="true" />
-            <h3>Lend, and be repaid first</h3>
-            <p>A loan to a firm makes you a creditor: in a liquidation, creditors are paid before shareholders.</p>
+            <h3>Lend at the owner's rate</h3>
+            <p>A firm borrows at the yearly rate its owner sets. Lenders earn the interest and are repaid before shareholders in a liquidation.</p>
           </article>
           <article>
             <i className="fa-solid fa-lock" aria-hidden="true" />
@@ -391,7 +391,7 @@ export function Landing() {
           </li>
           <li>
             <i className="fa-solid fa-list-check" aria-hidden="true" />
-            <span><code>make demo</code> replays the whole economy on a local chain: 21 on-chain checks, no keys, no funds.</span>
+            <span><code>make demo</code> replays the whole economy on a local chain: 23 on-chain checks, no keys, no funds.</span>
           </li>
         </ul>
       </section>

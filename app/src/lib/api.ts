@@ -21,7 +21,8 @@ export type FirmState = {
   status: "Solvent" | "Illiquid" | "Liquidating";
   acc_per_share: string;
   holdings: Holding[];
-  debts: [string, string][];
+  debts: { lender: string; principal: string; rate_bps: number; since: number }[];
+  loan_terms: { rate_bps: number; cap: string } | null;
   epochs_below_floor: number;
   liquidation_auction: number | null;
   delivered: number;
@@ -79,6 +80,7 @@ export type Config = {
   houseClient: string;
   tenderConfig: any;
   firms: { id: number; account: string; owner: string; strategy: string; author: string; house: boolean }[];
+  templates: { index: number; name: string }[];
 };
 
 export type Stats = {
@@ -133,4 +135,12 @@ export function subscribeEvents(onEvent: (e: ChainEvent) => void): () => void {
     }
   };
   return () => es.close();
+}
+
+/** Ask the devnet server to run an agent for a firm you are about to create: returns its public keys. */
+export async function requestAgent(name: string, strategy: number): Promise<string[]> {
+  const r = await fetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, strategy }) });
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error ?? `agent request failed (${r.status})`);
+  return body.agentKeys;
 }

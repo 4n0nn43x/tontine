@@ -1053,3 +1053,45 @@ details summary {
     width: auto;
   }
 }
+
+/* ------------------------------------------------------------------ launch a firm */
+
+.launch {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 18px 28px;
+  align-items: center;
+}
+
+.launch > p {
+  margin: 0;
+  color: var(--soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.launch-form {
+  display: grid;
+  gap: 10px;
+}
+
+.launch-form input,
+.launch-form select {
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: #fff;
+  font: inherit;
+}
+
+.page-app > .card:has(.launch) {
+  margin-bottom: 18px;
+}
+
+@media (max-width: 820px) {
+  .launch {
+    grid-template-columns: 1fr;
+  }
+}

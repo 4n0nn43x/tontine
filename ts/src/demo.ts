@@ -2,7 +2,7 @@
 // (NEAR AI Cloud and market.near.ai are replayed from fixtures/ unless their env vars are set).
 // Every claim prints PASS or FAIL; the exit code is non-zero if any check fails.
 import { Sandbox, DEFAULT_ACCOUNT_ID, DEFAULT_PRIVATE_KEY } from "near-sandbox";
-import { JsonRpcProvider, nearToYocto, type Account } from "near-api-js";
+import { JsonRpcProvider, KeyPair, nearToYocto, type Account } from "near-api-js";
 import { account, call, view, fmt, USDC, sleep, TGAS } from "./chain.ts";
 import { createAccount, createFirm, deployContract, wasm } from "./deploy.ts";
 import { loadStrategies } from "./strategy.ts";
@@ -192,6 +192,28 @@ async function main() {
     const noDeposit = await rejects(call(firms[0].agentTender, T, "withdraw", { amount: "1" }, 1n), "");
     check("agent key cannot call a deposit-taking method (withdraw)", noDeposit !== null);
 
+    section("5b. open market: an account that is not the admin launches its own firm");
+    await call(tender.acct, T, "set_firm_code", { code: Buffer.from(wasm("firm")).toString("base64") }, 0n, TGAS(200));
+    const openKeys = [KeyPair.fromRandom("ed25519"), KeyPair.fromRandom("ed25519")].map((k) => k.getPublicKey().toString());
+    const created = await call<number>(
+      client.acct,
+      T,
+      "create_firm",
+      { agent_keys: openKeys, budget: USDC(5).toString(), max_per_call: USDC(1).toString(), epoch_secs: 3600 },
+      nearToYocto("2"),
+      TGAS(250),
+    );
+    const openFirm = await view(provider, T, "get_firm", { firm_id: created.value });
+    const openShares = await view(provider, T, "mt_balance_of", { account_id: client.acct.accountId, token_id: String(created.value) });
+    check("a non-admin account launched a firm and holds its 100 shares", openFirm.owner === client.acct.accountId && openShares === "100", `${openFirm.account}, tx ${created.txHash}`);
+    const openPerms = ((await (provider as any).query({ request_type: "view_access_key_list", account_id: openFirm.account, finality: "optimistic" })).keys ?? []).map((k: any) => k.access_key.permission);
+    const openState = await view(provider, openFirm.account, "get_state");
+    check(
+      "tender created its account with the firm contract and two function call keys only",
+      openPerms.length === 2 && openPerms.every((p: any) => p !== "FullAccess" && p.FunctionCall) && openState.owner === client.acct.accountId && openState.tender === T,
+      `${openPerms.length} function call keys`,
+    );
+
     section("6. market.near.ai as demand source (off-chain revenue, booked apart)");
     const mb = await board();
     for (const mj of mb.jobs.slice(0, 2)) {
@@ -209,7 +231,7 @@ async function main() {
     for (const f of await view(provider, T, "get_firms")) {
       const bal = BigInt(await view(provider, T, "balance_of", { account_id: f.account }));
       console.log(
-        `  #${f.id} ${(firms[f.id]?.strategy.name ?? "o1 shell").padEnd(18)} ${f.status.padEnd(11)} treasury ${fmt(bal).padStart(6)}  revenue ${fmt(f.revenue).padStart(6)}  dividends ${fmt(f.dividends).padStart(5)}  delivered ${f.delivered} rejected ${f.rejected} slashed ${fmt(f.slashed)}  owner ${f.owner}`,
+        `  #${f.id} ${(firms[f.id]?.strategy.name ?? (f.id === o1Shell.id ? "o1 shell" : "open firm")).padEnd(18)} ${f.status.padEnd(11)} treasury ${fmt(bal).padStart(6)}  revenue ${fmt(f.revenue).padStart(6)}  dividends ${fmt(f.dividends).padStart(5)}  delivered ${f.delivered} rejected ${f.rejected} slashed ${fmt(f.slashed)}  owner ${f.owner}`,
       );
     }
   } finally {

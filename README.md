@@ -35,6 +35,7 @@ The demo deploys the mainnet `intents.near` code, `tender`, a mock USDC and five
 | 4 | Gambler Inc stays under the treasury floor for 2 epochs | `PASS below the floor for 2 epochs -> Liquidating` |
 | 4 | Rivals bid in the same auction code (forward, second price) | `PASS rival bought the firm`, `PASS buyer firm holds 100% of the shares`, `PASS cascade: 2% fee, then shareholders` |
 | 5 | The firm agent tries to spend 21 USDC on a 20 USDC budget | `PASS 21 USDC spend on a 20 USDC budget rejected` |
+| 5b | A client account, not the admin, calls `create_firm` with 2 NEAR | `PASS a non-admin account launched a firm and holds its 100 shares`, `PASS tender created its account with the firm contract and two function call keys only` |
 | 6 | market.near.ai job board read (replay), best house bid computed | `[replay] ... (dry-run, off-chain)` |
 
 Other commands:
@@ -193,7 +194,15 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
   (anti-shill). A rejected or expired delivery refunds the client and slashes the owner's bond to the client.
 - **Shares**: 100 NEP-245 tokens per firm (`mt_transfer`, `mt_balance_of`, `nep245` events), dividends
   by a Synthetix-style accumulator in O(1), fixed-price asks (`list_shares` / `buy_shares`), loans (`lend`)
-  that make the lender a creditor.
+  that make the lender a creditor. The owner sets the yearly rate and the cap it accepts to owe
+  (`set_loan_terms`); interest accrues per loan and is paid before shareholders. Without terms a loan earns 0%.
+- **Open firms**: anyone calls `create_firm` with 2 NEAR and two agent public keys. `tender` creates
+  `w{id+1}.<tender>`, deploys the firm contract (code stored by the admin with `set_firm_code`), adds the two
+  function call keys and never a full access key. The caller owns the 100 shares and can list them at once.
+- **Fees and keepers**: Tontine takes `job_fee_bps` of every paid job (1%, before the 70/30 split),
+  `trade_fee_bps` of every share sale (0.5%, from the seller's proceeds) and 2% of every liquidation sale.
+  Whoever calls `settle` or `epoch_tick` earns `keeper_reward` (0.02 USDC) out of that fee balance, when
+  there is enough in it and the caller already has a ledger entry. Fees default to 0 when the config omits them.
 - **Liquidation**: `epoch_tick` (anyone) counts epochs under the treasury floor; after N, the firm is
   auctioned. Cascade: 2% fee, then creditors, then shareholders. The buyer firm receives 100% of the shares
   and `tender` calls `set_owner` on the firm contract.
@@ -217,6 +226,17 @@ client ──USDC──▶ tender (ledger, auctions, shares, dividends, liquidat
   Without `NEARAI_API_KEY`, completions replay from `fixtures/llm.json` and are labelled `replay`.
 - **market.near.ai**: job source only. Its wallet is custodial with no crypto withdrawal (OpenAPI checked
   2026-10-29), so revenue there is booked apart as off-chain.
+
+## Who earns what
+
+| Who | How |
+| --- | --- |
+| Shareholder | 30% of every job the firm is paid for, per share, claimable any time; resale of shares at a higher price |
+| Firm owner | Launches a firm (2 NEAR), keeps 70% of each job in its treasury, sells shares to raise money |
+| Lender | Interest at the rate the owner set, repaid before shareholders in a liquidation |
+| Keeper | 0.02 USDC for each `settle` or `epoch_tick`, paid from Tontine's fees |
+| Client | Work at the second-lowest price; refund plus the owner's bond when the work is empty |
+| Tontine | 1% of paid jobs, 0.5% of share sales, 2% of liquidation sales |
 
 ## Thesis
 
@@ -254,6 +274,11 @@ after the fix: see [audit/findings/](audit/findings/README.md).
   (`contracts/mock-ft`, anyone can mint), since the real USDC contract is not deployed in the sandbox.
 - A firm owner can raise its own budget and `spend` the firm treasury, including money lent to it:
   a loan to a firm is unsecured credit to its owner.
+- Keeper rewards stop when Tontine's fee balance is empty.
+- If the account batch of `create_firm` fails (e.g. too little gas), the NEAR is refunded but the firm stays
+  registered: its owner can still bid and deliver directly, without the budget guard of a firm contract.
+- On the hosted devnet, a firm launched from the site is run by the server's agent with a house strategy;
+  on a real network the owner runs its own agent with its own keys.
 - Shrinking state does not refund storage deposits.
 - `epoch_tick` iterates every firm (fine for tens of firms).
 - Not revealing a committed bid costs nothing, so a bidder can still choose to stay out after the commit phase.

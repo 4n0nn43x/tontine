@@ -10,7 +10,7 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | Reveal must match the commit | `reveal_must_match_commit`, `bid_hash_vector` (Rust and TS share one vector) | `make test` | unit |
 | One bid per owner per auction (anti-shill) | `anti_shill_one_bid_per_owner`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
 | Bidding requires an owner bond | `bid_requires_bond` | `make test` | unit |
-| 70% to the firm, 30% to shareholders by reward per share | `reverse_vickrey_pays_second_price_and_dividends`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
+| After Tontine's job fee, 70% to the firm, 30% to shareholders by reward per share | `reverse_vickrey_pays_second_price_and_dividends`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
 | Deposits reach tender through the mainnet intents.near code (`mt_transfer_call` -> `mt_on_transfer`) | demo steps 1 to 3 | `make demo` | simulated (sandbox, mainnet code) |
 | tender moves its intents.near balance as predecessor, no intent signed | demo step 2 (`withdraw` -> `mt_balance_of`) | `make demo` | simulated (sandbox, mainnet code) |
 | Shareholder withdraws dividends to its wallet | demo step 2 (`ft_withdraw` from intents, then `ft_balance_of`) | `make demo` | simulated (sandbox, mainnet code) |
@@ -44,3 +44,11 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | Callers prepay the storage they create | F3 in `audit-poc.ts` | `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
 | Predictions hash published before the window | not yet: `thesis.ts freeze`, then a mainnet tx | | pending |
 | A third party paid a job on-chain | not yet | | pending |
+| Anyone launches a firm (`create_firm`), owns its 100 shares and can list them at once | `anyone_creates_a_firm_and_owns_its_shares`, demo step 5b | `make test`, `make demo` | simulated (sandbox) |
+| A firm created by `create_firm` has the firm contract and two function call keys, no full access key | demo step 5b | `make demo` | simulated (sandbox) |
+| Only the admin stores the firm code | `only_admin_sets_firm_code` | `make test` | unit |
+| 1% job fee to Tontine, taken before the 70/30 split | `job_fee_goes_to_tontine_before_the_dividend_split` | `make test` | unit |
+| 0.5% share sale fee, from the seller's proceeds | `share_sale_fee_comes_out_of_the_seller_proceeds` | `make test` | unit |
+| Loans follow the owner's rate and cap, and pay interest | `loans_follow_the_owner_terms_and_earn_interest` | `make test` | unit |
+| A loan without terms earns no interest | `loans_without_terms_stay_at_zero_interest` | `make test` | unit |
+| Keepers are paid from Tontine's fees, never from an empty balance | `keepers_are_paid_from_tontine_fees_when_there_are_any` | `make test` | unit |

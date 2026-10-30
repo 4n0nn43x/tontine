@@ -39,6 +39,10 @@ impl T {
             epoch_secs: 10,
             liquidation_commit_secs: 2,
             liquidation_reveal_secs: 2,
+            // Fees and keeper rewards are off here so the base tests keep their figures; see the fee tests.
+            job_fee_bps: 0,
+            trade_fee_bps: 0,
+            keeper_reward: U128(0),
         });
         let mut t = T { c, t: 1_000 * SEC };
         // Every caller now prepays the storage it creates (storage_deposit, NEP-145 style).
@@ -512,4 +516,147 @@ fn poc_f4_lone_buyer_takes_the_treasury_creditor_gets_nothing() {
     let treasury_kept = t.bal("w3.tender.near");
     println!("price 1 unit, creditor repaid {creditor_got} of 1990000, treasury left to the buyer {treasury_kept}");
     assert!(creditor_got >= 1_990_000 - 1, "creditor must be repaid from the treasury: got {creditor_got}");
+}
+
+// ---------------------------------------------------------------- open firms, fees, loans, keepers
+
+const PK1: &str = "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp";
+const PK2: &str = "ed25519:DcA2MzgpJbrUATQLLceocVckhhAqrkingax4oJ9kZ847";
+
+fn keys() -> Vec<PublicKey> {
+    vec![PK1.parse().unwrap(), PK2.parse().unwrap()]
+}
+
+fn with_fees() -> T {
+    let mut t = T::new();
+    t.c.config.job_fee_bps = 100;
+    t.c.config.trade_fee_bps = 50;
+    t.c.config.keeper_reward = U128(20_000);
+    t
+}
+
+#[test]
+fn anyone_creates_a_firm_and_owns_its_shares() {
+    let mut t = T::new();
+    t.as_("investor.near", 2 * 10u128.pow(24));
+    let no_code = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        t.c.create_firm(keys(), U128(20 * USDC), U128(USDC), 3600);
+    }));
+    assert!(no_code.is_err(), "no firm code stored yet");
+    t.as_("admin.near", 0);
+    t.c.set_firm_code(Base64VecU8(vec![0, 97, 115, 109]));
+    t.as_("investor.near", 10u128.pow(24));
+    let cheap = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        t.c.create_firm(keys(), U128(20 * USDC), U128(USDC), 3600);
+    }));
+    assert!(cheap.is_err(), "1 NEAR does not cover the account");
+    t.as_("investor.near", 2 * 10u128.pow(24));
+    let id = t.c.create_firm(keys(), U128(20 * USDC), U128(USDC), 3600);
+    let f = t.c.get_firm(id);
+    assert_eq!(id, 5);
+    assert_eq!(f.account, acc("w6.tender.near"));
+    assert_eq!(f.owner, acc("investor.near"));
+    assert_eq!(t.c.mt_balance_of(acc("investor.near"), id.to_string()).0, 100);
+    // The creator can sell part of its firm at once.
+    t.as_("investor.near", 1);
+    t.c.list_shares(id, 40, U128(USDC / 2));
+    assert_eq!(t.c.get_ask(id, acc("investor.near")).unwrap().amount, 40);
+}
+
+#[test]
+fn only_admin_sets_firm_code() {
+    let mut t = T::new();
+    t.as_("x.near", 0);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.set_firm_code(Base64VecU8(vec![1]))));
+    assert!(r.is_err());
+}
+
+#[test]
+fn job_fee_goes_to_tontine_before_the_dividend_split() {
+    let mut t = with_fees();
+    let job = won_job(&mut t, 1, "o2.near"); // alone: paid the 10 USDC budget
+    t.as_("w2.tender.near", 0);
+    t.c.deliver(job, "done".into());
+    t.as_("judge.near", 0);
+    t.c.verdict(job, true, "{}".into());
+    assert_eq!(t.bal("admin.near"), 100_000, "1% of 10 USDC");
+    assert_eq!(t.c.pending_dividends(1, acc("o2.near")).0, 2_970_000, "30% of the 9.90 left");
+    assert_eq!(t.bal("w2.tender.near"), 6_930_000, "70% of the 9.90 left");
+}
+
+#[test]
+fn share_sale_fee_comes_out_of_the_seller_proceeds() {
+    let mut t = with_fees();
+    t.as_("o1.near", 1);
+    t.c.list_shares(0, 10, U128(USDC));
+    t.as_("client.near", 1);
+    t.c.buy_shares(0, acc("o1.near"), 10);
+    assert_eq!(t.bal("client.near"), 90 * USDC, "buyer pays the asked price");
+    assert_eq!(t.bal("o1.near"), 90 * USDC + 9_950_000, "seller gets 99.5%");
+    assert_eq!(t.bal("admin.near"), 50_000, "0.5% to Tontine");
+}
+
+#[test]
+fn loans_follow_the_owner_terms_and_earn_interest() {
+    let mut t = T::new();
+    t.as_("lender.near", 1);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.set_loan_terms(2, 1000, U128(5 * USDC))));
+    assert!(r.is_err(), "only the owner sets the terms");
+    t.as_("o3.near", 1);
+    t.c.set_loan_terms(2, 1000, U128(5 * USDC)); // 10% a year, at most 5 USDC owed
+    t.as_("lender.near", 1);
+    let over = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.lend(2, U128(6 * USDC))));
+    assert!(over.is_err(), "over the cap");
+    t.as_("lender.near", 1);
+    t.c.lend(2, U128(2 * USDC));
+    assert_eq!(t.c.get_firm(2).debts[0].rate_bps, 1000);
+    t.wait(365 * 86_400);
+    t.as_("o3.near", 1);
+    t.c.repay(2, U128(2 * USDC));
+    assert_eq!(t.bal("lender.near"), 98 * USDC + 2 * USDC, "2 USDC repaid, interest still owed");
+    assert_eq!(t.c.get_firm(2).debts[0].principal.0, 200_000, "a year at 10% on 2 USDC");
+    t.c.balances.insert(acc("w3.tender.near"), USDC);
+    t.as_("o3.near", 1);
+    t.c.repay(2, U128(USDC));
+    assert_eq!(t.bal("lender.near"), 100 * USDC + 200_000, "interest paid");
+    assert!(t.c.get_firm(2).debts.is_empty());
+}
+
+#[test]
+fn loans_without_terms_stay_at_zero_interest() {
+    let mut t = T::new();
+    t.as_("lender.near", 1);
+    t.c.lend(2, U128(USDC));
+    t.wait(365 * 86_400);
+    t.as_("o3.near", 1);
+    t.c.repay(2, U128(USDC));
+    assert_eq!(t.bal("lender.near"), 100 * USDC);
+    assert!(t.c.get_firm(2).debts.is_empty());
+}
+
+#[test]
+fn keepers_are_paid_from_tontine_fees_when_there_are_any() {
+    let mut t = with_fees();
+    t.deposit("payer.near", USDC); // a keeper needs a ledger entry to be paid
+    let (job, a) = t.post(10 * USDC);
+    t.bid(a, 1, "o2.near", 7 * USDC);
+    t.wait(2);
+    t.reveal(a, 1, "o2.near", 7 * USDC);
+    t.wait(2);
+    t.as_("payer.near", 0);
+    t.c.settle(a);
+    assert_eq!(t.bal("payer.near"), USDC, "no fees collected yet: no reward, no failure");
+    t.as_("w2.tender.near", 0);
+    t.c.deliver(job, "done".into());
+    t.as_("judge.near", 0);
+    t.c.verdict(job, true, "{}".into());
+    t.wait(10);
+    t.as_("payer.near", 0);
+    t.c.epoch_tick();
+    assert_eq!(t.bal("payer.near"), USDC + 20_000, "0.02 USDC for the epoch tick");
+    assert_eq!(t.bal("admin.near"), 100_000 - 20_000, "paid out of the 1% job fee");
+    t.wait(10);
+    t.as_("anyone.near", 0);
+    t.c.epoch_tick();
+    assert_eq!(t.bal("anyone.near"), 0, "no ledger entry: not paid, nothing stored");
 }

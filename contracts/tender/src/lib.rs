@@ -8,12 +8,12 @@
 //! `ft_on_transfer` (plain NEP-141) or `mt_on_transfer` (NEAR Intents, NEP-245). Firm shares are
 //! NEP-245 tokens (token_id = firm id, 100 per firm) with Synthetix-style dividends.
 
-use near_sdk::json_types::U128;
+use near_sdk::json_types::{Base64VecU8, U128};
 use near_sdk::serde_json::{self, json};
 use near_sdk::store::{LookupMap, Vector};
 use near_sdk::{
-    env, ext_contract, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault,
-    Promise, PromiseOrValue,
+    env, ext_contract, near, require, AccountId, Allowance, BorshStorageKey, Gas, NearToken, PanicOnDefault,
+    Promise, PromiseOrValue, PublicKey,
 };
 
 pub const SHARES: u32 = 100;
@@ -27,6 +27,16 @@ const SEC: u64 = 1_000_000_000;
 const MAX_PHASE_SECS: u64 = 30 * 86_400;
 /// After this long without a verdict, anyone can cancel a delivered job (judge outage, no slash).
 const JUDGE_TIMEOUT_SECS: u64 = 3 * 86_400;
+const YEAR_SECS: u128 = 365 * 86_400;
+/// NEAR a creator attaches to `create_firm`: the new account and the storage of the firm contract code.
+const FIRM_ACCOUNT_DEPOSIT: NearToken = NearToken::from_near(2);
+/// Deploying the firm code and running its `new` takes most of this.
+const GAS_CREATE_FIRM: Gas = Gas::from_tgas(150);
+const GAS_FIRM_INIT: Gas = Gas::from_tgas(30);
+/// Raw storage key of the firm contract code that `create_firm` deploys (set by the admin).
+const FIRM_CODE_KEY: &[u8] = b"firm_code";
+/// Methods an agent key may call on tender (none takes a deposit). Mirrors contracts/firm and ts/src/deploy.ts.
+const AGENT_TENDER_METHODS: &str = "commit_bid,reveal_bid,deliver,settle,epoch_tick,expire,settle_dividends";
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
@@ -53,6 +63,15 @@ pub struct Config {
     pub epoch_secs: u64,
     pub liquidation_commit_secs: u64,
     pub liquidation_reveal_secs: u64,
+    /// Tontine's cut of every paid job, taken before the dividend split. Paid to `admin`.
+    #[serde(default)]
+    pub job_fee_bps: u16,
+    /// Tontine's cut of every share sale, taken from the seller's proceeds. Paid to `admin`.
+    #[serde(default)]
+    pub trade_fee_bps: u16,
+    /// Paid out of `admin`'s fee balance to whoever settles an auction or ticks an epoch.
+    #[serde(default)]
+    pub keeper_reward: U128,
 }
 
 #[near(serializers = [borsh, json])]
@@ -72,6 +91,24 @@ pub struct Holding {
     pub debt: U128,
 }
 
+/// A loan to a firm. Interest accrues at `rate_bps` a year on `principal` from `since` (ns).
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct Debt {
+    pub lender: AccountId,
+    pub principal: U128,
+    pub rate_bps: u16,
+    pub since: u64,
+}
+
+/// What the owner accepts to borrow: a yearly rate and a cap on the principal owed.
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct LoanTerms {
+    pub rate_bps: u16,
+    pub cap: U128,
+}
+
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub struct Firm {
@@ -81,7 +118,9 @@ pub struct Firm {
     pub status: FirmStatus,
     pub acc_per_share: U128,
     pub holdings: Vec<Holding>,
-    pub debts: Vec<(AccountId, U128)>,
+    pub debts: Vec<Debt>,
+    /// None: loans are accepted at 0% with no cap (lending only moves money into the treasury).
+    pub loan_terms: Option<LoanTerms>,
     pub epochs_below_floor: u32,
     pub liquidation_auction: Option<u64>,
     // KYA registry and P&L
@@ -269,7 +308,10 @@ fn now() -> u64 {
 impl Tender {
     #[init]
     pub fn new(config: Config) -> Self {
-        require!(config.dividend_bps as u128 <= BPS && config.liquidation_fee_bps as u128 <= BPS, "bps > 100%");
+        require!(
+            [config.dividend_bps, config.liquidation_fee_bps, config.job_fee_bps, config.trade_fee_bps].iter().all(|b| *b as u128 <= BPS),
+            "bps > 100%"
+        );
         Self {
             config,
             balances: LookupMap::new(Key::Balances),
@@ -483,6 +525,64 @@ impl Tender {
     /// The owner receives the 100 shares.
     pub fn register_firm(&mut self, account: AccountId, owner: AccountId) -> u32 {
         require!(env::predecessor_account_id() == self.config.admin, "admin only");
+        self.add_firm(account, owner)
+    }
+
+    /// Admin stores the firm contract code that `create_firm` deploys.
+    pub fn set_firm_code(&mut self, code: Base64VecU8) {
+        require!(env::predecessor_account_id() == self.config.admin, "admin only");
+        env::storage_write(FIRM_CODE_KEY, &code.0);
+    }
+
+    /// Anyone launches a firm: tender creates `w{id+1}.<tender>` with the firm contract and the two agent
+    /// keys (bidding on tender, `spend` on the firm), never a full access key. The caller owns the 100
+    /// shares and can list them for sale at once. Attach 2 NEAR (account and code storage) and 150 TGas.
+    #[payable]
+    pub fn create_firm(&mut self, agent_keys: Vec<PublicKey>, budget: U128, max_per_call: U128, epoch_secs: u64) -> u32 {
+        let me = env::predecessor_account_id();
+        let deposit = env::attached_deposit();
+        require!(deposit >= FIRM_ACCOUNT_DEPOSIT, "attach 2 NEAR for the firm account");
+        require!(env::prepaid_gas() >= GAS_CREATE_FIRM, "attach 150 TGas");
+        require!(agent_keys.len() == 2, "two agent keys: [tender, firm]");
+        require!(epoch_secs > 0, "epoch_secs must be > 0");
+        let code = env::storage_read(FIRM_CODE_KEY).unwrap_or_else(|| env::panic_str("firm code not set"));
+        let account: AccountId = format!("w{}.{}", self.firms.len() + 1, env::current_account_id()).parse().unwrap();
+        let s0 = self.usage();
+        let id = self.add_firm(account.clone(), me.clone());
+        self.charge(&me, s0);
+        let init = json!({
+            "tender": env::current_account_id(),
+            "owner": me,
+            "budget": budget,
+            "max_per_call": max_per_call,
+            "epoch_secs": epoch_secs,
+            "agent_keys": agent_keys,
+        });
+        Promise::new(account.clone())
+            .create_account()
+            .transfer(deposit)
+            .deploy_contract(code)
+            .function_call("new".to_string(), init.to_string().into_bytes(), NearToken::from_yoctonear(0), GAS_FIRM_INIT)
+            .add_access_key_allowance(agent_keys[0].clone(), Allowance::unlimited(), env::current_account_id(), AGENT_TENDER_METHODS.to_string())
+            .add_access_key_allowance(agent_keys[1].clone(), Allowance::unlimited(), account, "spend".to_string())
+            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_firm_created(id, me, U128(deposit.as_yoctonear())))
+            .detach();
+        id
+    }
+
+    /// The account batch failed (e.g. not enough gas): give the NEAR back. The firm stays registered and
+    /// its owner can still bid and deliver directly, without the budget guard of a firm contract.
+    #[private]
+    pub fn on_firm_created(&mut self, firm_id: u32, creator: AccountId, deposit: U128) -> bool {
+        let ok = env::promise_result_checked(0, 1024).is_ok();
+        if !ok {
+            emit("firm_create_failed", json!({"firm_id": firm_id, "creator": creator}));
+            Promise::new(creator).transfer(NearToken::from_yoctonear(deposit.0)).detach();
+        }
+        ok
+    }
+
+    fn add_firm(&mut self, account: AccountId, owner: AccountId) -> u32 {
         require!(self.firm_by_account.get(&account).is_none(), "firm exists");
         let id = self.firms.len();
         self.firms.push(Firm {
@@ -493,6 +593,7 @@ impl Tender {
             acc_per_share: U128(0),
             holdings: vec![Holding { account: owner.clone(), shares: SHARES, debt: U128(0) }],
             debts: vec![],
+            loan_terms: None,
             epochs_below_floor: 0,
             liquidation_auction: None,
             delivered: 0,
@@ -638,9 +739,11 @@ impl Tender {
         let mut ask = self.asks.get(&key).cloned().unwrap_or_else(|| env::panic_str("no ask"));
         require!(amount > 0 && ask.amount >= amount, "ask too small");
         let cost = ask.price_per_share.0 * amount as u128;
+        let fee = cost * self.config.trade_fee_bps as u128 / BPS;
         let s0 = self.usage();
         self.debit(&me, cost);
-        self.credit(&seller, cost);
+        self.credit(&seller, cost - fee);
+        self.credit(&self.config.admin.clone(), fee);
         let mut f = self.firm(firm_id);
         require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
         require!(ask.takeover == f.takeovers, "ask voided by a takeover");
@@ -653,7 +756,7 @@ impl Tender {
             self.asks.insert(key, ask);
         }
         self.charge(&me, s0);
-        emit("shares_bought", json!({"firm_id": firm_id, "seller": seller, "buyer": me, "amount": amount, "cost": U128(cost)}));
+        emit("shares_bought", json!({"firm_id": firm_id, "seller": seller, "buyer": me, "amount": amount, "cost": U128(cost), "fee": U128(fee)}));
     }
 
     /// Lend to a firm treasury. The lender becomes a creditor, paid before shareholders in a liquidation.
@@ -664,13 +767,43 @@ impl Tender {
         let mut f = self.firm(firm_id);
         // A loan during the sale would be repaid ahead of shareholders out of the buyer's own price.
         require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
+        // The owner sets the rate and the cap: a lender cannot load a firm with debt on its own terms.
+        let rate_bps = match &f.loan_terms {
+            Some(t) => {
+                let owed: u128 = f.debts.iter().map(|d| d.principal.0).sum();
+                require!(owed + amount.0 <= t.cap.0, "over the firm's borrowing cap");
+                t.rate_bps
+            }
+            None => 0,
+        };
         let s0 = self.usage();
         self.debit(&me, amount.0);
         self.credit(&f.account, amount.0);
-        f.debts.push((me.clone(), amount));
+        f.debts.push(Debt { lender: me.clone(), principal: amount, rate_bps, since: now() });
         self.save_firm(f);
         self.charge(&me, s0);
-        emit("loan", json!({"firm_id": firm_id, "lender": me, "amount": amount}));
+        emit("loan", json!({"firm_id": firm_id, "lender": me, "amount": amount, "rate_bps": rate_bps}));
+    }
+
+    /// Owner sets the yearly rate it pays on new loans and the most principal it accepts to owe.
+    #[payable]
+    pub fn set_loan_terms(&mut self, firm_id: u32, rate_bps: u16, cap: U128) {
+        near_sdk::assert_one_yocto();
+        let me = env::predecessor_account_id();
+        let mut f = self.firm(firm_id);
+        require!(me == f.owner, "owner only");
+        require!(rate_bps as u128 <= BPS, "rate above 100% a year");
+        let s0 = self.usage();
+        f.loan_terms = Some(LoanTerms { rate_bps, cap });
+        self.save_firm(f);
+        self.charge(&me, s0);
+        emit("loan_terms", json!({"firm_id": firm_id, "rate_bps": rate_bps, "cap": cap}));
+    }
+
+    /// Principal plus interest accrued since `since`.
+    fn owed(d: &Debt) -> u128 {
+        let secs = (now().saturating_sub(d.since) / SEC) as u128;
+        d.principal.0 + d.principal.0 * d.rate_bps as u128 * secs / (BPS * YEAR_SECS)
     }
 
     /// Firm (or its owner) repays creditors FIFO from the firm treasury.
@@ -689,16 +822,19 @@ impl Tender {
 
     fn pay_creditors(&mut self, f: &mut Firm, mut pot: u128) -> u128 {
         let mut debts = std::mem::take(&mut f.debts);
-        for (who, owed) in debts.iter_mut() {
-            let pay = pot.min(owed.0);
+        for d in debts.iter_mut() {
+            let owed = Self::owed(d);
+            let pay = pot.min(owed);
             if pay > 0 {
-                self.credit(who, pay);
-                owed.0 -= pay;
+                self.credit(&d.lender, pay);
                 pot -= pay;
-                emit("creditor_paid", json!({"firm_id": f.id, "creditor": who, "amount": U128(pay)}));
+                emit("creditor_paid", json!({"firm_id": f.id, "creditor": d.lender, "amount": U128(pay)}));
             }
+            // What is still owed, interest included, keeps accruing from now.
+            d.principal = U128(owed - pay);
+            d.since = now();
         }
-        f.debts = debts.into_iter().filter(|(_, d)| d.0 > 0).collect();
+        f.debts = debts.into_iter().filter(|d| d.principal.0 > 0).collect();
         pot
     }
 
@@ -824,6 +960,21 @@ impl Tender {
             }
             AuctionKind::Liquidation(firm_id) => self.on_liquidation_auction(firm_id, a.winner, a.price),
         }
+        self.reward_keeper();
+    }
+
+    /// Pay the caller a small reward out of Tontine's fee balance, if there is enough in it. Only an
+    /// account that already has a ledger entry is paid, so a reward never grows unpaid state.
+    fn reward_keeper(&mut self) {
+        let r = self.config.keeper_reward.0;
+        let admin = self.config.admin.clone();
+        let keeper = env::predecessor_account_id();
+        if r == 0 || keeper == admin || self.balances.get(&keeper).is_none() || self.balances.get(&admin).copied().unwrap_or(0) < r {
+            return;
+        }
+        self.debit(&admin, r);
+        self.credit(&keeper, r);
+        emit("keeper_paid", json!({"keeper": keeper, "amount": U128(r)}));
     }
 
     // ---------------------------------------------------------------- jobs
@@ -940,15 +1091,18 @@ impl Tender {
 
     fn pay(&mut self, j: &mut Job) {
         let (mut f, price) = self.winner_of(j);
-        let div = price * self.config.dividend_bps as u128 / BPS;
+        let fee = price * self.config.job_fee_bps as u128 / BPS;
+        self.credit(&self.config.admin.clone(), fee);
+        let net = price - fee;
+        let div = net * self.config.dividend_bps as u128 / BPS;
         let dust = Self::distribute(&mut f, div);
-        let to_firm = price - div + dust;
+        let to_firm = net - div + dust;
         self.credit(&f.account.clone(), to_firm);
         f.delivered += 1;
         f.revenue = U128(f.revenue.0 + price);
         f.dividends = U128(f.dividends.0 + div - dust);
         self.lock(&j.winner_owner.clone().unwrap(), false);
-        emit("paid", json!({"job_id": j.id, "firm_id": f.id, "price": U128(price), "to_firm": U128(to_firm), "dividends": U128(div - dust)}));
+        emit("paid", json!({"job_id": j.id, "firm_id": f.id, "price": U128(price), "to_firm": U128(to_firm), "dividends": U128(div - dust), "fee": U128(fee)}));
         self.save_firm(f);
         j.status = JobStatus::Paid;
     }
@@ -999,6 +1153,7 @@ impl Tender {
             }
             self.save_firm(f);
         }
+        self.reward_keeper();
     }
 
     fn start_liquidation(&mut self, f: &mut Firm) {

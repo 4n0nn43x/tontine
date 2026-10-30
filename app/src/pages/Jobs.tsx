@@ -182,6 +182,12 @@ export function JobDetail() {
             <dl className="facts">
               <dt>Paid</dt>
               <dd>{usdc(paid.price)} USDC</dd>
+              {BigInt(paid.fee ?? 0) > 0n && (
+                <>
+                  <dt>Tontine fee</dt>
+                  <dd>{usdc(paid.fee)} USDC</dd>
+                </>
+              )}
               <dt>To the firm treasury</dt>
               <dd>{usdc(paid.to_firm)} USDC (70%)</dd>
               <dt>To the shareholders</dt>

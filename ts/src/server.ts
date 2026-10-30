@@ -8,11 +8,13 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { call, sleep, view, USDC } from "./chain.ts";
+import { KeyPair } from "near-api-js";
+import { account, call, sleep, view, USDC } from "./chain.ts";
 import { DEVNET_CONFIG, startDevnet, type Devnet } from "./devnet.ts";
 import { Indexer, type ChainEvent } from "./indexer.ts";
 import { makeLlm } from "./llm.ts";
-import { Swarm } from "./swarm.ts";
+import { Swarm, type FirmHandle } from "./swarm.ts";
+import type { Strategy } from "./strategy.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PORT = Number(process.env.PORT ?? 8080);
@@ -33,6 +35,39 @@ const swarm = new Swarm(provider, T, devnet.firms, devnet.judge, makeLlm(), devn
 const watched = new Set([T, ...devnet.firms.map((f) => f.account)]);
 const indexer = new Indexer(devnet.rpcUrl, (c) => watched.has(c) || c.endsWith(`.${T}`));
 await indexer.start();
+
+// Firms that visitors launch. The server makes the two agent keys and keeps their private halves;
+// the visitor's create_firm registers the public halves on the new firm account, and the swarm adopts
+// the firm once its account exists, running the house strategy the visitor picked. Devnet only: on a
+// real network the owner runs its own agent with its own keys.
+const pendingAgents = new Map<string, { tender: KeyPair; firm: KeyPair; strategy: Strategy }>(); // by tender public key
+async function adopt(firmId: number, firmAccount: string, owner: string) {
+  for (let i = 0; i < 20; i++) {
+    const r: any = await provider.query({ request_type: "view_access_key_list", account_id: firmAccount, finality: "optimistic" } as any).catch(() => null);
+    const agent = (r?.keys ?? []).map((k: any) => pendingAgents.get(k.public_key)).find(Boolean);
+    if (agent) {
+      pendingAgents.delete(agent.tender.getPublicKey().toString());
+      const handle: FirmHandle = {
+        id: firmId,
+        account: firmAccount,
+        owner: account(owner, provider, KeyPair.fromRandom("ed25519")), // never signs: visitor firms do not bid on takeovers
+        agentTender: account(firmAccount, provider, agent.tender),
+        agentFirm: account(firmAccount, provider, agent.firm),
+        strategy: agent.strategy,
+      };
+      devnet.firms.push(handle); // the swarm reads the same array
+      watched.add(firmAccount);
+      log(`adopted visitor firm #${firmId} ${agent.strategy.name} (${agent.strategy.author})`);
+      return;
+    }
+    await sleep(1500);
+  }
+}
+indexer.subscribe((e: ChainEvent) => {
+  if (e.standard === "tontine" && e.event === "firm_registered" && !devnet.firms.some((f) => f.id === e.data?.firm_id)) {
+    void adopt(e.data.firm_id, e.data.account, e.data.owner);
+  }
+});
 
 async function chainNow(): Promise<bigint> {
   const b: any = await provider.viewBlock({ finality: "optimistic" } as any);
@@ -283,6 +318,7 @@ const server = createServer(async (req, res) => {
         houseClient: devnet.houseClient.accountId,
         tenderConfig,
         firms: devnet.firms.map((f) => ({ id: f.id, account: f.account, owner: f.owner.accountId, strategy: f.strategy.name, author: f.strategy.author, house: f.strategy.house })),
+        templates: devnet.strategies.map((s, i) => ({ index: i, name: s.name })),
       });
     }
     if (url.pathname === "/api/state") return json(res, 200, state);
@@ -306,6 +342,17 @@ const server = createServer(async (req, res) => {
       const accountId = await devnet.createVisitor(publicKey);
       log(`visitor account ${accountId}`);
       return json(res, 200, { accountId, near: "3", usdc: "100" });
+    }
+    if (url.pathname === "/api/agent" && req.method === "POST") {
+      if (!allow(ip, "agent", 5, 3_600_000)) return json(res, 429, { error: "Too many firms from this address, try again in an hour." });
+      const { name, strategy } = await readBody(req, 4096);
+      const template = devnet.strategies[Number(strategy)];
+      if (typeof name !== "string" || !/^[A-Za-z0-9 &.'-]{2,32}$/.test(name.trim()) || !template) return json(res, 400, { error: "name: 2 to 32 letters, digits, spaces or & . ' -; strategy: a template index" });
+      const keys = { tender: KeyPair.fromRandom("ed25519"), firm: KeyPair.fromRandom("ed25519") };
+      // House strategy, visitor's name; no takeover bids, which the owner would have to sign itself.
+      const s: Strategy = { ...template, name: name.trim(), author: "visitor", house: false, takeover: undefined };
+      pendingAgents.set(keys.tender.getPublicKey().toString(), { ...keys, strategy: s });
+      return json(res, 200, { agentKeys: [keys.tender.getPublicKey().toString(), keys.firm.getPublicKey().toString()] });
     }
     if (url.pathname === "/api/faucet" && req.method === "POST") {
       if (!allow(ip, "faucet", 10, 3_600_000)) return json(res, 429, { error: "Faucet limit reached for this address, try again in an hour." });

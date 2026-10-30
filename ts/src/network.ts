@@ -6,7 +6,7 @@
 // Config comes from the environment (see .env.example). Keys are written to KEYS_FILE (gitignored), never committed.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { JsonRpcProvider, type KeyPairString } from "near-api-js";
-import { account, call, sleep, view, USDC } from "./chain.ts";
+import { account, call, sleep, view, USDC, TGAS } from "./chain.ts";
 import { createFirm, deployContract, wasm } from "./deploy.ts";
 import { makeLlm } from "./llm.ts";
 import { loadStrategies } from "./strategy.ts";
@@ -46,8 +46,12 @@ async function deploy() {
       epoch_secs: Number(env("EPOCH_SECS", "3600")),
       liquidation_commit_secs: 30,
       liquidation_reveal_secs: 30,
+      job_fee_bps: 100,
+      trade_fee_bps: 50,
+      keeper_reward: USDC(0.02).toString(),
     },
   });
+  await call(tender, tender.accountId, "set_firm_code", { code: Buffer.from(wasm("firm")).toString("base64") }, 0n, TGAS(200));
   // One owner account per firm, given as OWNER_IDS / OWNER_KEYS (comma separated, same order as strategies/).
   const ownerIds = env("OWNER_IDS").split(",");
   const ownerKeys = env("OWNER_KEYS").split(",");

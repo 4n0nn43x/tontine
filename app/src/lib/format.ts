@@ -57,7 +57,7 @@ export function describe(e: ChainEvent, firm: (id: number) => string): Described
           ? { icon: "fa-box", tone: "", text: `${firm(d.firm_id)} delivered job #${d.job_id}`, jobId: d.job_id, firmId: d.firm_id }
           : { icon: "fa-box-open", tone: "bad", text: `${firm(d.firm_id)} delivered nothing on job #${d.job_id}`, jobId: d.job_id, firmId: d.firm_id };
       case "paid":
-        return { icon: "fa-coins", tone: "good", text: `Job #${d.job_id} paid ${usdc(d.price)} USDC, ${usdc(d.dividends)} to shareholders`, jobId: d.job_id, firmId: d.firm_id };
+        return { icon: "fa-coins", tone: "good", text: `Job #${d.job_id} paid ${usdc(d.price)} USDC, ${usdc(d.dividends)} to shareholders${BigInt(d.fee ?? 0) > 0n ? `, ${usdc(d.fee)} to Tontine` : ""}`, jobId: d.job_id, firmId: d.firm_id };
       case "slashed":
         return { icon: "fa-scissors", tone: "bad", text: `${firm(d.firm_id)} rejected: owner bond slashed ${usdc(d.amount)} USDC`, jobId: d.job_id, firmId: d.firm_id };
       case "liquidation_started":
@@ -71,7 +71,15 @@ export function describe(e: ChainEvent, firm: (id: number) => string): Described
       case "shares_listed":
         return { icon: "fa-tag", tone: "", text: `${d.amount} shares of ${firm(d.firm_id)} listed at ${usdc(d.price_per_share)} USDC`, firmId: d.firm_id };
       case "loan":
-        return { icon: "fa-building-columns", tone: "", text: `${short(d.lender)} lent ${usdc(d.amount)} USDC to ${firm(d.firm_id)}`, firmId: d.firm_id };
+        return { icon: "fa-building-columns", tone: "", text: `${short(d.lender)} lent ${usdc(d.amount)} USDC to ${firm(d.firm_id)}${d.rate_bps ? ` at ${d.rate_bps / 100}% a year` : ""}`, firmId: d.firm_id };
+      case "loan_terms":
+        return { icon: "fa-percent", tone: "", text: `${firm(d.firm_id)} borrows at ${d.rate_bps / 100}% a year, up to ${usdc(d.cap)} USDC`, firmId: d.firm_id };
+      case "creditor_paid":
+        return { icon: "fa-building-columns", tone: "good", text: `${short(d.creditor)} repaid ${usdc(d.amount)} USDC by ${firm(d.firm_id)}`, firmId: d.firm_id };
+      case "firm_registered":
+        return { icon: "fa-building", tone: "accent", text: `${short(d.owner)} launched firm #${d.firm_id}`, firmId: d.firm_id };
+      case "keeper_paid":
+        return { icon: "fa-gears", tone: "", text: `${short(d.keeper)} earned ${usdc(d.amount)} USDC for keeping the market moving` };
       case "deposit":
         return { icon: "fa-arrow-down", tone: "", text: `${short(d.account)} deposited ${usdc(d.amount)} USDC` };
       case "withdraw":
