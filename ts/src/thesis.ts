@@ -23,8 +23,6 @@ const SOURCES = {
   nearFees: `${LLAMA}/fees/near?dataType=dailyFees`,
   nearStats: "https://api.nearblocks.io/v1/stats",
 };
-/** Share of NEAR transaction fees burnt (the other 30% goes to contracts). */
-const GAS_BURN_SHARE = 0.7;
 const WINDOW_DAYS = 12;
 const EVAL = { from: "2026-11-01", to: "2026-11-12" };
 const P3_MIN_BP = 4.0;
@@ -76,7 +74,9 @@ export function days(s: Pick<Snapshot, "volume" | "intentsFees" | "intentsRevenu
 const sum = (d: Day[], k: keyof Day) => d.reduce((a, x) => a + (x[k] as number), 0);
 const bp = (d: Day[]) => (1e4 * sum(d, "rev")) / sum(d, "vol");
 const avgVol = (d: Day[]) => sum(d, "vol") / d.length;
-const revOverBurn = (d: Day[]) => sum(d, "rev") / (GAS_BURN_SHARE * sum(d, "gas"));
+// Total gas fees, not the burnt share: the burn rate (70% today) has an approved move to 100%, and a
+// ratio on fees stays comparable across that change.
+const revOverGas = (d: Day[]) => sum(d, "rev") / sum(d, "gas");
 
 export function quantile(xs: number[], q: number): number {
   const s = [...xs].sort((a, b) => a - b);
@@ -112,15 +112,25 @@ function computePredictions(s: Snapshot) {
   const d = days(s);
   const w = windows(d, WINDOW_DAYS, 90);
   const v = w.map(avgVol);
-  const g = w.map(revOverBurn);
+  const g = w.map(revOverGas);
   return {
     thesis: "NEAR captures agent value through Intents-funded buybacks, not gas.",
     created_at: new Date().toISOString(),
     data_through: d.at(-1)!.date,
     method: `80% intervals = 10th-90th percentile of ${w.length} rolling ${WINDOW_DAYS}-day windows over the last 90 days (DefiLlama).`,
     window: EVAL,
+    evaluation:
+      `After ${EVAL.to}, fetch the same sources (below), keep the UTC days ${EVAL.from} to ${EVAL.to} inclusive present in all four series. ` +
+      "P1 = mean of daily volume. P2 = sum(Intents revenue) / sum(NEAR gas fees). P3 = 10000 * sum(Intents revenue) / sum(volume). " +
+      "A prediction is TRUE if the observed value lies in its interval (P3: at or above its minimum), FALSE otherwise. Fewer than 12 days: no verdict.",
+    sources: SOURCES,
+    snapshot_sha256: createHash("sha256").update(readFileSync(SNAPSHOT)).digest("hex"),
+    caveats: [
+      "DefiLlama 'revenue' for near-intents is the fee share captured for NEAR buybacks, not confirmed purchases.",
+      "Bought-back NEAR offsets emission only if it is burnt or locked; this was not confirmed when the predictions were made.",
+    ],
     P1: { metric: "mean daily Intents volume (USD)", low: quantile(v, 0.1), central: quantile(v, 0.5), high: quantile(v, 0.9), kind: "base rate" },
-    P2: { metric: `Intents revenue / NEAR gas burnt (${GAS_BURN_SHARE * 100}% of fees)`, low: quantile(g, 0.1), central: quantile(g, 0.5), high: quantile(g, 0.9), kind: "base rate" },
+    P2: { metric: "Intents revenue / NEAR gas fees (total, not only the burnt share)", low: quantile(g, 0.1), central: quantile(g, 0.5), high: quantile(g, 0.9), kind: "base rate" },
     P3: { metric: "protocol take rate = Intents revenue / volume (bp)", min: P3_MIN_BP, kind: "tests the thesis" },
   };
 }
@@ -151,7 +161,7 @@ export function evaluate(p: Predictions, d: Day[]) {
   const complete = win.length === WINDOW_DAYS;
   const status = (ok: boolean) => (complete ? (ok ? "TRUE" : "FALSE") : `pending (${win.length}/${WINDOW_DAYS} days)`);
   if (!win.length) return { complete, win, P1: { observed: null, status: status(false) }, P2: { observed: null, status: status(false) }, P3: { observed: null, status: status(false) } };
-  const o1 = avgVol(win), o2 = revOverBurn(win), o3 = bp(win);
+  const o1 = avgVol(win), o2 = revOverGas(win), o3 = bp(win);
   return {
     complete,
     win,

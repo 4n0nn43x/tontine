@@ -1,9 +1,9 @@
 {
-  "data_through": "2026-10-28",
-  "fetched_at": "2026-10-30T00:35:00.251Z",
-  "take_rate_30d_bp": 5.414693380808976,
-  "multiple_2_5": 4.9280138615846605,
-  "multiple_1_6": 3.153928871414182,
+  "data_through": "2026-10-29",
+  "fetched_at": "2026-10-30T09:46:17.565Z",
+  "take_rate_30d_bp": 5.550400273067985,
+  "multiple_2_5": 5.432220132645861,
+  "multiple_1_6": 3.4766208848933506,
   "predictions_sha256": null,
   "P1": {
     "observed": null,
