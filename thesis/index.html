@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tontine thesis</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 16px;background:#fff;color:#111}table{border-collapse:collapse;width:100%;margin:1rem 0}td,th{border:1px solid #ccc;padding:4px 8px;text-align:left}code{font-size:13px}@media(prefers-color-scheme:dark){body{background:#111;color:#eee}td,th{border-color:#444}}</style></head><body>
+<h1>NEAR captures agent value through Intents-funded buybacks, not gas</h1>
+<p>Data through 2026-10-28 (snapshot 2026-10-30T00:35:00.251Z). Sources: <code>https://api.llama.fi/summary/dexs/near-intents</code>, <code>https://api.llama.fi/summary/fees/near-intents?dataType=dailyFees</code>, <code>https://api.llama.fi/summary/fees/near-intents?dataType=dailyRevenue</code>, <code>https://api.llama.fi/summary/fees/near?dataType=dailyFees</code>, <code>https://api.nearblocks.io/v1/stats</code>. Re-run: <code>make thesis</code>.</p>
+<h2>The multiple</h2>
+<p>Intents volume needed for buybacks to match NEAR emission: <b>4.9x</b> the 30-day average at 2.5% emission (3.2x at 1.6%).
+Required $651.4M/day vs $132.2M/day, take rate 5.41 bp, NEAR $3.93, supply 1.31B.
+A buyback offsets emission only if the bought NEAR is burnt or locked.</p>
+<table><tr><th>take rate (bp)</th><th>emission</th><th>required volume/day</th><th>multiple</th></tr><tr><td>2.5</td><td>2.5%</td><td>$1.41B</td><td>10.7x</td></tr><tr><td>2.5</td><td>1.6%</td><td>$902.9M</td><td>6.8x</td></tr><tr><td>4</td><td>2.5%</td><td>$881.8M</td><td>6.7x</td></tr><tr><td>4</td><td>1.6%</td><td>$564.3M</td><td>4.3x</td></tr><tr><td>5.41</td><td>2.5%</td><td>$652.0M</td><td>4.9x</td></tr><tr><td>5.41</td><td>1.6%</td><td>$417.3M</td><td>3.2x</td></tr><tr><td>7</td><td>2.5%</td><td>$503.9M</td><td>3.8x</td></tr><tr><td>7</td><td>1.6%</td><td>$322.5M</td><td>2.4x</td></tr></table>
+<h2>Pre-registered predictions, 2026-11-01 to 2026-11-12</h2>
+<p><b>Not frozen yet</b>: values below are computed live and prove nothing until hashed on-chain. 80% intervals = 10th-90th percentile of 79 rolling 12-day windows over the last 90 days (DefiLlama).</p>
+<table><tr><th></th><th>predicted</th><th>observed</th><th>status</th></tr>
+<tr><td>P1 base rate</td><td>$71.3M to $173.2M (central $130.2M)</td><td>-</td><td><b>pending (0/12 days)</b></td></tr>
+<tr><td>P2 base rate</td><td>13.5 to 30.4 (central 22.0)</td><td>-</td><td><b>pending (0/12 days)</b></td></tr>
+<tr><td>P3 tests the thesis</td><td>&gt;= 4 bp</td><td>-</td><td><b>pending (0/12 days)</b></td></tr>
+<tr><td>P4 measure</td><td>swarm value leak = swarm volume x (protocol bp - swarm bp)</td><td>$0 on $0 (none yet)</td><td><b>no swarm volume yet</b></td></tr>
+</table>
+<h2>Take rate by 12-day block since July</h2>
+<table><tr><th>from</th><th>to</th><th>bp</th></tr><tr><td>2026-07-01</td><td>2026-07-12</td><td>1.95</td></tr><tr><td>2026-07-13</td><td>2026-07-24</td><td>2.68</td></tr><tr><td>2026-07-25</td><td>2026-08-05</td><td>2.10</td></tr><tr><td>2026-08-06</td><td>2026-08-17</td><td>2.20</td></tr><tr><td>2026-08-18</td><td>2026-08-29</td><td>2.94</td></tr><tr><td>2026-08-30</td><td>2026-09-10</td><td>3.02</td></tr><tr><td>2026-09-11</td><td>2026-09-22</td><td>3.89</td></tr><tr><td>2026-09-23</td><td>2026-10-04</td><td>5.27</td></tr><tr><td>2026-10-05</td><td>2026-10-16</td><td>5.58</td></tr><tr><td>2026-10-17</td><td>2026-10-28</td><td>4.82</td></tr></table>
+</body></html>

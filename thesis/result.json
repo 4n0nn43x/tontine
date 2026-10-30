@@ -1,0 +1,21 @@
+{
+  "data_through": "2026-10-28",
+  "fetched_at": "2026-10-30T00:35:00.251Z",
+  "take_rate_30d_bp": 5.414693380808976,
+  "multiple_2_5": 4.9280138615846605,
+  "multiple_1_6": 3.153928871414182,
+  "predictions_sha256": null,
+  "P1": {
+    "observed": null,
+    "status": "pending (0/12 days)"
+  },
+  "P2": {
+    "observed": null,
+    "status": "pending (0/12 days)"
+  },
+  "P3": {
+    "observed": null,
+    "status": "pending (0/12 days)"
+  },
+  "P4_leak_usd": 0
+}
