@@ -56,7 +56,6 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   let explore = 0;
   let exploreTarget = 0;
   let calm = null; // copy box in CSS pixels, towers stay below it
-  const pointer = { x: 0, tx: 0 };
 
   const names = firmNames ?? FIRMS.map((f) => f.name);
   const firms = names.map((name, i) => {
@@ -512,26 +511,38 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     a.globalAlpha = 0.5 + 0.5 * Math.min(1, hall.flash + 0.3);
     a.fillRect(hx - 6, G - 5, 12, 2);
     a.globalAlpha = 1;
-    const feet = G + Math.min(9, H - G - 2);
+    const feet = G + Math.min(12, H - G - 1);
     for (const g of agents) {
-      const x = Math.round(g.x - pointer.x * 6);
-      const stride = g.walking && Math.floor(clock * 8) % 2;
+      const x = Math.round(g.x) - 2;
+      const step = g.walking ? Math.floor(clock * 8) % 2 : -1;
+      // 5 x 11 pixels: hair, face, torso in the firm colour with arms, dark trousers, shoes.
+      a.fillStyle = "#3a2a1e";
+      a.fillRect(x + 1, feet - 11, 3, 1);
       a.fillStyle = "#f2d3b8";
-      a.fillRect(x, feet - 7, 2, 2);
+      a.fillRect(x + 1, feet - 10, 3, 3);
       a.fillStyle = g.color;
-      a.fillRect(x, feet - 5, 2, 3);
-      a.fillStyle = "#cfc6dc";
-      a.fillRect(x + (stride ? 1 : 0), feet - 2, 1, 2);
-      a.fillRect(x + (stride ? 0 : 1), feet - 2, 1, 2);
+      a.fillRect(x, feet - 7, 5, 4);
+      a.fillStyle = "#f2d3b8";
+      a.fillRect(x, feet - 4 + (step === 0 ? -1 : 0), 1, 1);
+      a.fillRect(x + 4, feet - 4 + (step === 1 ? -1 : 0), 1, 1);
+      a.fillStyle = "#2b2140";
+      a.fillRect(x + 1, feet - 3, 3, 1);
+      a.fillRect(x + 1, feet - 2, 1, step === 0 ? 1 : 2);
+      a.fillRect(x + 3, feet - 2, 1, step === 1 ? 1 : 2);
+      a.fillStyle = "#0b0710";
+      a.fillRect(x + (step === 0 ? 0 : 1), feet - 1, 1, 1);
+      a.fillRect(x + (step === 1 ? 4 : 3), feet - 1, 1, 1);
       if (g.carry) {
         a.fillStyle = AMBER;
-        a.fillRect(x + 2, feet - 3, 2, 2);
+        a.fillRect(x + 5, feet - 4, 2, 2);
+        a.fillStyle = "#8a6a3a";
+        a.fillRect(x + 5, feet - 5, 2, 1);
       }
     }
   }
 
   function drawBubbles() {
-    const feet = G + Math.min(9, H - G - 2);
+    const feet = G + Math.min(12, H - G - 1);
     text("MARKET", hallX(), G - 11, "rgba(246,215,167,0.8)", 10);
     ctx.font = `${Math.round(11 * dpr)}px ${FONT}`;
     ctx.textBaseline = "middle";
@@ -545,9 +556,9 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       const bh = 18 * dpr;
       // Agents at the hall stand close together: alternate bubble heights so they do not cover each other.
       const lift = (i % 3) * 20 * dpr;
-      let bx = (g.x - pointer.x * 6) * S - bw / 2;
+      let bx = (g.x) * S - bw / 2;
       bx = Math.max(4 * dpr, Math.min(canvas.width - bw - 4 * dpr, bx));
-      const by = (feet - 9) * S - bh - 6 * dpr - lift;
+      const by = (feet - 12) * S - bh - 6 * dpr - lift;
       ctx.globalAlpha = alpha;
       ctx.fillStyle = "rgba(16,10,24,0.88)";
       ctx.strokeStyle = g.bubbleColor;
@@ -569,7 +580,6 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     clock += dt;
     moveAgents(dt);
     explore += (exploreTarget - explore) * Math.min(1, dt * 3);
-    pointer.x += (pointer.tx - pointer.x) * Math.min(1, dt * 2);
     job.on += (job.target - job.on) * Math.min(1, dt * 2.2);
     job.x += (job.tx - job.x) * Math.min(1, dt * (job.target ? 1.3 : 0.7));
     for (const f of firms) {
@@ -613,9 +623,8 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   }
 
   function drawSkyline() {
-    const shift = -pointer.x * 3;
     for (const blk of skyline) {
-      const x = blk.x + shift * (blk.layer ? 1 : 0.5);
+      const x = blk.x;
       a.fillStyle = blk.layer ? "#1e1029" : "#2c1735";
       a.fillRect(Math.round(x), G - blk.h, blk.w, blk.h);
       // Sparse lit windows in the far city, slowly changing.
@@ -634,7 +643,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
 
   function drawTower(f) {
     const { x: x0, w, h, top, cols, rows } = f.box;
-    const x = x0 - pointer.x * 6;
+    const x = x0;
     const lightSide = x + w / 2 < W / 2 ? "right" : "left"; // the sun sets in the middle
     a.fillStyle = "#170f22";
     a.fillRect(Math.round(x), top, w, h);
@@ -694,7 +703,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     for (const f of firms) {
       a.globalAlpha = 0.12 + f.pulse * 0.1;
       a.fillStyle = f.sign;
-      for (let y = G + 2; y < Math.min(H, G + 10); y += 2) a.fillRect(Math.round(f.box.x - pointer.x * 6 + 1), y, f.box.w - 2, 1);
+      for (let y = G + 2; y < Math.min(H, G + 10); y += 2) a.fillRect(Math.round(f.box.x + 1), y, f.box.w - 2, 1);
     }
     a.globalAlpha = 1;
   }
@@ -783,7 +792,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     }
     for (const f of firms) {
       const r = roof(f);
-      const x = r.x - pointer.x * 6;
+      const x = r.x;
       const top = f.box.top - 9;
       // Names stay quiet in the hero and come forward in the arena view and on the dashboard.
       const show = live ? 1 : 0.55 + 0.45 * explore;
@@ -799,7 +808,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       const age = clock - l.born;
       const alpha = Math.min(1, age * 4) * Math.min(1, Math.max(0, (l.until + 0.5 - clock) * 2));
       const r = roof(l.f);
-      text(l.text, r.x - pointer.x * 6, l.f.box.top - 15 - n * 5 - Math.min(3, age * 2), l.color, 13, "center", alpha);
+      text(l.text, r.x, l.f.box.top - 15 - n * 5 - Math.min(3, age * 2), l.color, 13, "center", alpha);
     }
     if (job.on > 0.05 && job.label) {
       const p = jobPos();
@@ -831,11 +840,6 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     draw();
   }
 
-  function onPointer(e) {
-    const r = canvas.getBoundingClientRect();
-    pointer.tx = Math.max(-1, Math.min(1, ((e.clientX - r.left) / Math.max(1, r.width)) * 2 - 1));
-  }
-  window.addEventListener("pointermove", onPointer, { passive: true });
 
   layout();
   document.fonts?.load(`11px ${FONT}`).then(() => draw(), () => {});
@@ -909,7 +913,6 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     },
     dispose() {
       cancelAnimationFrame(raf);
-      window.removeEventListener("pointermove", onPointer);
     },
   };
 }
