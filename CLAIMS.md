@@ -36,5 +36,7 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | Dividend rounding never pays more than distributed | `dividend_rounding_never_pays_more_than_distributed` | `make test` | unit |
 | A takeover voids older share asks | `takeover_voids_old_asks` | `make test` | unit |
 | A takeover deletes the old owner's agent keys and freezes spending | `only_tender_sets_owner`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
+| A failed owner push to the firm contract can be retried by anyone | `failed_owner_sync_can_be_retried`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
+| Contracts deploy on protocol 86 (mainnet today) and 88 | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
 | Predictions hash published before the window | not yet: `thesis.ts freeze`, then a mainnet tx | | pending |
 | A third party paid a job on-chain | not yet | | pending |

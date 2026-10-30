@@ -91,6 +91,8 @@ pub struct Firm {
     pub revenue: U128,
     pub dividends: U128,
     pub takeovers: u32,
+    /// False between a takeover and the firm contract confirming its new owner.
+    pub owner_synced: bool,
 }
 
 #[near(serializers = [borsh, json])]
@@ -433,6 +435,7 @@ impl Tender {
             revenue: U128(0),
             dividends: U128(0),
             takeovers: 0,
+            owner_synced: true,
         });
         self.firm_by_account.insert(account.clone(), id);
         emit("firm_registered", json!({"firm_id": id, "account": account, "owner": owner}));
@@ -942,14 +945,43 @@ impl Tender {
         f.status = FirmStatus::Solvent;
         f.epochs_below_floor = 0;
         f.takeovers += 1;
+        f.owner_synced = false;
         emit(
             "liquidated",
             json!({"firm_id": f.id, "buyer_firm_id": buyer_id, "old_owner": old_owner, "new_owner": buyer.owner, "price": price, "fee": U128(fee), "to_shareholders": U128(rest - dust)}),
         );
-        let account = f.account.clone();
+        let id = f.id;
         self.save_firm(f);
-        // The firm contract has no full access key: ownership changes only through this call.
-        ext_firm::ext(account).with_static_gas(GAS_TRANSFER).set_owner(buyer.owner).detach();
+        self.push_owner(id).detach();
+    }
+
+    /// The firm contract has no full access key: ownership changes only through this call.
+    fn push_owner(&self, firm_id: u32) -> Promise {
+        let f = self.firm(firm_id);
+        ext_firm::ext(f.account)
+            .with_static_gas(GAS_TRANSFER)
+            .set_owner(f.owner.clone())
+            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_set_owner(firm_id, f.owner))
+    }
+
+    #[private]
+    pub fn on_set_owner(&mut self, firm_id: u32, owner: AccountId) -> bool {
+        let ok = env::promise_result_checked(0, 1024).is_ok();
+        let mut f = self.firm(firm_id);
+        // A later takeover may have changed the owner again: only confirm the current one.
+        if ok && f.owner == owner {
+            f.owner_synced = true;
+            self.save_firm(f);
+        } else if !ok {
+            emit("owner_sync_failed", json!({"firm_id": firm_id, "owner": owner}));
+        }
+        ok
+    }
+
+    /// Anyone can retry pushing the owner to the firm contract after a failed sync.
+    pub fn sync_owner(&mut self, firm_id: u32) -> Promise {
+        require!(!self.firm(firm_id).owner_synced, "owner already synced");
+        self.push_owner(firm_id)
     }
 
     // ---------------------------------------------------------------- views

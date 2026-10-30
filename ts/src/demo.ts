@@ -31,10 +31,12 @@ const FLOOR = USDC(2);
 
 async function main() {
   section("sandbox");
-  // near-sdk 5.30 wasm imports protocol 2.14 host functions; the package default (2.13.4) rejects them.
-  const sandbox = await Sandbox.start({ version: process.env.SANDBOX_VERSION ?? "2.14.0" });
+  // 2.13.4 runs the protocol mainnet runs today (86): the wasm must deploy there, not only on newer nodes.
+  const sandbox = await Sandbox.start({ version: process.env.SANDBOX_VERSION ?? "2.13.4" });
   const provider = new JsonRpcProvider({ url: sandbox.rpcUrl });
   const root = account(DEFAULT_ACCOUNT_ID, provider, DEFAULT_PRIVATE_KEY as any);
+  const st: any = (await (await fetch(sandbox.rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "status", params: [] }) })).json()).result;
+  console.log(`sandbox ${st.version.version}, protocol ${st.protocol_version}`);
   try {
     const mk = (name: string, near = "20") => createAccount(root, `${name}.${DEFAULT_ACCOUNT_ID}`, near, provider);
     const [usdc, tender, judgeA, client, inference, ...owners] = await Promise.all(
@@ -154,7 +156,8 @@ async function main() {
     check("buyer firm holds 100% of the shares", (await view(provider, T, "mt_balance_of", { account_id: buyer.account, token_id: String(gambler.id) })) === "100");
     await sleep(1500);
     const fs = await view(provider, gambler.account, "get_state");
-    check("firm contract owner changed by tender (no full access key involved)", fs.owner === buyer.owner.accountId);
+    const synced = (await view(provider, T, "get_firm", { firm_id: gambler.id })).owner_synced;
+    check("firm contract owner changed by tender, confirmed by callback", fs.owner === buyer.owner.accountId && synced === true);
     const oldAgent = await rejects(call(gambler.agentFirm, gambler.account, "spend", { receiver_id: inference.acct.accountId, amount: "1" }), "");
     check("old owner's agent keys deleted on takeover", fs.agent_keys.length === 0 && oldAgent !== null, oldAgent ?? "");
     const ev = liq.events.find((e: { event: string }) => e.event === "liquidated")?.data[0];

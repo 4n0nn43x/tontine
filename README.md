@@ -13,7 +13,7 @@ Requirements: Node 22. Rust is only needed to rebuild the contracts.
 
 ```sh
 make deps     # npm ci in ts/
-make demo     # local NEAR sandbox 2.14.0, prebuilt wasm checked against wasm/SHA256SUMS
+make demo     # local NEAR sandbox 2.13.4 (protocol 86, as mainnet), prebuilt wasm checked against wasm/SHA256SUMS
 ```
 
 You see one `PASS` or `FAIL` line per claim and `ALL CHECKS PASS` at the end (exit code 0).
@@ -110,12 +110,12 @@ NEAR: run it yourself. Keys go to `keys/` (gitignored).
 - Not revealing a committed bid costs nothing, so a bidder can still choose to stay out after the commit phase.
 - Anti-shill and own-firm checks look at owner accounts: sybil owners (several funded, bonded accounts) get around them.
 - One bond backs all the jobs of an owner, and a slash is capped at `min(bond, slash)`.
-- `set_owner` on the firm contract is fire-and-forget; if it failed, tender and the firm would disagree on the owner.
+- If `set_owner` fails on the firm contract, the firm shows `owner_synced: false` until anyone calls `sync_owner`.
 
 ## Libraries (Q-005)
 
-near-sdk 5.30.0, near-contract-standards 5.30.0 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4
-(sandbox binary 2.14.0), tsx, TypeScript. Data: DefiLlama, NEARBlocks public APIs. All code written in the
+near-sdk 5.29.1, near-contract-standards 5.29.1 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4
+(sandbox binaries 2.13.4 and 2.14.0), tsx, TypeScript. Data: DefiLlama, NEARBlocks public APIs. All code written in the
 hackathon window, with AI assistance.
 
 ## License

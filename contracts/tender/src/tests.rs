@@ -441,3 +441,35 @@ fn takeover_voids_old_asks() {
     t.as_("client.near", 1);
     t.c.buy_shares(0, acc("o1.near"), 10);
 }
+
+#[test]
+fn failed_owner_sync_can_be_retried() {
+    let mut t = T::new();
+    {
+        let f = t.c.firms.get_mut(2).unwrap();
+        f.owner = acc("o2.near");
+        f.owner_synced = false;
+    }
+    let mut b = VMContextBuilder::new();
+    b.current_account_id(acc("tender.near")).predecessor_account_id(acc("tender.near"));
+    testing_env!(
+        b.build(),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![near_sdk::PromiseResult::Failed]
+    );
+    assert!(!t.c.on_set_owner(2, acc("o2.near")));
+    assert!(!t.c.get_firm(2).owner_synced);
+    t.as_("anyone.near", 0);
+    let _ = t.c.sync_owner(2);
+    testing_env!(
+        b.build(),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![near_sdk::PromiseResult::Successful(vec![])]
+    );
+    assert!(t.c.on_set_owner(2, acc("o2.near")));
+    assert!(t.c.get_firm(2).owner_synced);
+}

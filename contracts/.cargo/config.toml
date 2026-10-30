@@ -1,0 +1,3 @@
+# near-sdk needs `--cfg near` on wasm, or contract panics lose their message (cargo-near sets the same flags).
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "near", "-C", "link-arg=-s"]

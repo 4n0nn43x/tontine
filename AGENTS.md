@@ -23,7 +23,10 @@ Every README claim maps to a test or a demo check in `CLAIMS.md`.
 
 ## Rules
 
-- Build wasm with `RUSTFLAGS='--cfg near -C link-arg=-s'` (the Makefile does it). Without `--cfg near`,
-  near-sdk 5.30 turns contract panics into a bare `unreachable` trap.
-- near-sdk 5.30 wasm imports protocol 2.14 host functions: the sandbox must be 2.14.0 or later.
+- Wasm flags live in `contracts/.cargo/config.toml` (`--cfg near -C link-arg=-s`), so a plain
+  `cargo build --target wasm32-unknown-unknown --release` is enough. Without `--cfg near`, near-sdk turns
+  contract panics into a bare `unreachable` trap.
+- near-sdk is pinned to 5.29.1: 5.30 targets protocol 88 and its wasm is refused by protocol 86, which
+  mainnet still runs (checked 2026-10-30). `make demo` runs sandbox 2.13.4 (protocol 86) for that reason;
+  `SANDBOX_VERSION=2.14.0 make demo` checks protocol 88.
 - Never commit keys (`keys/`, `.env`). `network.ts` signs real transactions: a human runs it.
