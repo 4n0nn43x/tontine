@@ -155,6 +155,8 @@ async function main() {
     await sleep(1500);
     const fs = await view(provider, gambler.account, "get_state");
     check("firm contract owner changed by tender (no full access key involved)", fs.owner === buyer.owner.accountId);
+    const oldAgent = await rejects(call(gambler.agentFirm, gambler.account, "spend", { receiver_id: inference.acct.accountId, amount: "1" }), "");
+    check("old owner's agent keys deleted on takeover", fs.agent_keys.length === 0 && oldAgent !== null, oldAgent ?? "");
     const ev = liq.events.find((e: { event: string }) => e.event === "liquidated")?.data[0];
     const toHolders = BigInt(ev?.to_shareholders ?? 0);
     const oldOwnerGain = BigInt(await view(provider, T, "balance_of", { account_id: oldOwner })) - oldOwnerBal;

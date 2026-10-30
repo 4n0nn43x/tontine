@@ -312,7 +312,7 @@ fn deposit_msg_posts_job() {
 #[test]
 fn share_market_buy() {
     let mut t = T::new();
-    t.as_("o1.near", 0);
+    t.as_("o1.near", 1);
     t.c.list_shares(0, 10, U128(USDC));
     t.as_("client.near", 1);
     t.c.buy_shares(0, acc("o1.near"), 10);
@@ -343,4 +343,101 @@ fn bid_hash_vector() {
     ctx("a.near", 0, 0);
     // Same vector is asserted in ts/src/swarm.test.ts: the off-chain commit must match the contract.
     assert_eq!(bid_hash(6_000_000, "s0"), "bb0041d21898d7bb4e1c67959ec2beaa5e433ead7084e524f13dfc179744f9fd");
+}
+
+// ---- regressions from the security review
+
+fn won_job(t: &mut T, firm: u32, owner: &str) -> u64 {
+    let (job, a) = t.post(10 * USDC);
+    t.bid(a, firm, owner, 7 * USDC);
+    t.wait(2);
+    t.reveal(a, firm, owner, 7 * USDC);
+    t.wait(2);
+    t.c.settle(a);
+    job
+}
+
+#[test]
+#[should_panic(expected = "deliver_secs out of range")]
+fn huge_deliver_secs_refused() {
+    let mut t = T::new();
+    t.as_("client.near", 1);
+    t.c.post_job(PostJob { budget: U128(1), brief: "x".into(), commit_secs: 2, reveal_secs: 2, deliver_secs: 20_000_000_000 });
+}
+
+#[test]
+#[should_panic(expected = "firm in liquidation")]
+fn no_loans_to_a_firm_in_liquidation() {
+    let mut t = T::new();
+    t.c.firms.get_mut(2).unwrap().status = FirmStatus::Liquidating;
+    t.as_("lender.near", 1);
+    t.c.lend(2, U128(USDC));
+}
+
+#[test]
+fn lock_and_slash_follow_the_owner_who_bid() {
+    let mut t = T::new();
+    let job = won_job(&mut t, 2, "o3.near");
+    assert_eq!(t.c.get_job(job).winner_owner, Some(acc("o3.near")));
+    // The firm is sold to o2 before the job resolves.
+    t.c.firms.get_mut(2).unwrap().owner = acc("o2.near");
+    t.wait(61);
+    t.c.expire(job);
+    assert_eq!(t.c.bond_of(acc("o3.near")).0, 5 * USDC, "slash hits the owner who bid");
+    assert_eq!(t.c.bond_of(acc("o2.near")).0, 10 * USDC, "new owner untouched");
+    t.as_("o3.near", 1);
+    t.c.withdraw_bond(U128(5 * USDC)); // lock released on the right owner
+}
+
+#[test]
+fn delivered_job_without_verdict_times_out_without_slash() {
+    let mut t = T::new();
+    let job = won_job(&mut t, 0, "o1.near");
+    t.as_("w1.tender.near", 0);
+    t.c.deliver(job, "work".into());
+    t.wait(60 + JUDGE_TIMEOUT_SECS + 1);
+    t.c.expire(job);
+    assert_eq!(t.c.get_job(job).status, JobStatus::Cancelled);
+    assert_eq!(t.bal("client.near"), 100 * USDC);
+    assert_eq!(t.c.bond_of(acc("o1.near")).0, 10 * USDC);
+}
+
+#[test]
+#[should_panic(expected = "firm already bid")]
+fn one_bid_per_firm_even_after_a_sale() {
+    let mut t = T::new();
+    let (_, a) = t.post(10 * USDC);
+    t.bid(a, 2, "o3.near", 6 * USDC);
+    t.c.firms.get_mut(2).unwrap().owner = acc("o2.near");
+    t.bid(a, 2, "o2.near", 5 * USDC);
+}
+
+#[test]
+fn dividend_rounding_never_pays_more_than_distributed() {
+    let mut t = T::new();
+    let mut f = t.c.firm(0);
+    Tender::distribute(&mut f, 1);
+    t.c.save_firm(f);
+    let before = t.bal("o1.near") + t.bal("x.near");
+    t.as_("o1.near", 1);
+    t.c.mt_transfer(acc("x.near"), "0".into(), U128(50), None, None);
+    let mut f = t.c.firm(0);
+    Tender::distribute(&mut f, 1);
+    t.c.save_firm(f);
+    for who in ["o1.near", "x.near"] {
+        t.as_(who, 1);
+        t.c.claim_dividends(0);
+    }
+    assert!(t.bal("o1.near") + t.bal("x.near") - before <= 2, "paid at most the 2 units distributed");
+}
+
+#[test]
+#[should_panic(expected = "ask voided by a takeover")]
+fn takeover_voids_old_asks() {
+    let mut t = T::new();
+    t.as_("o1.near", 1);
+    t.c.list_shares(0, 10, U128(USDC));
+    t.c.firms.get_mut(0).unwrap().takeovers += 1;
+    t.as_("client.near", 1);
+    t.c.buy_shares(0, acc("o1.near"), 10);
 }

@@ -53,7 +53,14 @@ export async function createFirm(opts: {
       actions.deployContract(wasm("firm")),
       actions.functionCall(
         "new",
-        { tender: tenderAcct.accountId, owner: owner.accountId, budget: opts.budget.toString(), max_per_call: opts.maxPerCall.toString(), epoch_secs: opts.budgetEpochSecs },
+        {
+          tender: tenderAcct.accountId,
+          owner: owner.accountId,
+          budget: opts.budget.toString(),
+          max_per_call: opts.maxPerCall.toString(),
+          epoch_secs: opts.budgetEpochSecs,
+          agent_keys: [kTender.getPublicKey().toString(), kFirm.getPublicKey().toString()],
+        },
         TGAS(50),
         0n,
       ),

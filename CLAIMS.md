@@ -28,5 +28,13 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | Judge never accepts an empty deliverable | `judge never accepts an empty deliverable` | `make test` | unit |
 | Buyback multiple 4.9x at 2.5% emission | `thesis multiple reproduces the spec figure`, `thesis/result.json` | `make thesis` | measured (public data, snapshot 2026-10-30) |
 | Take rate 12-day blocks 1.95-3.02 bp (Jul-Aug), 3.89-5.58 bp since 2026-09-11 | `thesis/index.html` | `make thesis` | measured (public data) |
+| Phases and deadlines capped at 30 days (no overflow can freeze `settle`) | `huge_deliver_secs_refused` | `make test` | unit |
+| No loans to a firm in liquidation | `no_loans_to_a_firm_in_liquidation` | `make test` | unit |
+| Bond lock and slash follow the owner who bid, even after a sale | `lock_and_slash_follow_the_owner_who_bid` | `make test` | unit |
+| Delivered job without a verdict is cancelled after 3 days, no slash | `delivered_job_without_verdict_times_out_without_slash` | `make test` | unit |
+| One bid per firm per auction | `one_bid_per_firm_even_after_a_sale` | `make test` | unit |
+| Dividend rounding never pays more than distributed | `dividend_rounding_never_pays_more_than_distributed` | `make test` | unit |
+| A takeover voids older share asks | `takeover_voids_old_asks` | `make test` | unit |
+| A takeover deletes the old owner's agent keys and freezes spending | `only_tender_sets_owner`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
 | Predictions hash published before the window | not yet: `thesis.ts freeze`, then a mainnet tx | | pending |
 | A third party paid a job on-chain | not yet | | pending |

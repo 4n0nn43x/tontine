@@ -107,6 +107,10 @@ NEAR: run it yourself. Keys go to `keys/` (gitignored).
   intents `mt_transfer` path is covered by unit tests, not yet by a sandbox run against the defuse wasm.
 - Storage is paid by `tender`; spam is bounded by the bond requirement on bidding only.
 - `epoch_tick` iterates every firm (fine for tens of firms).
+- Not revealing a committed bid costs nothing, so a bidder can still choose to stay out after the commit phase.
+- Anti-shill and own-firm checks look at owner accounts: sybil owners (several funded, bonded accounts) get around them.
+- One bond backs all the jobs of an owner, and a slash is capped at `min(bond, slash)`.
+- `set_owner` on the firm contract is fire-and-forget; if it failed, tender and the firm would disagree on the owner.
 
 ## Libraries (Q-005)
 

@@ -23,6 +23,10 @@ const GAS_TRANSFER: Gas = Gas::from_tgas(15);
 const GAS_CALLBACK: Gas = Gas::from_tgas(10);
 const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 const SEC: u64 = 1_000_000_000;
+/// Upper bound on any phase or deadline, so `now + secs * SEC` can never overflow.
+const MAX_PHASE_SECS: u64 = 30 * 86_400;
+/// After this long without a verdict, anyone can cancel a delivered job (judge outage, no slash).
+const JUDGE_TIMEOUT_SECS: u64 = 3 * 86_400;
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
@@ -64,7 +68,7 @@ pub enum FirmStatus {
 pub struct Holding {
     pub account: AccountId,
     pub shares: u32,
-    /// shares * acc_per_share / PREC at the last settlement.
+    /// shares * acc_per_share (full precision, not divided by PREC) already paid or forfeited.
     pub debt: U128,
 }
 
@@ -86,6 +90,7 @@ pub struct Firm {
     pub slashed: U128,
     pub revenue: U128,
     pub dividends: U128,
+    pub takeovers: u32,
 }
 
 #[near(serializers = [borsh, json])]
@@ -145,6 +150,8 @@ pub struct Job {
     pub deadline: Option<u64>,
     pub result: Option<String>,
     pub attestation: Option<String>,
+    /// Owner of the winning firm when it bid: its lock and bond back this job, even if the firm is sold.
+    pub winner_owner: Option<AccountId>,
 }
 
 #[near(serializers = [json])]
@@ -169,6 +176,8 @@ pub enum DepositAction {
 pub struct Ask {
     pub amount: u32,
     pub price_per_share: U128,
+    /// Firm takeover count when listed: a takeover voids older asks.
+    pub takeover: u32,
 }
 
 #[derive(BorshStorageKey)]
@@ -423,6 +432,7 @@ impl Tender {
             slashed: U128(0),
             revenue: U128(0),
             dividends: U128(0),
+            takeovers: 0,
         });
         self.firm_by_account.insert(account.clone(), id);
         emit("firm_registered", json!({"firm_id": id, "account": account, "owner": owner}));
@@ -442,9 +452,9 @@ impl Tender {
     /// Pay a holding its accrued dividends into the ledger.
     fn settle_holding(&mut self, f: &mut Firm, i: usize) {
         let h = &mut f.holdings[i];
-        let accrued = h.shares as u128 * f.acc_per_share.0 / PREC;
-        let owed = accrued - h.debt.0;
-        h.debt = U128(accrued);
+        let owed = (h.shares as u128 * f.acc_per_share.0 - h.debt.0) / PREC;
+        // Keep the sub-unit remainder: debt advances only by what is paid, so rounding never pays twice.
+        h.debt = U128(h.debt.0 + owed * PREC);
         if owed > 0 {
             let who = h.account.clone();
             self.credit(&who, owed);
@@ -479,7 +489,8 @@ impl Tender {
         f.holdings[j].shares += amount;
         let acc = f.acc_per_share.0;
         for k in [i, j] {
-            f.holdings[k].debt = U128(f.holdings[k].shares as u128 * acc / PREC);
+            // Forfeits a remainder below one base unit: never pays more than was distributed.
+            f.holdings[k].debt = U128(f.holdings[k].shares as u128 * acc);
         }
         f.holdings.retain(|h| h.shares > 0);
         emit_mt(
@@ -520,12 +531,15 @@ impl Tender {
     }
 
     /// Offer shares for sale at a fixed price (USDC base units per share).
+    #[payable]
     pub fn list_shares(&mut self, firm_id: u32, amount: u32, price_per_share: U128) {
+        near_sdk::assert_one_yocto();
+        require!(amount > 0 && price_per_share.0 > 0, "amount and price must be > 0");
         let me = env::predecessor_account_id();
         let f = self.firm(firm_id);
         let held = f.holdings.iter().find(|h| h.account == me).map(|h| h.shares).unwrap_or(0);
         require!(held >= amount, "insufficient shares");
-        self.asks.insert(format!("{firm_id}:{me}"), Ask { amount, price_per_share });
+        self.asks.insert(format!("{firm_id}:{me}"), Ask { amount, price_per_share, takeover: f.takeovers });
         emit("shares_listed", json!({"firm_id": firm_id, "seller": me, "amount": amount, "price_per_share": price_per_share}));
     }
 
@@ -541,6 +555,7 @@ impl Tender {
         self.credit(&seller, cost);
         let mut f = self.firm(firm_id);
         require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
+        require!(ask.takeover == f.takeovers, "ask voided by a takeover");
         self.move_shares(&mut f, &seller, &me, amount);
         self.save_firm(f);
         ask.amount -= amount;
@@ -558,6 +573,8 @@ impl Tender {
         near_sdk::assert_one_yocto();
         let me = env::predecessor_account_id();
         let mut f = self.firm(firm_id);
+        // A loan during the sale would be repaid ahead of shareholders out of the buyer's own price.
+        require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
         self.debit(&me, amount.0);
         self.credit(&f.account, amount.0);
         f.debts.push((me.clone(), amount));
@@ -598,6 +615,7 @@ impl Tender {
 
     fn new_auction(&mut self, kind: AuctionKind, reverse: bool, reserve: u128, commit_secs: u64, reveal_secs: u64) -> u64 {
         require!(commit_secs > 0 && reveal_secs > 0, "phases must be > 0");
+        require!(commit_secs <= MAX_PHASE_SECS && reveal_secs <= MAX_PHASE_SECS, "phase too long");
         let commit_end = now() + commit_secs * SEC;
         let id = self.auctions.len() as u64;
         self.auctions.push(Auction {
@@ -635,6 +653,7 @@ impl Tender {
         require!(now() < a.commit_end, "commit phase over");
         require!(self.bonds.get(&f.owner).copied().unwrap_or(0) >= self.config.min_bond.0, "owner bond too low");
         require!(!a.bids.iter().any(|b| b.owner == f.owner), "one bid per owner (anti-shill)");
+        require!(!a.bids.iter().any(|b| b.firm_id == firm_id), "firm already bid");
         if let AuctionKind::Liquidation(target) = a.kind {
             require!(target != firm_id && self.firm(target).owner != f.owner, "cannot bid on own firm");
         }
@@ -658,6 +677,7 @@ impl Tender {
             require!(amount.0 >= a.reserve.0, "bid below reserve");
             // A buyer escrows its bid from the firm treasury; only the owner may commit firm money to a takeover.
             require!(env::predecessor_account_id() == f.owner, "owner only for takeover bids");
+            require!(f.status != FirmStatus::Liquidating, "firm in liquidation");
             self.debit(&f.account, amount.0);
         }
         a.bids[i].revealed = Some(amount);
@@ -705,7 +725,10 @@ impl Tender {
         self.auctions.replace(auction_id as u32, a.clone());
         emit("auction_settled", json!({"auction_id": auction_id, "winner": a.winner, "price": a.price}));
         match kind {
-            AuctionKind::Job(job_id) => self.on_job_auction(job_id, a.winner, a.price),
+            AuctionKind::Job(job_id) => {
+                let owner = winner_idx.map(|i| a.bids[i].owner.clone());
+                self.on_job_auction(job_id, owner, a.price)
+            }
             AuctionKind::Liquidation(firm_id) => self.on_liquidation_auction(firm_id, a.winner, a.price),
         }
     }
@@ -721,7 +744,7 @@ impl Tender {
     fn post_job_from(&mut self, client: AccountId, p: PostJob) -> u64 {
         require!(p.budget.0 > 0, "budget must be > 0");
         require!(p.brief.len() <= 2000, "brief too long");
-        require!(p.deliver_secs > 0, "deliver_secs must be > 0");
+        require!(p.deliver_secs > 0 && p.deliver_secs <= MAX_PHASE_SECS, "deliver_secs out of range");
         self.debit(&client, p.budget.0);
         let id = self.jobs.len() as u64;
         let auction = self.new_auction(AuctionKind::Job(id), true, p.budget.0, p.commit_secs, p.reveal_secs);
@@ -736,6 +759,7 @@ impl Tender {
             deadline: None,
             result: None,
             attestation: None,
+            winner_owner: None,
         });
         emit("job_posted", json!({"job_id": id, "client": client, "budget": p.budget, "brief": p.brief, "auction_id": auction}));
         id
@@ -745,10 +769,11 @@ impl Tender {
         self.jobs.get(id as u32).cloned().unwrap_or_else(|| env::panic_str("no job"))
     }
 
-    fn on_job_auction(&mut self, job_id: u64, winner: Option<u32>, price: Option<U128>) {
+    fn on_job_auction(&mut self, job_id: u64, winner_owner: Option<AccountId>, price: Option<U128>) {
         let mut j = self.job(job_id);
-        match (winner, price) {
-            (Some(_), Some(p)) => {
+        match (winner_owner, price) {
+            (Some(o), Some(p)) => {
+                j.winner_owner = Some(o);
                 self.credit(&j.client, j.budget.0 - p.0);
                 j.status = JobStatus::Assigned;
                 j.deadline = Some(now() + j.deliver_secs * SEC);
@@ -794,11 +819,22 @@ impl Tender {
         self.jobs.replace(job_id as u32, j);
     }
 
-    /// Anyone can expire an assigned job whose deadline passed without delivery.
+    /// Anyone can expire a job: undelivered after its deadline (rejected, slashed), or delivered with
+    /// no verdict for JUDGE_TIMEOUT_SECS after the deadline (cancelled, client refunded, no slash).
     pub fn expire(&mut self, job_id: u64) {
         let mut j = self.job(job_id);
-        require!(j.status == JobStatus::Assigned && now() > j.deadline.unwrap(), "not expired");
-        self.reject(&mut j);
+        let deadline = j.deadline.unwrap_or(u64::MAX);
+        if j.status == JobStatus::Assigned && now() > deadline {
+            self.reject(&mut j);
+        } else if j.status == JobStatus::Delivered && now() > deadline + JUDGE_TIMEOUT_SECS * SEC {
+            let (_, price) = self.winner_of(&j);
+            self.credit(&j.client, price);
+            self.lock(&j.winner_owner.clone().unwrap(), false);
+            j.status = JobStatus::Cancelled;
+            emit("verdict_timeout", json!({"job_id": j.id, "refund": U128(price)}));
+        } else {
+            env::panic_str("not expired");
+        }
         self.jobs.replace(job_id as u32, j);
     }
 
@@ -811,7 +847,7 @@ impl Tender {
         f.delivered += 1;
         f.revenue = U128(f.revenue.0 + price);
         f.dividends = U128(f.dividends.0 + div - dust);
-        self.lock(&f.owner.clone(), false);
+        self.lock(&j.winner_owner.clone().unwrap(), false);
         emit("paid", json!({"job_id": j.id, "firm_id": f.id, "price": U128(price), "to_firm": U128(to_firm), "dividends": U128(div - dust)}));
         self.save_firm(f);
         j.status = JobStatus::Paid;
@@ -819,15 +855,16 @@ impl Tender {
 
     fn reject(&mut self, j: &mut Job) {
         let (mut f, price) = self.winner_of(j);
+        let owner = j.winner_owner.clone().unwrap();
         self.credit(&j.client, price);
-        let bond = self.bonds.get(&f.owner).copied().unwrap_or(0);
+        let bond = self.bonds.get(&owner).copied().unwrap_or(0);
         let slash = bond.min(self.config.slash.0);
-        self.bonds.insert(f.owner.clone(), bond - slash);
+        self.bonds.insert(owner.clone(), bond - slash);
         self.credit(&j.client, slash);
         f.rejected += 1;
         f.slashed = U128(f.slashed.0 + slash);
-        self.lock(&f.owner.clone(), false);
-        emit("slashed", json!({"job_id": j.id, "firm_id": f.id, "owner": f.owner, "amount": U128(slash), "refund": U128(price)}));
+        self.lock(&owner, false);
+        emit("slashed", json!({"job_id": j.id, "firm_id": f.id, "owner": owner, "amount": U128(slash), "refund": U128(price)}));
         self.save_firm(f);
         j.status = JobStatus::Rejected;
     }
@@ -899,11 +936,12 @@ impl Tender {
             );
         }
         let acc = f.acc_per_share.0;
-        f.holdings = vec![Holding { account: buyer.account.clone(), shares: SHARES, debt: U128(SHARES as u128 * acc / PREC) }];
+        f.holdings = vec![Holding { account: buyer.account.clone(), shares: SHARES, debt: U128(SHARES as u128 * acc) }];
         f.debts.clear();
         let old_owner = std::mem::replace(&mut f.owner, buyer.owner.clone());
         f.status = FirmStatus::Solvent;
         f.epochs_below_floor = 0;
+        f.takeovers += 1;
         emit(
             "liquidated",
             json!({"firm_id": f.id, "buyer_firm_id": buyer_id, "old_owner": old_owner, "new_owner": buyer.owner, "price": price, "fee": U128(fee), "to_shareholders": U128(rest - dust)}),
@@ -952,7 +990,7 @@ impl Tender {
     }
     pub fn pending_dividends(&self, firm_id: u32, account_id: AccountId) -> U128 {
         let f = self.firm(firm_id);
-        U128(f.holdings.iter().find(|h| h.account == account_id).map_or(0, |h| h.shares as u128 * f.acc_per_share.0 / PREC - h.debt.0))
+        U128(f.holdings.iter().find(|h| h.account == account_id).map_or(0, |h| (h.shares as u128 * f.acc_per_share.0 - h.debt.0) / PREC))
     }
     pub fn hash_bid(&self, amount: U128, salt: String) -> String {
         bid_hash(amount.0, &salt)

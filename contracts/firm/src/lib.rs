@@ -6,9 +6,11 @@
 
 use near_sdk::json_types::U128;
 use near_sdk::serde_json::json;
-use near_sdk::{env, ext_contract, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise};
+use near_sdk::{env, ext_contract, near, require, AccountId, Allowance, Gas, NearToken, PanicOnDefault, Promise, PublicKey};
 
 const SEC: u64 = 1_000_000_000;
+/// Methods an agent key may call on tender (none takes a deposit). Mirrors ts/src/deploy.ts.
+const AGENT_TENDER_METHODS: &str = "commit_bid,reveal_bid,deliver,settle,epoch_tick,expire";
 
 #[ext_contract(ext_tender)]
 #[allow(dead_code)]
@@ -27,6 +29,8 @@ pub struct Firm {
     spent: U128,
     epoch_secs: u64,
     epoch_start: u64,
+    /// Function call keys of the current owner's agent, deleted when the firm changes hands.
+    agent_keys: Vec<PublicKey>,
 }
 
 #[near(serializers = [json])]
@@ -38,6 +42,7 @@ pub struct FirmView {
     pub spent: U128,
     pub epoch_secs: u64,
     pub epoch_start: u64,
+    pub agent_keys: Vec<PublicKey>,
 }
 
 fn emit(event: &str, data: near_sdk::serde_json::Value) {
@@ -50,9 +55,9 @@ fn emit(event: &str, data: near_sdk::serde_json::Value) {
 #[near]
 impl Firm {
     #[init]
-    pub fn new(tender: AccountId, owner: AccountId, budget: U128, max_per_call: U128, epoch_secs: u64) -> Self {
+    pub fn new(tender: AccountId, owner: AccountId, budget: U128, max_per_call: U128, epoch_secs: u64, agent_keys: Vec<PublicKey>) -> Self {
         require!(epoch_secs > 0, "epoch_secs must be > 0");
-        Self { tender, owner, budget, max_per_call, spent: U128(0), epoch_secs, epoch_start: env::block_timestamp() }
+        Self { tender, owner, budget, max_per_call, spent: U128(0), epoch_secs, epoch_start: env::block_timestamp(), agent_keys }
     }
 
     /// Pay `amount` from the firm's tender ledger balance to `receiver_id` (e.g. an inference provider).
@@ -93,11 +98,29 @@ impl Firm {
         emit("budget_set", json!({"budget": budget, "max_per_call": max_per_call}));
     }
 
-    /// Only the tender contract changes the owner (liquidation buyer).
+    /// Only the tender contract changes the owner (liquidation buyer). The old owner's agent keys are
+    /// deleted, and spending stops until the new owner sets a budget and adds its own keys.
     pub fn set_owner(&mut self, owner: AccountId) {
         require!(env::predecessor_account_id() == self.tender, "tender only");
         emit("owner_set", json!({"old": self.owner, "new": owner}));
         self.owner = owner;
+        self.budget = U128(0);
+        let mut p = Promise::new(env::current_account_id());
+        for k in std::mem::take(&mut self.agent_keys) {
+            p = p.delete_key(k);
+        }
+        p.detach();
+    }
+
+    /// Owner adds a function call key for its agent: on tender (bidding) or on this contract (`spend`).
+    pub fn add_agent_key(&mut self, public_key: PublicKey, on_tender: bool) {
+        require!(env::predecessor_account_id() == self.owner, "owner only");
+        let (receiver, methods) =
+            if on_tender { (self.tender.clone(), AGENT_TENDER_METHODS) } else { (env::current_account_id(), "spend") };
+        self.agent_keys.push(public_key.clone());
+        Promise::new(env::current_account_id())
+            .add_access_key_allowance(public_key, Allowance::unlimited(), receiver, methods)
+            .detach();
     }
 
     pub fn get_state(&self) -> FirmView {
@@ -109,6 +132,7 @@ impl Firm {
             spent: self.spent,
             epoch_secs: self.epoch_secs,
             epoch_start: self.epoch_start,
+            agent_keys: self.agent_keys.clone(),
         }
     }
 }
@@ -120,6 +144,8 @@ mod tests {
     use near_sdk::{testing_env, PromiseResult, RuntimeFeesConfig};
     use near_sdk::test_vm_config;
 
+    const KEY: &str = "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp";
+
     fn ctx(pred: &str) -> VMContextBuilder {
         let mut c = VMContextBuilder::new();
         c.current_account_id("w1.tender.near".parse().unwrap()).predecessor_account_id(pred.parse().unwrap());
@@ -128,7 +154,7 @@ mod tests {
 
     fn firm() -> Firm {
         testing_env!(ctx("tender.near").build());
-        Firm::new("tender.near".parse().unwrap(), "alice.near".parse().unwrap(), U128(20_000_000), U128(20_000_000), 3600)
+        Firm::new("tender.near".parse().unwrap(), "alice.near".parse().unwrap(), U128(20_000_000), U128(20_000_000), 3600, vec![KEY.parse().unwrap()])
     }
 
     #[test]
@@ -177,7 +203,10 @@ mod tests {
         let mut f = firm();
         testing_env!(ctx("tender.near").build());
         f.set_owner("bob.near".parse().unwrap());
-        assert_eq!(f.get_state().owner.as_str(), "bob.near");
+        let st = f.get_state();
+        assert_eq!(st.owner.as_str(), "bob.near");
+        assert!(st.agent_keys.is_empty(), "old agent keys deleted");
+        assert_eq!(st.budget.0, 0, "spending frozen until the new owner sets a budget");
         testing_env!(ctx("alice.near").build());
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.set_owner("alice.near".parse().unwrap())));
         assert!(r.is_err());
