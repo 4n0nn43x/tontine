@@ -19,4 +19,5 @@ jobs:
       # rebuild here would not match it. Check the committed files, then run the demo on them.
       - run: make verify-wasm
       - run: make demo
+      - run: make sim
       - run: make thesis
