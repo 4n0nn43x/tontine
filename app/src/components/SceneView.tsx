@@ -8,6 +8,10 @@ export type SceneApi = {
   setExplore(on: boolean): void;
   setPaused(paused: boolean): void;
   dispose(): void;
+  /** Live city only (scene/city.js). */
+  setFirms(list: { id: number; name: string; nav: number; fills: number; status: string; takeovers: number }[], market?: { price?: number }): void;
+  pick(clientX: number, clientY: number): { id: number; name: string } | null;
+  setParallax(v: number): void;
 };
 
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;

@@ -13,6 +13,7 @@ import { Trade } from "./pages/Trade";
 import { Firms, FirmDetail } from "./pages/Firms";
 import { Portfolio } from "./pages/Portfolio";
 import { Thesis } from "./pages/Thesis";
+import { City } from "./pages/City";
 import { NotFound } from "./pages/NotFound";
 
 createRoot(document.getElementById("root")!).render(
@@ -20,6 +21,7 @@ createRoot(document.getElementById("root")!).render(
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/city" element={<City />} />
         <Route element={<AppShell />}>
           <Route path="/app" element={<Dashboard />} />
           <Route path="/app/orders" element={<Orders />} />

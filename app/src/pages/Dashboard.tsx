@@ -1,12 +1,12 @@
-import { useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { LineChart, type Series } from "../components/Chart";
 import { SceneView, type SceneApi } from "../components/SceneView";
 import { Badge, Card, Countdown, Empty, EventFeed, FirmChip, Kpi } from "../components/ui";
 import { nameOf, type AppState, type ChainEvent, type OrderState } from "../lib/api";
 import { bpText, gotText, near, paidText, usdc } from "../lib/format";
 import { useAppState, useChainNow, useConfig, useEvents, useFirmName, useStats } from "../lib/hooks";
-import { liveDriver } from "../lib/live";
+import { cityFirms, cityMarket, liveDriver } from "../lib/live";
 
 export const PHASES = ["Order", "Sealed", "Revealed", "Filled", "Slashed", "Liquidating", "Acquired"];
 
@@ -55,7 +55,15 @@ export function Dashboard() {
   const [phase, setPhase] = useState(-1);
   const events = useEvents(500, (e) => driver.current?.(e));
   const now = useChainNow(state);
-  const firmNames = useMemo(() => state?.firms.map((f) => nameOf(f)) ?? null, [state?.firms.length]);
+  // The city is built once from the first firm list; later firms are founded in it (setFirms), not rebuilt.
+  const firmNames = useMemo(() => state?.firms.map((f) => nameOf(f)) ?? null, [state === null]);
+  const latest = useRef(state);
+  latest.current = state;
+  useEffect(() => {
+    if (state) scene.current?.setFirms(cityFirms(state), cityMarket(state));
+  }, [state]);
+  const navigate = useNavigate();
+  const [pointer, setPointer] = useState(false);
   // Recompute the chart only when an order event arrives or the reference moves, so a zoom survives the polls.
   const lastOrderEvent = events.reduce((k, e) => (e.event === "order_filled" || e.event === "order_posted" ? e.id : k), 0);
   const series = useMemo(() => priceSeries(events, state), [lastOrderEvent, state?.reference.at]);
@@ -93,21 +101,39 @@ export function Dashboard() {
               <span className="live-dot" aria-hidden="true" /> The swarm, live
             </>
           }
-          action={<PhaseStrip phase={phase} />}
+          action={
+            <div className="arena-actions">
+              <PhaseStrip phase={phase} />
+              <a className="btn small" href="/city" target="_blank" rel="noopener" title="Open the city full screen in a new tab">
+                <i className="fa-solid fa-up-right-from-square" aria-hidden="true" /> Full screen
+              </a>
+            </div>
+          }
         >
-          <SceneView
-            mode="live"
-            className="arena"
-            firmNames={firmNames}
-            onReady={(api) => {
-              scene.current = api;
-              api.setExplore(true);
-              driver.current = liveDriver(api, firmName);
+          <div
+            className={`arena-hit ${pointer ? "pointer" : ""}`}
+            onClick={(e) => {
+              const hit = scene.current?.pick(e.clientX, e.clientY);
+              if (hit) navigate(`/app/firms/${hit.id}`);
             }}
-            onPhase={setPhase}
-            fallback={<Empty>The city view needs a canvas. The figures and the feed below are live anyway.</Empty>}
-          />
-          <p className="caption">Each building is a firm. An order is the airship: sealed bids fly to it, the winner lights up, coins carry the fill and the dividends to its shareholders. A firm in liquidation goes dark until a rival buys it and repaints it in its colours.</p>
+            onMouseMove={(e) => setPointer(!!scene.current?.pick(e.clientX, e.clientY))}
+          >
+            <SceneView
+              mode="live"
+              className="arena"
+              firmNames={firmNames}
+              onReady={(api) => {
+                scene.current = api;
+                api.setExplore(true);
+                // Names come from the latest state: firms founded after the city was built keep theirs.
+                driver.current = liveDriver(api, (id) => nameOf(latest.current?.firms.find((x) => x.id === id), id));
+                if (latest.current) api.setFirms(cityFirms(latest.current), cityMarket(latest.current));
+              }}
+              onPhase={setPhase}
+              fallback={<Empty>The city view needs a canvas. The figures and the feed below are live anyway.</Empty>}
+            />
+          </div>
+          <p className="caption">Each tower is a firm: it grows with its fills and value, goes dark when for sale, moves next to its buyer, falls when wound up. Click one to open it.</p>
         </Card>
 
         <Card title="Live feed" className="feed-card">

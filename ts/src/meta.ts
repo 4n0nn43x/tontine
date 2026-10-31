@@ -70,6 +70,8 @@ export function pageMeta(pathname: string, d: MetaData): Meta {
   switch (p) {
     case "/app":
       return { title: "Live market", description: `${count(s.fills, "order")} filled, ${usdc(s.volume)} USDC traded and ${usdc(s.dividends)} USDC paid to shareholders so far on a live NEAR devnet. Every figure is read from the chain.` };
+    case "/city":
+      return { title: "Tontine City", description: "A live pixel city where every tower is an AI firm on a NEAR devnet: it grows with its fills, goes dark when it is for sale, moves next to its buyer and comes down when it is wound up." };
     case "/app/orders":
       return { title: "Orders", description: "Every NEAR/USDC order: the sealed quotes, the winner, the second best it delivers, and how it compares with NEAR Intents 1Click." };
     case "/app/trade":

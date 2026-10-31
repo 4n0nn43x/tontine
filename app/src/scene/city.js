@@ -57,10 +57,12 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   let exploreTarget = 0;
   let calm = null; // copy box in CSS pixels, towers stay below it
 
+  const live = mode === "live";
   const names = firmNames ?? FIRMS.map((f) => f.name);
-  const firms = names.map((name, i) => {
+  function makeFirm(name, i) {
     const def = FIRMS.find((f) => f.name === name) ?? EXTRA_SLOTS[i % EXTRA_SLOTS.length];
     const r = rng(i * 7919 + name.length * 31);
+    const look = rng(i * 104729 + name.length * 17); // live-only shape, so the replay's seed stays as it was
     return {
       name,
       index: i,
@@ -80,8 +82,32 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       owner: null,
       box: null,
       roofStyle: Math.floor(r() * 3),
+      // Live city only: chain id, lot on the street, floors grown from value and fills, life stage.
+      id: null,
+      lot: i,
+      x: null,
+      tx: 0,
+      w: 10,
+      cols: 2,
+      hFrac: 0.3 + 0.35 * look(),
+      wFrac: 0.62 + 0.25 * look(),
+      floors: 0,
+      floorsTarget: 0,
+      growT: 0,
+      nav: null,
+      nav0: null,
+      fills: 0,
+      bonus: 0, // floors gained by absorbing a rival
+      phase: "standing", // standing | collapsing | rubble | gone
+      sink: 0,
+      sinkV: 0,
+      brand: null, // the buyer's name after a takeover
+      exName: null,
+      closeDue: null,
+      building: false, // a new firm: built from the ground with a crane
     };
-  });
+  }
+  const firms = names.map(makeFirm);
   const byName = new Map(firms.map((f) => [f.name, f]));
 
   const job = { on: 0, target: 0, x: -0.2, tx: 0.5, label: "", id: null };
@@ -108,7 +134,8 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     art.height = H;
     back.width = W;
     back.height = H;
-    for (const f of firms) placeTower(f, px);
+    if (live) liveLayout();
+    else for (const f of firms) placeTower(f, px);
     buildSkyline();
     drawBack();
   }
@@ -133,6 +160,65 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     }
     f.box = { x, w, h, top: G - h, cols, rows };
   }
+
+  // ------------------------------------------------------------------ live city: lots, floors, life stages
+
+  // The street is cut into lots on both sides of the exchange; a firm stands on its lot, grows a floor at a
+  // time from its value and its fills, slides next to its buyer after a takeover, and falls down when wound up.
+  const MAX_FLOORS = 48;
+  let lots = [];
+  let maxFloors = 12;
+
+  let lotsAssigned = false;
+  function liveLayout() {
+    liveLayoutLots();
+    maxFloors = Math.max(4, Math.min(MAX_FLOORS, Math.floor((G - Math.round(H * 0.3) - 6) / 4)));
+    if (!lotsAssigned) {
+      // Alternate sides of the exchange, so the first firms spread out and leave lots free between them.
+      const left = Math.ceil(lots.length / 2);
+      firms.forEach((f, i) => (f.lot = i % 2 ? left + (i - 1) / 2 : i / 2));
+      lotsAssigned = true;
+    }
+    for (const f of firms) {
+      if (f.lot < 0) continue;
+      fitLot(f);
+      f.x = f.tx;
+      f.moving = false;
+      if (!f.building && f.phase === "standing") f.floors = f.floorsTarget;
+      liveBox(f);
+    }
+  }
+
+  function fitLot(f) {
+    const lot = lots[f.lot] ?? lots[lots.length - 1];
+    f.w = Math.max(8, Math.round(lot.w * f.wFrac));
+    f.tx = Math.round(lot.x + (lot.w - f.w) / 2);
+    f.cols = Math.max(2, Math.floor((f.w - 3) / 3));
+    if (f.lights.length < f.cols * MAX_FLOORS) {
+      // Lit from the start: with reduced motion the windows never fade in.
+      f.lights = Array.from({ length: f.cols * MAX_FLOORS }, () => {
+        const v = Math.random() < f.lit ? 1 : 0;
+        return { v, on: v, warm: Math.random() };
+      });
+    }
+    retarget(f);
+  }
+
+  // Height: a base per firm, times its value against the value it had when the page opened (cubed, so a few
+  // percent shows), plus a floor every few fills, plus the floors of the rivals it absorbed.
+  function retarget(f) {
+    const base = f.hFrac * maxFloors;
+    const value = f.nav0 ? Math.pow(Math.max(0, f.nav) / f.nav0, 3) : 1;
+    const work = 1 + 0.04 * Math.min(f.fills, 30);
+    f.floorsTarget = Math.max(2, Math.min(maxFloors, Math.round(base * value * work) + f.bonus));
+  }
+
+  function liveBox(f) {
+    const rows = Math.max(0, Math.round(f.floors));
+    const h = 6 + rows * 4;
+    f.box = { x: Math.round(f.x), w: f.w, h, top: G - h + Math.round(f.sink), cols: f.cols, rows };
+  }
+
 
   function buildSkyline() {
     skyline = [];
@@ -475,6 +561,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       queue.shift();
       ACTIONS[next.do]?.(next);
       agentAct(next);
+      gameAct(next);
       lastDo = next.do;
       lastAt = clock;
     }
@@ -492,19 +579,57 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     }
   }
 
-  function drawAgents() {
+  function drawExchange() {
+    // The exchange where the agents meet to bid: steps, columns and a pediment; it glows while an order is open.
     const hx = Math.round(hallX());
-    // The market hall: a small stall in the street where the agents meet to bid.
-    a.fillStyle = "#2a1a36";
-    a.fillRect(hx - 9, G - 7, 18, 7);
-    a.fillStyle = hall.flash > 0 ? mix("#7c3a5f", AMBER, Math.min(1, hall.flash)) : "#7c3a5f";
-    a.fillRect(hx - 11, G - 9, 22, 2);
+    const glow = Math.min(1, hall.flash + (job.target ? 0.35 : 0));
     a.fillStyle = "#f6d7a7";
-    a.globalAlpha = 0.5 + 0.5 * Math.min(1, hall.flash + 0.3);
-    a.fillRect(hx - 6, G - 5, 12, 2);
+    a.globalAlpha = 0.18 + 0.55 * glow;
+    a.fillRect(hx - 10, G - 12, 20, 9);
     a.globalAlpha = 1;
+    a.fillStyle = "#2a1a36";
+    a.fillRect(hx - 14, G - 2, 28, 2);
+    a.fillRect(hx - 12, G - 3, 24, 1);
+    a.fillStyle = mix("#4a2c52", AMBER, glow * 0.5);
+    for (let c = 0; c < 4; c++) a.fillRect(hx - 10 + c * 6, G - 12, 2, 9);
+    a.fillStyle = "#3a2346";
+    a.fillRect(hx - 13, G - 14, 26, 2);
+    a.fillStyle = mix("#7c3a5f", AMBER, glow);
+    for (let k = 0; k < 4; k++) a.fillRect(hx - 12 + k * 3, G - 15 - k, 24 - k * 6, 1);
+  }
+
+  function drawPerson(px0, feet, color, walking, phaseOffset = 0) {
+    const x = Math.round(px0) - 2;
+    const step = walking ? Math.floor(clock * 8 + phaseOffset) % 2 : -1;
+    // 5 x 11 pixels: hair, face, torso in its colour with arms, dark trousers, shoes.
+    a.fillStyle = "#3a2a1e";
+    a.fillRect(x + 1, feet - 11, 3, 1);
+    a.fillStyle = "#f2d3b8";
+    a.fillRect(x + 1, feet - 10, 3, 3);
+    a.fillStyle = color;
+    a.fillRect(x, feet - 7, 5, 4);
+    a.fillStyle = "#f2d3b8";
+    a.fillRect(x, feet - 4 + (step === 0 ? -1 : 0), 1, 1);
+    a.fillRect(x + 4, feet - 4 + (step === 1 ? -1 : 0), 1, 1);
+    a.fillStyle = "#2b2140";
+    a.fillRect(x + 1, feet - 3, 3, 1);
+    a.fillRect(x + 1, feet - 2, 1, step === 0 ? 1 : 2);
+    a.fillRect(x + 3, feet - 2, 1, step === 1 ? 1 : 2);
+    a.fillStyle = "#0b0710";
+    a.fillRect(x + (step === 0 ? 0 : 1), feet - 1, 1, 1);
+    a.fillRect(x + (step === 1 ? 4 : 3), feet - 1, 1, 1);
+  }
+
+  function drawAgents() {
+    drawExchange();
     const feet = G + Math.min(12, H - G - 1);
+    // Passers-by walk a row behind the traders.
+    walkers.forEach((p, i) => {
+      drawPerson(p.x, feet - 2, p.color, p.walking, i * 0.5);
+      drawEmote(p.emote, p.x - 2, feet - 2);
+    });
     for (const g of agents) {
+      if (g.hidden) continue;
       const x = Math.round(g.x) - 2;
       const step = g.walking ? Math.floor(clock * 8) % 2 : -1;
       // 5 x 11 pixels: hair, face, torso in the firm colour with arms, dark trousers, shoes.
@@ -530,16 +655,31 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         a.fillStyle = "#8a6a3a";
         a.fillRect(x + 5, feet - 5, 2, 1);
       }
+      drawEmote(g.emote, x, feet);
     }
   }
 
   function drawBubbles() {
     const feet = G + Math.min(12, H - G - 1);
-    text("MARKET", hallX(), G - 11, "rgba(246,215,167,0.8)", 10);
+    // The exchange's board: the last NEAR price, amber on black.
+    const board = market.price ? `NEAR ${market.price.toFixed(4)}` : "EXCHANGE";
+    ctx.font = `${Math.round(10 * dpr)}px ${FONT}`;
+    const bw = ctx.measureText(board).width + 10 * dpr;
+    const bh = 14 * dpr;
+    const bx0 = hallX() * S - bw / 2;
+    const by0 = (G - 19) * S - bh;
+    ctx.fillStyle = "rgba(8,5,12,0.9)";
+    ctx.fillRect(bx0, by0, bw, bh);
+    ctx.fillStyle = "rgba(246,215,167,0.35)";
+    ctx.fillRect(bx0, by0 + bh - dpr, bw, dpr);
+    ctx.fillStyle = AMBER;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(board, hallX() * S, by0 + bh / 2 + dpr);
     ctx.font = `${Math.round(11 * dpr)}px ${FONT}`;
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
-    const shown = agents.filter((g) => g.until > clock && g.bubble);
+    const shown = agents.filter((g) => g.until > clock && g.bubble && !g.hidden);
     shown.forEach((g, i) => {
       const alpha = Math.min(1, (g.until - clock) * 2);
       const tw = ctx.measureText(g.bubble).width;
@@ -566,11 +706,411 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     ctx.textBaseline = "alphabetic";
   }
 
+  // ------------------------------------------------------------------ live city: what happens to the firms
+
+  const parts = []; // dust, debris, sparks: { x, y, vx, vy, life, max, color, g, s }
+  const market = { price: null };
+  let shake = 0;
+  let tickerX = 0;
+  let started = false; // the first setFirms() places everything at once, later ones animate
+  let parallax = 0;
+  let parallaxTarget = 0;
+
+  function burst(x, y, n, { color = "#8a6a7e", spread = 6, up = 10, g = 30, life = 1.2, s = 1 } = {}) {
+    if (still || parts.length > 600) return;
+    for (let i = 0; i < n; i++) {
+      parts.push({ x: x + (Math.random() - 0.5) * spread, y, vx: (Math.random() - 0.5) * spread * 2, vy: -Math.random() * up, life: life * (0.6 + Math.random() * 0.6), max: life, color, g, s });
+    }
+  }
+
+  // Passers-by: they only react (emotes), they never speak for the chain.
+  const CROWD = ["#6b5a8a", "#8a5a6e", "#4f6f8a", "#7a6a4a", "#5a7a6a", "#8a7aa0", "#a06a5a"];
+  const walkers = live ? Array.from({ length: isMobile ? 4 : 7 }, (_, i) => ({ x: null, tx: null, color: CROWD[i % CROWD.length], speed: 9 + Math.random() * 6, wait: Math.random() * 4, run: 0, emote: null, walking: false })) : [];
+
+  // 3 x 5 glyphs for the emote bubbles.
+  const GLYPHS = {
+    "!": [".X.", ".X.", ".X.", "...", ".X."],
+    "?": ["XX.", "..X", ".X.", "...", ".X."],
+    $: [".X.", "XXX", "XXX", "XXX", ".X."],
+    "<3": ["...", "X.X", "XXX", "XXX", ".X."],
+    x: ["...", "X.X", ".X.", "X.X", "..."],
+    "^": [".X.", "XXX", ".X.", ".X.", "..."],
+  };
+  function emote(p, glyph, color = "#fff", seconds = 2.5) {
+    if (p) p.emote = { glyph, color, until: clock + seconds };
+  }
+
+  const freeLot = (except) => {
+    const used = new Set(firms.filter((f) => f !== except && f.phase !== "gone" && f.lot >= 0).map((f) => f.lot));
+    for (let l = 0; l < lots.length; l++) if (!used.has(l)) return l;
+    return -1;
+  };
+
+  function relot() {
+    const before = lots.length;
+    liveLayoutLots();
+    for (const f of firms) if (f.lot >= 0) fitLot(f);
+    return lots.length !== before;
+  }
+
+  function liveLayoutLots() {
+    const n = Math.max(8, firms.filter((f) => f.phase !== "gone").length + 2, ...firms.map((f) => f.lot + 1));
+    const gap = Math.max(17, Math.round(W * 0.09));
+    const left = Math.ceil(n / 2);
+    const span = (from, to, k) => Array.from({ length: k }, (_, j) => ({ x: from + ((to - from) * j) / k, w: (to - from) / k }));
+    lots = [...span(2, W / 2 - gap, left), ...span(W / 2 + gap, W - 2, n - left)];
+  }
+
+  // A firm launched on chain: an empty lot gets a crane and the tower goes up a floor at a time.
+  function addFirm(name) {
+    const f = makeFirm(name, firms.length);
+    f.building = true;
+    f.floors = 0;
+    firms.push(f);
+    byName.set(name, f);
+    let lot = freeLot(f);
+    if (lot < 0) {
+      relot();
+      lot = freeLot(f);
+    }
+    // A wound-up firm's rubble is cleared for the newcomer.
+    const old = firms.find((o) => o !== f && o.lot === lot);
+    if (old) old.lot = -1;
+    f.lot = Math.max(0, lot);
+    fitLot(f);
+    f.x = f.tx;
+    liveBox(f);
+    if (live) agents.push({ f, x: null, tx: null, color: f.color, bubble: "", bubbleColor: "#fff", until: 0, carry: false, walking: false });
+    for (const p of walkers) if (Math.abs(p.x - f.x) < 40) emote(p, "^", GREEN, 3);
+    log(`${name} · <b>new firm</b>, building`);
+    return f;
+  }
+
+  function rename(f, name) {
+    if (byName.get(f.name) === f) byName.delete(f.name);
+    f.name = name;
+    byName.set(name, f);
+  }
+
+  // After a takeover the bought tower slides onto a lot next to its buyer (an empty one if there is one).
+  function migrate(t, bu) {
+    if (t.phase !== "standing" || bu.phase !== "standing" || t.lot < 0 || bu.lot < 0) return;
+    const half = Math.ceil(lots.length / 2);
+    const near = [bu.lot - 1, bu.lot + 1, bu.lot - 2, bu.lot + 2].filter((l) => l >= 0 && l < lots.length && l < half === bu.lot < half);
+    if (near.includes(t.lot)) return;
+    const holder = (l) => firms.find((o) => o !== t && o.lot === l && o.phase !== "gone");
+    const dest = near.find((l) => !holder(l) || holder(l).phase === "rubble") ?? near[0];
+    if (dest === undefined) return;
+    const other = holder(dest);
+    if (other) {
+      other.lot = other.phase === "rubble" ? -1 : t.lot;
+      if (other.lot >= 0) fitLot(other);
+    }
+    t.lot = dest;
+    fitLot(t);
+    t.moving = !still;
+    if (still) for (const f of [t, other]) if (f && f.lot >= 0) {
+      f.x = f.tx;
+      liveBox(f);
+    }
+  }
+
+  function collapse(f) {
+    if (f.phase !== "standing") return;
+    if (still) {
+      // Reduced motion: the outcome without the fall.
+      Object.assign(f, { phase: "rubble", floors: 0, sink: 0, forSale: false, closeDue: null });
+      liveBox(f);
+      makeRubble(f);
+      const g = agents.find((x) => x.f === f);
+      if (g) g.hidden = true;
+      return;
+    }
+    f.phase = "collapsing";
+    f.forSale = false;
+    f.closeDue = null;
+    f.sinkV = 3;
+    shake = 0.9;
+    const g = agentOf(f.name);
+    if (g) emote(g, "!", RED, 4);
+    for (const p of walkers) {
+      emote(p, "!", RED, 3);
+      if (Math.abs(p.x - (f.x + f.w / 2)) < 30) {
+        p.tx = p.x < f.x + f.w / 2 ? Math.max(2, p.x - 30) : Math.min(W - 2, p.x + 30);
+        p.run = 3;
+      }
+    }
+    log(`${f.name} · <b>wound up</b>, the tower comes down`, "bad");
+  }
+
+  function absorb(f, buyer) {
+    if (f.phase !== "standing") return;
+    if (still) {
+      Object.assign(f, { phase: "gone", forSale: false, closeDue: null });
+      const g = agents.find((x) => x.f === f);
+      if (g) Object.assign(g, { f: buyer, color: buyer.color, x: door(buyer), tx: door(buyer) });
+      buyer.bonus += Math.min(4, Math.max(1, Math.ceil(f.floors / 3)));
+      retarget(buyer);
+      buyer.floors = buyer.floorsTarget;
+      liveBox(buyer);
+      return;
+    }
+    f.phase = "absorbing";
+    f.forSale = false;
+    f.closeDue = null;
+    f.into = buyer;
+    f.absorbAt = clock + 2; // let the repaint show first; the floors leave once it has reached its buyer
+    buyer.bonus += Math.min(4, Math.max(1, Math.ceil(f.floors / 3)));
+    retarget(buyer);
+    const g = agents.find((x) => x.f === f);
+    if (g) {
+      g.f = buyer;
+      g.color = buyer.color;
+      g.tx = door(buyer);
+    }
+    log(`${buyer.name} <b>absorbs</b> ${f.name}`);
+  }
+
+  function closeFirm(f, reason) {
+    if (!f || f.phase !== "standing") return;
+    const buyer = f.owner ? byName.get(f.owner) : null;
+    if (buyer && buyer.phase === "standing" && (!reason || /owner/.test(reason))) absorb(f, buyer);
+    else collapse(f);
+  }
+
+  function makeRubble(f) {
+    const r = rng(f.index * 31 + 7);
+    f.rubble = Array.from({ length: f.w }, (_, i) => Math.max(1, Math.round(Math.sin((Math.PI * (i + 0.5)) / f.w) * 4 + r() * 2 - 0.5)));
+  }
+
+  // Reactions to the chain events, on top of what the towers and the traders already do.
+  function gameAct(s) {
+    const f = s.firm ? byName.get(s.firm) : null;
+    const g = s.firm ? agentOf(s.firm) : null;
+    switch (s.do) {
+      case "order":
+        for (const p of walkers) if (Math.random() < 0.4) emote(p, "?", "#fff", 2);
+        break;
+      case "win":
+        if (g) emote(g, "$", AMBER, 3);
+        for (const o of agents) if (o !== g && o.tx !== null && Math.abs(o.tx - hallX()) < 40) emote(o, "x", "#b9a7c9", 2);
+        break;
+      case "fill":
+        if (f) burst(f.x + f.w / 2, f.box.top - 1, 10, { color: AMBER, spread: f.w / 2, up: 18, g: 40, life: 1 });
+        for (const p of walkers) if (f && Math.abs(p.x - (f.x + f.w / 2)) < 26) emote(p, "<3", "#ff9fc4", 2.5);
+        break;
+      case "slash":
+        if (g) emote(g, "!", RED, 3);
+        shake = Math.max(shake, 0.3);
+        break;
+      case "epoch":
+        if (!s.liquidating) break;
+        if (g) emote(g, "!", RED, 4);
+        for (const o of agents) if (o !== g) emote(o, "$", AMBER, 3);
+        break;
+      case "takeover": {
+        const t = byName.get(s.target);
+        const bu = byName.get(s.buyer);
+        if (!t) break;
+        t.brand = s.buyer;
+        t.exName = t.exName ?? t.name;
+        if (bu) migrate(t, bu);
+        const tb = agentOf(s.buyer);
+        if (tb) emote(tb, "$", GREEN, 4);
+        break;
+      }
+      case "close":
+        closeFirm(f, s.reason);
+        break;
+    }
+  }
+
+  function simulateLive(dt) {
+    shake = Math.max(0, shake - dt * 1.5);
+    parallax += (parallaxTarget - parallax) * Math.min(1, dt * 3);
+    tickerX += dt * 26;
+    for (const f of firms) {
+      if (f.phase === "gone" || f.lot < 0) continue;
+      if (f.closeDue !== null && clock > f.closeDue) closeFirm(f, null);
+      // Slide to its lot after a takeover, kicking up dust.
+      if (f.x !== f.tx) {
+        const d = f.tx - f.x;
+        const v = (f.moving ? 44 : 30) * dt;
+        f.x = Math.abs(d) <= v ? f.tx : f.x + Math.sign(d) * v;
+        if (Math.random() < dt * 20) burst(f.x + (d > 0 ? 0 : f.w), G, 2, { spread: 3, up: 4, g: 8, life: 0.8 });
+        if (f.x === f.tx) f.moving = false;
+      }
+      if (f.phase === "collapsing") {
+        f.sinkV += dt * 26;
+        f.sink += f.sinkV * dt;
+        if (Math.random() < dt * 40) burst(f.x + Math.random() * f.w, G, 3, { spread: f.w / 3, up: 7, g: 6, life: 1.6, s: 2 });
+        if (Math.random() < dt * 14) burst(f.x + Math.random() * f.w, f.box.top, 1, { color: "#3a2a46", spread: 2, up: 6, g: 60, life: 1.2, s: 2 });
+        liveBox(f);
+        if (f.sink >= f.box.h) {
+          f.phase = "rubble";
+          f.sink = 0;
+          f.floors = 0;
+          liveBox(f);
+          makeRubble(f);
+          burst(f.x + f.w / 2, G, 30, { spread: f.w, up: 10, g: 5, life: 2.2, s: 2 });
+          const g = agents.find((x) => x.f === f);
+          if (g) g.hidden = true;
+        }
+        continue;
+      }
+      if (f.phase === "rubble") continue;
+      // A floor at a time toward its target: up under a crane, down with debris (or into its buyer).
+      f.growT += dt;
+      const waiting = f.phase === "absorbing" && (f.moving || clock < f.absorbAt);
+      const target = f.phase === "absorbing" ? (waiting ? f.floors : 0) : f.floorsTarget;
+      if (f.floors < target && f.growT > (f.building ? 0.3 : 0.5)) {
+        f.floors++;
+        f.growT = 0;
+        burst(f.x + f.w / 2, G - 6 - f.floors * 4, 3, { color: AMBER, spread: f.w / 2, up: 5, g: 20, life: 0.5 });
+      } else if (f.floors > target && f.growT > (f.phase === "absorbing" ? 0.28 : 0.35)) {
+        f.floors--;
+        f.growT = 0;
+        if (f.phase === "absorbing") fly("block", () => roof(f), () => roof(f.into), { color: f.sign, dur: 0.9, arc: 20 });
+        else burst(f.x + f.w / 2, f.box.top, 4, { color: "#3a2a46", spread: f.w / 2, up: 4, g: 50, life: 0.9 });
+      }
+      if (f.building && f.floors >= target) f.building = false;
+      if (f.phase === "absorbing" && f.floors <= 0) f.phase = "gone";
+      liveBox(f);
+    }
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.vy += p.g * dt;
+      p.x += p.vx * dt;
+      p.y = Math.min(G + 1, p.y + p.vy * dt);
+      p.life -= dt;
+      if (p.life <= 0) parts.splice(i, 1);
+    }
+    for (const p of walkers) {
+      if (p.x === null) p.x = p.tx = 4 + Math.random() * (W - 8);
+      const d = p.tx - p.x;
+      const v = (p.run > 0 ? 34 : p.speed) * dt;
+      p.run = Math.max(0, p.run - dt);
+      p.walking = Math.abs(d) > 0.5;
+      p.x += Math.abs(d) <= v ? d : Math.sign(d) * v;
+      if (!p.walking) {
+        p.wait -= dt;
+        if (p.wait <= 0) {
+          p.tx = Math.max(3, Math.min(W - 3, p.x + (Math.random() - 0.5) * W * 0.5));
+          p.wait = 2 + Math.random() * 5;
+        }
+      }
+    }
+  }
+
+  function drawCrane(f) {
+    // A tower crane on the roof while the firm grows: mast, jib, a block on its cable.
+    const { x, w, top } = f.box;
+    const mx = Math.round(x + w - 3);
+    const mt = top - 13;
+    a.fillStyle = "#e8b04a";
+    for (let y = mt; y < top; y += 2) a.fillRect(mx, y, 1, 1);
+    a.fillRect(mx + 1, mt, 1, top - mt);
+    const jib = Math.max(8, Math.round(w * 0.9));
+    a.fillRect(mx - jib, mt, jib + 5, 1);
+    a.fillStyle = "#6b4b2a";
+    a.fillRect(mx + 3, mt + 1, 3, 2); // counterweight
+    const hx = Math.round(mx - jib * (0.45 + 0.35 * Math.sin(clock * 0.8 + f.index)));
+    const drop = 3 + Math.round(4 + 3 * Math.sin(clock * 1.7 + f.index));
+    a.fillStyle = "rgba(232,176,74,0.7)";
+    a.fillRect(hx, mt + 1, 1, drop);
+    a.fillStyle = f.sign;
+    a.fillRect(hx - 1, mt + 1 + drop, 3, 2);
+    // Scaffolding on the floor being built.
+    a.fillStyle = "rgba(232,176,74,0.55)";
+    for (let i = 0; i <= w; i += 2) a.fillRect(Math.round(x + i), top + ((i / 2) % 2), 1, 1);
+    a.fillRect(Math.round(x - 1), top, 1, 6);
+    a.fillRect(Math.round(x + w), top, 1, 6);
+  }
+
+  function drawRubble(f) {
+    if (!f.rubble) makeRubble(f);
+    const x0 = Math.round(f.x);
+    f.rubble.forEach((h, i) => {
+      a.fillStyle = "#24182f";
+      a.fillRect(x0 + i, G - h, 1, h);
+      if ((i * 7 + h) % 5 === 0) {
+        a.fillStyle = "#4a2c48";
+        a.fillRect(x0 + i, G - h, 1, 1);
+      }
+    });
+  }
+
+  function drawParts() {
+    for (const p of parts) {
+      a.globalAlpha = Math.max(0, Math.min(1, p.life / p.max)) * 0.85;
+      a.fillStyle = p.color;
+      a.fillRect(Math.round(p.x), Math.round(p.y), p.s, p.s);
+    }
+    a.globalAlpha = 1;
+  }
+
+  function drawEmote(e, x, feet) {
+    if (!e || e.until < clock) return;
+    const g = GLYPHS[e.glyph];
+    if (!g) return;
+    const bx = Math.round(x);
+    const by = feet - 19;
+    a.globalAlpha = Math.min(1, (e.until - clock) * 3);
+    a.fillStyle = "rgba(18,12,25,0.92)";
+    a.fillRect(bx, by, 5, 7);
+    a.fillRect(bx + 2, by + 7, 1, 1); // the tail
+    a.fillStyle = e.color;
+    g.forEach((row, r) => [...row].forEach((c, k) => c === "X" && a.fillRect(bx + 1 + k, by + 1 + r, 1, 1)));
+    a.globalAlpha = 1;
+  }
+
+  // The stock ticker along the top: share price (value / 100 shares) and its change since the page opened.
+  function drawTicker() {
+    const items = firms.filter((f) => f.phase !== "gone" && f.nav !== null && f.nav0);
+    if (!items.length) return;
+    const h = Math.round(18 * dpr);
+    ctx.fillStyle = "rgba(8,5,12,0.85)";
+    ctx.fillRect(0, 0, canvas.width, h);
+    ctx.fillStyle = "rgba(246,215,167,0.22)";
+    ctx.fillRect(0, h - dpr, canvas.width, dpr);
+    ctx.font = `${Math.round(11 * dpr)}px ${FONT}`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    const segs = items.map((f) => {
+      const dead = f.phase === "rubble" || f.phase === "collapsing";
+      const pct = ((f.nav - f.nav0) / f.nav0) * 100;
+      const up = pct >= 0;
+      return [
+        [(f.brand ?? f.name).toUpperCase() + " ", f.brand ? f.sign : f.color],
+        dead ? ["CLOSED", RED] : [(f.nav / 100).toFixed(2) + " ", "#fff"],
+        dead ? ["", "#fff"] : [`${up ? "▲" : "▼"}${Math.abs(pct).toFixed(2)}%`, up ? GREEN : RED],
+      ];
+    });
+    const sep = 28 * dpr;
+    const widths = segs.map((s) => s.reduce((n, [t]) => n + ctx.measureText(t).width, 0) + sep);
+    const total = widths.reduce((n, w) => n + w, 0);
+    let x = -((tickerX * dpr) % total);
+    const y = h / 2 + dpr;
+    while (x < canvas.width) {
+      segs.forEach((s, i) => {
+        let cx = x;
+        for (const [t, c] of s) {
+          ctx.fillStyle = c;
+          ctx.fillText(t, cx, y);
+          cx += ctx.measureText(t).width;
+        }
+        x += widths[i];
+      });
+    }
+    ctx.textBaseline = "alphabetic";
+  }
+
   // ------------------------------------------------------------------ simulation
 
   function simulate(dt) {
     clock += dt;
     moveAgents(dt);
+    if (live) simulateLive(dt);
     explore += (exploreTarget - explore) * Math.min(1, dt * 3);
     job.on += (job.target - job.on) * Math.min(1, dt * 2.2);
     job.x += (job.tx - job.x) * Math.min(1, dt * (job.target ? 1.3 : 0.7));
@@ -616,7 +1156,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
 
   function drawSkyline() {
     for (const blk of skyline) {
-      const x = blk.x;
+      const x = blk.x + (live ? parallax * (blk.layer ? 1.5 : 3) : 0);
       a.fillStyle = blk.layer ? "#1e1029" : "#2c1735";
       a.fillRect(Math.round(x), G - blk.h, blk.w, blk.h);
       // Sparse lit windows in the far city, slowly changing.
@@ -693,6 +1233,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     }
     // Reflections of the lit towers on the wet street.
     for (const f of firms) {
+      if (live && (f.phase !== "standing" || f.lot < 0)) continue;
       a.globalAlpha = 0.12 + f.pulse * 0.1;
       a.fillStyle = f.sign;
       for (let y = G + 2; y < Math.min(H, G + 10); y += 2) a.fillRect(Math.round(f.box.x + 1), y, f.box.w - 2, 1);
@@ -752,6 +1293,8 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         a.globalAlpha = 0.6;
         px(q.x, q.y);
         a.globalAlpha = 1;
+      } else if (fl.kind === "block") {
+        px(q.x - 1, q.y - 1, 3, 2);
       } else if (fl.kind === "key") {
         a.globalAlpha = 1 - fl.t;
         px(q.x, q.y, 3, 3);
@@ -783,13 +1326,17 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       return;
     }
     for (const f of firms) {
+      if (live && (f.phase === "gone" || f.phase === "collapsing" || f.lot < 0)) continue;
       const r = roof(f);
       const x = r.x;
-      const top = f.box.top - 9;
+      const top = f.box.top - 9 - (live && f.phase === "standing" && f.floors < f.floorsTarget ? 13 : 0);
       // Names stay quiet in the hero and come forward in the arena view and on the dashboard.
-      const show = live ? 1 : 0.55 + 0.45 * explore;
-      text(f.name.toUpperCase(), x, top, f.forSale ? RED : f.sign, W * 4 < 900 ? 10 : 12, "center", show);
-      if (live || explore > 0.05) text(f.forSale ? "for sale" : f.status, x, top + 4, "rgba(255,255,255,0.75)", 11, "center", live ? 0.9 : explore);
+      const show = live ? (f.phase === "rubble" ? 0.5 : 1) : 0.55 + 0.45 * explore;
+      const title = live && f.brand ? f.brand : f.name;
+      const sub = !live ? f.status : f.phase === "rubble" ? "wound up" : f.building ? "under construction" : f.forSale ? "for sale" : f.exName ? `ex ${f.exName}` : f.status;
+      text(title.toUpperCase(), x, top, f.forSale ? RED : f.sign, W * 4 < 900 ? 10 : 12, "center", show);
+      // On a phone the live city shows names only: the status lines would run into each other.
+      if ((live && canvas.clientWidth >= 720) || (!live && explore > 0.05)) text(f.forSale && !live ? "for sale" : sub, x, top + 4, "rgba(255,255,255,0.75)", 11, "center", live ? 0.9 * show : explore);
     }
     // Event labels stack above their tower, newest on top, so two never sit on each other.
     const stack = new Map();
@@ -813,15 +1360,29 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     drawStars();
     drawSkyline();
     drawJob();
-    for (const f of firms) drawTower(f);
+    if (live) {
+      // A tower sliding to its buyer passes behind the others, down a back street.
+      for (const f of firms) if (f.moving) drawLiveTower(f);
+      for (const f of firms) if (!f.moving) drawLiveTower(f);
+    } else for (const f of firms) drawTower(f);
     drawStreet();
-    if (agents.length) drawAgents();
+    if (live) drawParts();
+    if (live) drawAgents();
     drawFlyers();
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(art, 0, 0, W * S, H * S);
+    const jolt = () => (live && shake > 0 ? Math.round((Math.random() - 0.5) * shake * 3) * S : 0);
+    ctx.drawImage(art, jolt(), jolt(), W * S, H * S);
     drawLabels();
-    if (agents.length) drawBubbles();
+    if (live) drawBubbles();
+    if (live) drawTicker();
+  }
+
+  function drawLiveTower(f) {
+    if (f.phase === "gone" || f.lot < 0) return;
+    if (f.phase === "rubble") return drawRubble(f);
+    drawTower(f);
+    if (f.phase === "standing" && f.floors < f.floorsTarget) drawCrane(f);
   }
 
   // ------------------------------------------------------------------ loop
@@ -862,18 +1423,22 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
 
   return {
     act(storyStep) {
-      if (agents.length && !still) {
+      if (live && !still) {
         queue.push(storyStep);
         // A hidden tab piles events up: apply the old ones at once so the city never lags far behind.
         while (queue.length > 24) {
           const st = queue.shift();
           ACTIONS[st.do]?.(st);
           agentAct(st);
+          gameAct(st);
         }
         return;
       }
       ACTIONS[storyStep.do]?.(storyStep);
-      if (agents.length) agentAct(storyStep);
+      if (live) {
+        agentAct(storyStep);
+        gameAct(storyStep);
+      }
       if (still) step(0);
     },
     resize() {
@@ -895,6 +1460,64 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         last = performance.now();
         raf = requestAnimationFrame(frame);
       }
+    },
+    // Live city: the firms as the chain reports them, polled ({ id, name, nav (USDC), fills, status,
+    // takeovers }), and the NEAR price for the exchange's board.
+    setFirms(list, m = {}) {
+      if (!live) return;
+      if (m.price) market.price = m.price;
+      let added = false;
+      for (const it of list) {
+        let f = firms.find((x) => x.id === it.id) ?? firms.find((x) => x.id === null && x.name === it.name);
+        if (!f) {
+          f = addFirm(it.name);
+          if (!started) f.building = false;
+          added = true;
+        }
+        f.id = it.id;
+        if (it.name !== f.name) rename(f, it.name);
+        f.fills = it.fills ?? 0;
+        if (typeof it.nav === "number") {
+          f.nav = it.nav;
+          // A firm registered before it is funded: its value is measured from its first funded poll.
+          if (f.nav0 === null && it.nav > 0) f.nav0 = it.nav;
+        }
+        if (f.phase === "standing") f.forSale = it.status === "Liquidating";
+        if (it.status === "Closed" && f.phase === "standing") {
+          if (!started) {
+            // Closed before the page opened: an empty lot if a rival absorbed it, rubble if it was wound up.
+            f.phase = it.takeovers > 0 ? "gone" : "rubble";
+            f.floors = 0;
+            liveBox(f);
+            const g = agents.find((x) => x.f === f);
+            if (g) g.hidden = true;
+          } else f.closeDue ??= clock + 12; // its event should come first and say how it closed
+        }
+        retarget(f);
+        if (!started || still) f.floors = f.phase === "standing" ? f.floorsTarget : 0;
+        liveBox(f);
+      }
+      if (added) relot();
+      started = true;
+      if (still) step(0);
+    },
+    /** The firm under a point of the page (client coordinates), or null. */
+    pick(clientX, clientY) {
+      if (!live) return null;
+      const r = canvas.getBoundingClientRect();
+      const x = ((clientX - r.left) / r.width) * W;
+      const y = ((clientY - r.top) / r.height) * H;
+      for (let i = firms.length - 1; i >= 0; i--) {
+        const f = firms[i];
+        if (f.phase === "gone" || f.lot < 0 || !f.box || f.id === null) continue;
+        const top = f.phase === "rubble" ? G - 8 : f.box.top - 12;
+        if (x >= f.box.x - 1 && x <= f.box.x + f.box.w + 1 && y >= top && y <= G + 2) return { id: f.id, name: f.name };
+      }
+      return null;
+    },
+    /** -1 to 1: where the pointer is across the page, for a little depth in the far skyline. */
+    setParallax(v) {
+      parallaxTarget = Math.max(-1, Math.min(1, v));
     },
     setExplore(on) {
       exploreTarget = on ? 1 : 0;

@@ -1,5 +1,5 @@
 // Turns chain events into the scene's story steps, so the city shows what really happens on chain.
-import { getConfig, type ChainEvent, type Side } from "./api";
+import { getConfig, nameOf, type AppState, type ChainEvent, type Side } from "./api";
 import { auctionAmount, bpOver, bpText, gotText, near, paidText, usdc } from "./format";
 
 type Scene = { act(step: Record<string, unknown>): void };
@@ -51,7 +51,7 @@ export function liveDriver(scene: Scene, firmName: (id: number) => string) {
         scene.act({ do: "slash", firm: firmName(d.firm_id), bond: usdc(d.amount) });
         break;
       case "firm_closed":
-        scene.act({ do: "close", firm: firmName(d.firm_id) });
+        scene.act({ do: "close", firm: firmName(d.firm_id), reason: d.reason });
         break;
       case "liquidated":
         scene.act({
@@ -67,4 +67,15 @@ export function liveDriver(scene: Scene, firmName: (id: number) => string) {
         break;
     }
   };
+}
+
+/** The firms as the city draws them: tower height follows value and fills, status drives its life stage. */
+export function cityFirms(state: AppState) {
+  return state.firms.map((f) => ({ id: f.id, name: nameOf(f), nav: Number(f.nav) / 1e6, fills: f.fills, status: f.status, takeovers: f.takeovers }));
+}
+
+/** The NEAR price on the exchange's board: the last clearing price, else the 1Click mid. */
+export function cityMarket(state: AppState) {
+  const last = Number(state.lastPrice) / 1e6;
+  return { price: last > 0 ? last : state.reference?.mid };
 }
