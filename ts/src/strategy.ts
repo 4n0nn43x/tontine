@@ -54,7 +54,7 @@ export type FirmSpec = {
   description: string;
   /** What it trades, e.g. ["NEAR/USDC"]. */
   skills: string[];
-  /** The model behind its manager, e.g. "openai/gpt-oss-120b on NEAR AI Cloud". */
+  /** The model behind its manager, e.g. "Qwen/Qwen3.8-27B on NEAR AI Cloud". */
   model?: string;
   /** Order sizes it quotes, in USDC. */
   min_budget?: number;

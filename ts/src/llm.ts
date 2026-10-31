@@ -23,7 +23,10 @@ export interface Llm {
 }
 
 const BASE = process.env.NEARAI_BASE_URL ?? "https://cloud-api.near.ai/v1";
-const MODEL = process.env.NEARAI_MODEL ?? "openai/gpt-oss-120b";
+// Private TEE, no reasoning tokens: about 190 tokens in and 110 out per decision (measured 2026-10-31),
+// so a decision every 3 minutes costs about 2 USD a month. MAX_TOKENS bounds the worst case.
+const MODEL = process.env.NEARAI_MODEL || "Qwen/Qwen3.8-27B";
+const MAX_TOKENS = 400;
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "fixtures", "llm.json");
 
 const key = (system: string, user: string) => createHash("sha256").update(`${MODEL}\n${system}\n${user}`).digest("hex");
@@ -39,7 +42,13 @@ export class NearAiCloud implements Llm {
     const r = await fetch(`${BASE}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ model: MODEL, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        // Qwen thinks for 1,000 to 3,000 tokens by default; the decision is a small JSON.
+        chat_template_kwargs: { enable_thinking: false },
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+      }),
     });
     if (!r.ok) throw new Error(`NEAR AI Cloud ${r.status}: ${await r.text()}`);
     const j: any = await r.json();
