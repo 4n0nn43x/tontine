@@ -1,7 +1,8 @@
 // `make thesis`: "NEAR captures agent value through Intents-funded buybacks, not gas."
 //
-//   npx tsx src/thesis.ts snapshot   fetch DefiLlama + NEARBlocks into data/snapshot.json
-//   npx tsx src/thesis.ts freeze     compute P1-P3 from the snapshot, write thesis/predictions.json, print its sha256
+//   npx tsx src/thesis.ts snapshot   fetch DefiLlama, NEARBlocks and the buyback account's daily balances
+//                                    (archival RPC) into data/snapshot.json
+//   npx tsx src/thesis.ts freeze     compute P1-P3, P5, P6 from the snapshot, write thesis/predictions.json, print its sha256
 //   npx tsx src/thesis.ts            (default) evaluate the frozen predictions on the snapshot, write thesis/index.html
 //
 // Only public endpoints, no key. Every number in the HTML comes from data/snapshot.json, so anyone can re-run it.
@@ -23,14 +24,23 @@ const SOURCES = {
   nearFees: `${LLAMA}/fees/near?dataType=dailyFees`,
   nearStats: "https://api.nearblocks.io/v1/stats",
 };
+const BUYBACKS = "buybacks.multisignature.near";
+const ARCHIVAL = process.env.NEAR_ARCHIVAL_RPC ?? "https://archival-rpc.mainnet.fastnear.com";
 const WINDOW_DAYS = 12;
 // DefiLlama still revises the last day or two (2026-10-29 fees went from $8.8k to $199k within a day):
 // the verdict is read on or after `read_from`.
 const EVAL = { from: "2026-11-01", to: "2026-11-12", read_from: "2026-11-14" };
 const P3_MIN_BP = 4.0;
+// A day bringing in more than this is a one-off transfer, not buyback flow (502,793 NEAR from a DAO on
+// 2026-09-09): P5's base rate leaves out the windows that contain one.
+const ONE_OFF_NEAR = 200_000;
+// The multisig pays the gas of its own confirmations: a daily drop above 1 NEAR is an outflow, not gas.
+const P6_MAX_DROP_NEAR = 1;
 
 type Series = [number, number][];
-type Snapshot = { fetched_at: string; sources: typeof SOURCES; volume: Series; intentsFees: Series; intentsRevenue: Series; nearFees: Series; near_price: number; total_supply_near: number };
+/** Balance of the buyback account (amount + locked, NEAR) at the first block of a UTC day. */
+type Balance = { date: string; height: number; near: number };
+type Snapshot = { fetched_at: string; sources: typeof SOURCES; volume: Series; intentsFees: Series; intentsRevenue: Series; nearFees: Series; near_price: number; total_supply_near: number; buybacks?: Balance[] };
 type Day = { ts: number; date: string; vol: number; rev: number; fees: number; gas: number };
 
 // ---------------------------------------------------------------- data
@@ -52,10 +62,75 @@ async function snapshot() {
     nearFees: n.totalDataChart,
     near_price: Number(stats.near_price),
     total_supply_near: Number(BigInt(stats.total_supply) / 10n ** 24n),
+    buybacks: await buybackBalances(),
   };
   mkdirSync(path.dirname(SNAPSHOT), { recursive: true });
   writeFileSync(SNAPSHOT, JSON.stringify(snap) + "\n");
   console.log(`snapshot: ${snap.volume.length} days of volume, last ${days(snap).at(-1)?.date}, NEAR $${snap.near_price}`);
+  console.log(`buybacks: ${snap.buybacks!.length} daily balances, ${snap.buybacks!.at(-1)!.date} ${snap.buybacks!.at(-1)!.near} NEAR`);
+}
+
+const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+/** JSON-RPC on the archival node, paced under its free rate limit, with backoff on 429 and 5xx. */
+async function rpc(method: string, params: unknown): Promise<any> {
+  for (let i = 0; ; i++) {
+    await sleep(400);
+    const r = await fetch(ARCHIVAL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) }).catch(() => null);
+    // A skipped block height answers 422 UNKNOWN_BLOCK: an answer, not a failure.
+    if (r?.ok || r?.status === 422) return r.json();
+    if ((r && r.status !== 429 && r.status < 500) || i === 6) throw new Error(`${ARCHIVAL} ${method} ${JSON.stringify(params)}: ${r?.status ?? "network error"} ${r ? (await r.text()).slice(0, 200) : ""}`);
+    await sleep(5000 * 2 ** i);
+  }
+}
+
+/** The first existing block at or after height `h` (heights can be skipped): [height, unix seconds]. */
+async function blockFrom(h: number): Promise<[number, number]> {
+  for (let k = 0; k < 100; k++) {
+    const r = await rpc("block", { block_id: h + k });
+    if (r.result) return [r.result.header.height, Number(BigInt(r.result.header.timestamp_nanosec) / 1_000_000n) / 1000];
+  }
+  throw new Error(`no block from height ${h}`);
+}
+
+/** The first block at or after unix time `t`, searched from a block `from` near it (`secs` per block). */
+async function firstBlockAt(t: number, from: [number, number], secs = 0.6): Promise<[number, number]> {
+  let b = from;
+  // Jump close, bracket, then bisect over heights.
+  for (let i = 0; i < 6 && Math.abs(t - b[1]) > 30; i++) b = await blockFrom(Math.max(1, b[0] + Math.round((t - b[1]) / secs)));
+  let lo = b, hi = b;
+  for (let step = 10; lo[1] >= t; step *= 2) lo = await blockFrom(Math.max(1, lo[0] - step));
+  for (let step = 10; hi[1] < t; step *= 2) hi = await blockFrom(hi[0] + step);
+  // Invariant: lo is before t, hi at or after it, and no block exists in [top, hi).
+  let top = hi[0];
+  while (top - lo[0] > 1) {
+    const mid = Math.floor((lo[0] + top) / 2);
+    const m = await blockFrom(mid);
+    if (m[0] >= top) top = mid;
+    else if (m[1] >= t) [hi, top] = [m, m[0]];
+    else lo = m;
+  }
+  return hi;
+}
+
+/** The buyback account's balance at the first block of each of the last 91 UTC days. */
+async function buybackBalances(): Promise<Balance[]> {
+  const head = (await rpc("block", { finality: "final" })).result.header;
+  let b: [number, number] = [head.height, Number(BigInt(head.timestamp_nanosec) / 1_000_000n) / 1000];
+  const last = Math.floor((b[1] - 60) / 86_400) * 86_400;
+  const out: Balance[] = [];
+  let secs = 0.6;
+  for (let t = last; t >= last - 90 * 86_400; t -= 86_400) {
+    const prev = b;
+    b = await firstBlockAt(t, b, secs);
+    // The last day's pace predicts the next jump to a few blocks.
+    if (out.length) secs = 86_400 / (prev[0] - b[0]);
+    const a = (await rpc("query", { request_type: "view_account", block_id: b[0], account_id: BUYBACKS })).result;
+    if (!a) throw new Error(`view_account ${BUYBACKS} at ${b[0]} failed`);
+    out.unshift({ date: new Date(t * 1000).toISOString().slice(0, 10), height: b[0], near: Number((BigInt(a.amount) + BigInt(a.locked)) / 10n ** 20n) / 1e4 });
+    console.log(`  ${out[0].date} block ${b[0]}: ${out[0].near} NEAR`);
+  }
+  return out;
 }
 
 function loadSnapshot(): Snapshot {
@@ -110,30 +185,53 @@ export function multiple(o: { supply: number; price: number; emission: number; t
 
 // ---------------------------------------------------------------- predictions
 
+/** Daily balance changes of the buyback account: flow[i] is what changed during day b[i]. */
+const flows = (b: Balance[]) => b.slice(1).map((x, i) => x.near - b[i].near);
+
 function computePredictions(s: Snapshot) {
   const d = days(s);
   const w = windows(d, WINDOW_DAYS, 90);
   const v = w.map(avgVol);
   const g = w.map(revOverGas);
+  const flow = flows(s.buybacks ?? []);
+  const b12 = flow
+    .slice(0, Math.max(0, flow.length - WINDOW_DAYS + 1))
+    .map((_, i) => flow.slice(i, i + WINDOW_DAYS))
+    .filter((x) => x.every((f) => f <= ONE_OFF_NEAR))
+    .map((x) => x.reduce((a, f) => a + f, 0));
   return {
     thesis: "NEAR captures agent value through Intents-funded buybacks, not gas.",
     created_at: new Date().toISOString(),
     data_through: d.at(-1)!.date,
-    method: `80% intervals = 10th-90th percentile of ${w.length} rolling ${WINDOW_DAYS}-day windows over the last 90 days (DefiLlama).`,
+    method:
+      `80% intervals = 10th-90th percentile of ${w.length} rolling ${WINDOW_DAYS}-day windows over the last 90 days (DefiLlama). ` +
+      `P5: the same over ${b12.length} rolling ${WINDOW_DAYS}-day balance changes of ${BUYBACKS} (first block of each UTC day, archival RPC), ` +
+      `leaving out the windows with a day above ${ONE_OFF_NEAR.toLocaleString("en-US")} NEAR (a one-off: 502,793 NEAR from a DAO on 2026-09-09).`,
     window: EVAL,
     evaluation:
       `On or after ${EVAL.read_from} (UTC), fetch the same sources (below), keep the UTC days ${EVAL.from} to ${EVAL.to} inclusive present in all four series. ` +
       "P1 = mean of daily volume. P2 = sum(Intents revenue) / sum(NEAR gas fees). P3 = 10000 * sum(Intents revenue) / sum(volume). " +
-      "A prediction is TRUE if the observed value lies in its interval (P3: at or above its minimum), FALSE otherwise. Fewer than 12 days: no verdict.",
+      `On chain, B(day) = amount + locked of ${BUYBACKS} (view_account) at the first block at or after 00:00 UTC of that day, on an archival RPC. ` +
+      `P5 = B(2026-11-13) - B(${EVAL.from}), in NEAR. P6 = the largest fall of B from one day to the next, ${EVAL.from} to 2026-11-13. ` +
+      `A prediction is TRUE if the observed value lies in its interval (P3: at or above its minimum; P6: at most ${P6_MAX_DROP_NEAR} NEAR), FALSE otherwise. Fewer than 12 days: no verdict.`,
     sources: SOURCES,
+    onchain: { rpc: ARCHIVAL, account: BUYBACKS },
     snapshot_sha256: createHash("sha256").update(readFileSync(SNAPSHOT)).digest("hex"),
     caveats: [
-      "DefiLlama 'revenue' (equal to 'holdersRevenue') for near-intents is the fee share allocated to NEAR buybacks, not confirmed purchases.",
-      "Bought-back NEAR offsets emission only if it is burnt or locked. On 2026-10-30 it sat on buybacks.multisignature.near (2.13M NEAR, none staked or locked, a 2-of-4 multisig): it offset nothing yet.",
+      "DefiLlama 'revenue' (equal to 'holdersRevenue') for near-intents is the NEAR sent to three wallets: buybacks.multisignature.near, fefundsadmin.sputnik-dao.near (a front-end fund DAO) and 1csfundsadmin.sputnik-dao.near. Over the 30 days to 2026-10-30 the buyback multisig received 65.6% of it (on-chain balance changes).",
+      "Bought-back NEAR offsets emission only if it is burnt or locked. On 2026-10-30 buybacks.multisignature.near held 2.13M NEAR, none staked or locked, movable by 2 of its 4 keys: it offset nothing yet. P5 and P6 read that account on chain.",
     ],
     P1: { metric: "mean daily Intents volume (USD)", low: quantile(v, 0.1), central: quantile(v, 0.5), high: quantile(v, 0.9), kind: "base rate" },
     P2: { metric: "Intents revenue / NEAR gas fees (total, not only the burnt share)", low: quantile(g, 0.1), central: quantile(g, 0.5), high: quantile(g, 0.9), kind: "base rate" },
     P3: { metric: "protocol take rate = Intents revenue / volume (bp)", min: P3_MIN_BP, kind: "tests the thesis" },
+    P5: { metric: `NEAR received by ${BUYBACKS} over the window (balance change)`, low: quantile(b12, 0.1), central: quantile(b12, 0.5), high: quantile(b12, 0.9), kind: "base rate, on chain" },
+    P6: {
+      metric: `largest daily fall of the ${BUYBACKS} balance (NEAR): the bought NEAR is not sent out`,
+      max_drop_near: P6_MAX_DROP_NEAR,
+      falls_in_history: flow.filter((f) => f < -P6_MAX_DROP_NEAR).length,
+      history_days: flow.length,
+      kind: "tests the thesis, on chain",
+    },
   };
 }
 
@@ -143,7 +241,9 @@ const canonical = (x: unknown) => JSON.stringify(x, null, 2) + "\n";
 
 function freeze() {
   if (existsSync(PREDICTIONS)) throw new Error(`${PREDICTIONS} exists: predictions are frozen once, delete it only if never published`);
-  const p = computePredictions(loadSnapshot());
+  const snap = loadSnapshot();
+  if (!snap.buybacks?.length) throw new Error("the snapshot has no buyback balances: run `npx tsx src/thesis.ts snapshot`");
+  const p = computePredictions(snap);
   mkdirSync(path.dirname(PREDICTIONS), { recursive: true });
   const body = canonical(p);
   writeFileSync(PREDICTIONS, body);
@@ -157,6 +257,7 @@ function freeze() {
 // ---------------------------------------------------------------- evaluate + HTML
 
 const usd = (x: number) => (x >= 1e9 ? `$${(x / 1e9).toFixed(2)}B` : x >= 1e6 ? `$${(x / 1e6).toFixed(1)}M` : `$${Math.round(x).toLocaleString("en-US")}`);
+const nearFmt = (x: number) => Math.round(x).toLocaleString("en-US");
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 export function evaluate(p: Predictions, d: Day[], fetchedAt?: string) {
@@ -177,6 +278,19 @@ export function evaluate(p: Predictions, d: Day[], fetchedAt?: string) {
   };
 }
 
+/** P5 and P6 from the buyback account's daily balances: B(from) to B(the day after `to`). */
+export function evaluateBuybacks(p: { window: { from: string; to: string; read_from?: string }; P5: { low: number; high: number }; P6: { max_drop_near: number } }, b: Balance[], fetchedAt?: string) {
+  const end = new Date(Date.parse(p.window.to) + 86_400_000).toISOString().slice(0, 10);
+  const pts = b.filter((x) => x.date >= p.window.from && x.date <= end);
+  const n = Math.max(0, pts.length - 1);
+  const early = !!fetchedAt && !!p.window.read_from && fetchedAt < p.window.read_from;
+  const status = (ok: boolean) => (n < WINDOW_DAYS ? `pending (${n}/${WINDOW_DAYS} days)` : early ? `pending (read on or after ${p.window.read_from})` : ok ? "TRUE" : "FALSE");
+  if (pts.length < 2) return { P5: { observed: null, status: status(false) }, P6: { observed: null, status: status(false) } };
+  const change = pts.at(-1)!.near - pts[0].near;
+  const maxDrop = Math.max(0, ...flows(pts).map((f) => -f));
+  return { P5: { observed: change, status: status(change >= p.P5.low && change <= p.P5.high) }, P6: { observed: maxDrop, status: status(maxDrop <= p.P6.max_drop_near) } };
+}
+
 function report() {
   const s = loadSnapshot();
   const d = days(s);
@@ -189,6 +303,7 @@ function report() {
   const m25 = multiple({ ...base, emission: 0.025, takeRateBp: tr });
   const m16 = multiple({ ...base, emission: 0.016, takeRateBp: tr });
   const e = evaluate(p, d, s.fetched_at);
+  const eb = p.P5 && p.P6 ? evaluateBuybacks(p, s.buybacks ?? [], s.fetched_at) : null;
 
   // 12-day blocks of the take rate since July: the regime change P3 bets on.
   const since = d.filter((x) => x.date >= "2026-07-01");
@@ -211,6 +326,10 @@ function report() {
     P2: e.P2,
     P3: e.P3,
     P4_leak_usd: leak,
+    P5: eb?.P5 ?? null,
+    P6: eb?.P6 ?? null,
+    buybacks_balance_near: s.buybacks?.at(-1)?.near ?? null,
+    buybacks_through: s.buybacks?.at(-1)?.date ?? null,
     blocks: blocks.map((b) => ({ from: b[0].date, to: b.at(-1)!.date, bp: bp(b) })),
     sensitivity: sens.map((x) => ({ takeRateBp: x.t, emission: x.em, requiredPerDay: x.required, multiple: x.multiple })),
     near_price: s.near_price,
@@ -232,6 +351,8 @@ A buyback offsets emission only if the bought NEAR is burnt or locked.</p>
 ${row("P1 " + p.P1.kind, `${usd(p.P1.low)} to ${usd(p.P1.high)} (central ${usd(p.P1.central)})`, e.P1.observed === null ? "-" : usd(e.P1.observed), e.P1.status)}
 ${row("P2 " + p.P2.kind, `${p.P2.low.toFixed(1)} to ${p.P2.high.toFixed(1)} (central ${p.P2.central.toFixed(1)})`, e.P2.observed === null ? "-" : e.P2.observed.toFixed(1), e.P2.status)}
 ${row("P3 " + p.P3.kind, `>= ${p.P3.min} bp`, e.P3.observed === null ? "-" : `${e.P3.observed.toFixed(2)} bp`, e.P3.status)}
+${p.P5 && eb ? row("P5 " + p.P5.kind, `${nearFmt(p.P5.low)} to ${nearFmt(p.P5.high)} NEAR (central ${nearFmt(p.P5.central)})`, eb.P5.observed === null ? "-" : `${nearFmt(eb.P5.observed)} NEAR`, eb.P5.status) : ""}
+${p.P6 && eb ? row("P6 " + p.P6.kind, `no daily fall above ${p.P6.max_drop_near} NEAR`, eb.P6.observed === null ? "-" : `largest fall ${eb.P6.observed.toFixed(2)} NEAR`, eb.P6.status) : ""}
 ${row("P4 measure", "swarm value leak = swarm volume x (protocol bp - swarm bp)", `${usd(leak)} on ${usd(swarm.volume_usd)} (${esc(swarm.source)})`, swarm.volume_usd ? "measured" : "no swarm volume yet")}
 </table>
 <h2>Take rate by ${WINDOW_DAYS}-day block since July</h2>

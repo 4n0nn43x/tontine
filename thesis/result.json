@@ -1,10 +1,10 @@
 {
-  "data_through": "2026-10-29",
-  "fetched_at": "2026-10-30T09:46:17.565Z",
-  "take_rate_30d_bp": 5.550400273067985,
-  "multiple_2_5": 5.432220132645861,
-  "multiple_1_6": 3.4766208848933506,
-  "predictions_sha256": null,
+  "data_through": "2026-10-30",
+  "fetched_at": "2026-10-31T13:43:50.811Z",
+  "take_rate_30d_bp": 5.4849405501109425,
+  "multiple_2_5": 5.533915400489536,
+  "multiple_1_6": 3.5417058563133024,
+  "predictions_sha256": "8970fc636d1e001603ae47fab9ef3c702f55145270fbba5c65ffe63cf22351d2",
   "P1": {
     "observed": null,
     "status": "pending (0/12 days)"
@@ -18,6 +18,16 @@
     "status": "pending (0/12 days)"
   },
   "P4_leak_usd": 0,
+  "P5": {
+    "observed": null,
+    "status": "pending (0/12 days)"
+  },
+  "P6": {
+    "observed": null,
+    "status": "pending (0/12 days)"
+  },
+  "buybacks_balance_near": 2137099.5371,
+  "buybacks_through": "2026-10-31",
   "blocks": [
     {
       "from": "2026-07-01",
@@ -67,59 +77,59 @@
     {
       "from": "2026-10-17",
       "to": "2026-10-28",
-      "bp": 4.823491979961738
+      "bp": 4.845466902392673
     }
   ],
   "sensitivity": [
     {
       "takeRateBp": 2.5,
       "emission": 0.025,
-      "requiredPerDay": 1565231941.7643838,
-      "multiple": 12.060398443041196
+      "requiredPerDay": 1583307059.523288,
+      "multiple": 12.141278792411399
     },
     {
       "takeRateBp": 2.5,
       "emission": 0.016,
-      "requiredPerDay": 1001748442.7292056,
-      "multiple": 7.718655003546365
+      "requiredPerDay": 1013316518.0949041,
+      "multiple": 7.7704184271432934
     },
     {
       "takeRateBp": 4,
       "emission": 0.025,
-      "requiredPerDay": 978269963.6027398,
-      "multiple": 7.537749026900747
+      "requiredPerDay": 989566912.2020549,
+      "multiple": 7.588299245257123
     },
     {
       "takeRateBp": 4,
       "emission": 0.016,
-      "requiredPerDay": 626092776.7057534,
-      "multiple": 4.8241593772164775
+      "requiredPerDay": 633322823.8093151,
+      "multiple": 4.8565115169645585
     },
     {
       "takeRateBp": 5.41,
       "emission": 0.025,
-      "requiredPerDay": 723304963.8467578,
-      "multiple": 5.57319706240351
+      "requiredPerDay": 731657606.0643659,
+      "multiple": 5.610572454903603
     },
     {
       "takeRateBp": 5.41,
       "emission": 0.016,
-      "requiredPerDay": 462915176.86192495,
-      "multiple": 3.5668461199382464
+      "requiredPerDay": 468260867.8811941,
+      "multiple": 3.5907663711383053
     },
     {
       "takeRateBp": 7,
       "emission": 0.025,
-      "requiredPerDay": 559011407.7729943,
-      "multiple": 4.307285158228999
+      "requiredPerDay": 565466806.9726028,
+      "multiple": 4.336170997289785
     },
     {
       "takeRateBp": 7,
       "emission": 0.016,
-      "requiredPerDay": 357767300.9747163,
-      "multiple": 2.7566625012665593
+      "requiredPerDay": 361898756.46246576,
+      "multiple": 2.775149438265462
     }
   ],
-  "near_price": 4.36,
-  "avg_daily_volume_30d": 129782772.03333333
+  "near_price": 4.41,
+  "avg_daily_volume_30d": 130406943.66666667
 }

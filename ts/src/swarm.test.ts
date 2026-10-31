@@ -47,7 +47,7 @@ test("bid hash matches the contract format sha256('{amount}:{salt}')", () => {
   assert.match(bidHash(1n, "x"), /^[0-9a-f]{64}$/);
 });
 
-import { multiple, quantile, evaluate } from "./thesis.ts";
+import { multiple, quantile, evaluate, evaluateBuybacks } from "./thesis.ts";
 
 test("thesis multiple reproduces the spec figure (5.3x at 5.41 bp, 2.5% emission)", () => {
   const m = multiple({ supply: 1.31e9, price: 4.14, emission: 0.025, takeRateBp: 5.41, avgDailyVol: 132e6 });
@@ -72,6 +72,14 @@ test("evaluate stays pending until the 12-day window is complete and read on tim
   assert.match(early.P3.status, /read on or after 2026-11-14/);
 });
 
-
-
-
+test("P5 and P6 read the buyback balance from 2026-11-01 to 2026-11-13; a fall above 1 NEAR fails P6", () => {
+  const p = { window: { from: "2026-11-01", to: "2026-11-12", read_from: "2026-11-14" }, P5: { low: 80_000, high: 170_000 }, P6: { max_drop_near: 1 } };
+  const bal = (near: (i: number) => number) => Array.from({ length: 13 }, (_, i) => ({ date: `2026-11-${String(i + 1).padStart(2, "0")}`, height: i, near: near(i) }));
+  assert.match(evaluateBuybacks(p, bal((i) => 1e6 + i * 10_000).slice(0, 12)).P5.status, /pending \(11\/12 days\)/);
+  const ok = evaluateBuybacks(p, bal((i) => (i === 6 ? 1e6 + 50_000 - 0.4 : 1e6 + i * 10_000)), "2026-11-14T01:00:00Z");
+  // Day 6 falls 0.4 NEAR (gas of a confirmation): under 1 NEAR, P6 holds.
+  assert.deepEqual([ok.P5.observed, ok.P5.status, ok.P6.observed?.toFixed(1), ok.P6.status], [120_000, "TRUE", "0.4", "TRUE"]);
+  const sold = evaluateBuybacks(p, bal((i) => 1e6 + (i < 6 ? i * 10_000 : 0)), "2026-11-14T01:00:00Z");
+  assert.deepEqual([sold.P5.status, sold.P6.status], ["FALSE", "FALSE"]);
+  assert.match(evaluateBuybacks(p, bal((i) => 1e6 + i * 10_000), "2026-11-13T09:00:00Z").P6.status, /read on or after/);
+});

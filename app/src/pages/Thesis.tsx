@@ -3,6 +3,7 @@ import { Card, Empty, Kpi } from "../components/ui";
 import { getThesis } from "../lib/api";
 
 const M = (x: number) => (x >= 1e9 ? `$${(x / 1e9).toFixed(2)}B` : `$${(x / 1e6).toFixed(0)}M`);
+const N = (x: number) => Math.round(x).toLocaleString("en-US");
 
 export function Thesis() {
   const [t, setT] = useState<Awaited<ReturnType<typeof getThesis>> | null>(null);
@@ -84,6 +85,16 @@ export function Thesis() {
                   <td>P3 · take rate (tests the thesis)</td>
                   <td>at least 4.0 bp</td>
                   <td>{r.P3.status}</td>
+                </tr>
+                <tr>
+                  <td>P5 · NEAR into the buyback wallet (on chain)</td>
+                  <td>{p?.P5 ? `${N(p.P5.low)} to ${N(p.P5.high)} NEAR` : "computed when frozen"}</td>
+                  <td>{r.P5?.status ?? "computed when frozen"}</td>
+                </tr>
+                <tr>
+                  <td>P6 · the buyback wallet sends nothing out (tests the thesis)</td>
+                  <td>no daily fall above 1 NEAR</td>
+                  <td>{r.P6?.status ?? "computed when frozen"}</td>
                 </tr>
               </tbody>
             </table>

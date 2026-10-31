@@ -1,0 +1,61 @@
+{
+  "thesis": "NEAR captures agent value through Intents-funded buybacks, not gas.",
+  "created_at": "2026-10-31T14:14:11.660Z",
+  "data_through": "2026-10-30",
+  "method": "80% intervals = 10th-90th percentile of 79 rolling 12-day windows over the last 90 days (DefiLlama). P5: the same over 67 rolling 12-day balance changes of buybacks.multisignature.near (first block of each UTC day, archival RPC), leaving out the windows with a day above 200,000 NEAR (a one-off: 502,793 NEAR from a DAO on 2026-09-09).",
+  "window": {
+    "from": "2026-11-01",
+    "to": "2026-11-12",
+    "read_from": "2026-11-14"
+  },
+  "evaluation": "On or after 2026-11-14 (UTC), fetch the same sources (below), keep the UTC days 2026-11-01 to 2026-11-12 inclusive present in all four series. P1 = mean of daily volume. P2 = sum(Intents revenue) / sum(NEAR gas fees). P3 = 10000 * sum(Intents revenue) / sum(volume). On chain, B(day) = amount + locked of buybacks.multisignature.near (view_account) at the first block at or after 00:00 UTC of that day, on an archival RPC. P5 = B(2026-11-13) - B(2026-11-01), in NEAR. P6 = the largest fall of B from one day to the next, 2026-11-01 to 2026-11-13. A prediction is TRUE if the observed value lies in its interval (P3: at or above its minimum; P6: at most 1 NEAR), FALSE otherwise. Fewer than 12 days: no verdict.",
+  "sources": {
+    "volume": "https://api.llama.fi/summary/dexs/near-intents",
+    "intentsFees": "https://api.llama.fi/summary/fees/near-intents?dataType=dailyFees",
+    "intentsRevenue": "https://api.llama.fi/summary/fees/near-intents?dataType=dailyRevenue",
+    "nearFees": "https://api.llama.fi/summary/fees/near?dataType=dailyFees",
+    "nearStats": "https://api.nearblocks.io/v1/stats"
+  },
+  "onchain": {
+    "rpc": "https://archival-rpc.mainnet.fastnear.com",
+    "account": "buybacks.multisignature.near"
+  },
+  "snapshot_sha256": "11bf6ce7e634eed8c603cb698484f2b4486e37d310c33788266ea38c3901cc49",
+  "caveats": [
+    "DefiLlama 'revenue' (equal to 'holdersRevenue') for near-intents is the NEAR sent to three wallets: buybacks.multisignature.near, fefundsadmin.sputnik-dao.near (a front-end fund DAO) and 1csfundsadmin.sputnik-dao.near. Over the 30 days to 2026-10-30 the buyback multisig received 65.6% of it (on-chain balance changes).",
+    "Bought-back NEAR offsets emission only if it is burnt or locked. On 2026-10-30 buybacks.multisignature.near held 2.13M NEAR, none staked or locked, movable by 2 of its 4 keys: it offset nothing yet. P5 and P6 read that account on chain."
+  ],
+  "P1": {
+    "metric": "mean daily Intents volume (USD)",
+    "low": 86592506.68333334,
+    "central": 130221368.91666667,
+    "high": 173183045.55,
+    "kind": "base rate"
+  },
+  "P2": {
+    "metric": "Intents revenue / NEAR gas fees (total, not only the burnt share)",
+    "low": 9.435715358943765,
+    "central": 16.635433294701624,
+    "high": 21.302532433244785,
+    "kind": "base rate"
+  },
+  "P3": {
+    "metric": "protocol take rate = Intents revenue / volume (bp)",
+    "min": 4,
+    "kind": "tests the thesis"
+  },
+  "P5": {
+    "metric": "NEAR received by buybacks.multisignature.near over the window (balance change)",
+    "low": 93380.54204000001,
+    "central": 125717.74789999984,
+    "high": 167084.97040000005,
+    "kind": "base rate, on chain"
+  },
+  "P6": {
+    "metric": "largest daily fall of the buybacks.multisignature.near balance (NEAR): the bought NEAR is not sent out",
+    "max_drop_near": 1,
+    "falls_in_history": 0,
+    "history_days": 90,
+    "kind": "tests the thesis, on chain"
+  }
+}

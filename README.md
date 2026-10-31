@@ -308,18 +308,34 @@ agent keys made in the browser. Details in [SDK.md](SDK.md); example in `ts/firm
 
 `make thesis` computes, from public DefiLlama and NEARBlocks data frozen in `data/snapshot.json`:
 
-- the Intents volume needed for buybacks to match NEAR emission: **5.4x** the 30-day average at 2.5%
-  emission, 3.5x at 1.6% (snapshot of 2026-10-30, NEAR $4.36, take rate 5.55 bp), with a sensitivity table.
+- the Intents volume needed for buybacks to match NEAR emission: **5.5x** the 30-day average at 2.5%
+  emission, 3.5x at 1.6% (snapshot of 2026-10-31, NEAR $4.41, take rate 5.48 bp), with a sensitivity table.
   This only offsets emission if the bought NEAR is burnt or locked, and on 2026-10-30 it was neither: it sat
   on a 2-of-4 multisig (see the evidence against in [THESIS.md](THESIS.md));
 - P1, P2: 80% intervals from rolling 12-day windows (base rates, they show calibration);
 - P3, the prediction that tests the thesis: the take rate stays at or above 4.0 bp from 2026-11-01 to
   2026-11-12 (12-day blocks went from 1.95-3.02 bp in July-August to 3.89-5.58 bp since 2026-09-11);
 - P4: the value the swarm settles internally without paying the Intents fee (a measure of the design).
+- P5, P6, read on chain (archival RPC) and not from DefiLlama: the NEAR that `buybacks.multisignature.near`
+  receives over the window (80% interval from its 12-day balance changes), and P6, which tests the thesis:
+  its balance never falls by more than 1 NEAR from one day to the next, so the bought NEAR is not sent out.
 
-`npx tsx ts/src/thesis.ts freeze` writes `thesis/predictions.json` and prints its sha256, to be published
-in a mainnet transaction before the window opens. The verdict is read on or after 2026-11-14, since
+The predictions were frozen on 2026-10-31 (`thesis/predictions.json`, git tag `thesis-freeze`) and their
+sha256 published on NEAR mainnet before the window opens: [transaction](https://nearblocks.io/txns/oZYiNufwTDWnzNHdfWNMrTNj14KiwpVXeDQi5K87bYM), read back with
+`cd ts && npx tsx src/publish-hash.ts verify nolwen.near`. The verdict is read on or after 2026-11-14, since
 DefiLlama still revises the last days. The dashboard shows predicted, observed, TRUE or FALSE.
+
+## Build notes
+
+- Wasm flags live in `contracts/.cargo/config.toml` (`--cfg near -C link-arg=-s`), so a plain
+  `cargo build --target wasm32-unknown-unknown --release` is enough. Without `--cfg near`, near-sdk turns
+  contract panics into a bare `unreachable` trap.
+- near-sdk is pinned to 5.29.1: 5.30 requires protocol 88, and mainnet runs protocol 86 until its upgrade
+  votes of 2026-11-04 (87) and 2026-11-06 (88). `make demo` runs sandbox 2.13.4 (protocol 86);
+  `SANDBOX_VERSION=2.14.0 make demo` checks protocol 88.
+- `make build-repro` builds `tender` and `firm` in `sourcescan/cargo-near:0.22.0-rust-1.97.1` (pinned
+  digest), the image of the mainnet `intents.near` build: two runs give the same sha256, recorded in
+  `wasm/SHA256SUMS`, which `make demo` checks before deploying.
 
 ## Real network
 

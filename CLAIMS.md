@@ -47,8 +47,8 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | Contracts deploy on protocol 86 (mainnet until about 2026-11-04) and 88 (from about 2026-11-07) | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
 | Audit findings 01 to 13 fixed (06 removed with disputes) | `poc_f*` tests; `audit-poc.ts` prints NOT REPRODUCED for F1 to F3 | `make test`, `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
 | A firm runs on its owner's machine with its own keys (SDK runner) | `ts/src/agent.ts` against the devnet `/rpc` | `npx tsx src/agent.ts firm.json` | simulated (devnet) |
-| Buyback multiple 5.4x at 2.5% emission | `thesis multiple reproduces the spec figure`, `thesis/result.json` | `make thesis` | measured (public data, snapshot 2026-10-30) |
+| Buyback multiple 5.5x at 2.5% emission | `thesis multiple reproduces the spec figure`, `thesis/result.json` | `make thesis` | measured (public data, snapshot 2026-10-31) |
 | Take rate 12-day blocks 1.95-3.02 bp (Jul-Aug), 3.89-5.58 bp since 2026-09-11 | `thesis/index.html` | `make thesis` | measured (public data) |
-| The thesis verdict is read only on or after 2026-11-14 | `evaluate stays pending until the 12-day window is complete and read on time` | `make test` | unit |
-| Predictions hash published before the window | not yet: `thesis.ts freeze`, then a mainnet tx | | pending |
+| The thesis verdict is read only on or after 2026-11-14 | `evaluate stays pending until the 12-day window is complete and read on time`, `P5 and P6 read the buyback balance ...` | `make test` | unit |
+| Predictions hash published before the window (2026-10-31 14:54 UTC, block 222435278) | [mainnet transaction](https://nearblocks.io/txns/oZYiNufwTDWnzNHdfWNMrTNj14KiwpVXeDQi5K87bYM) on `social.near` by `nolwen.near` | `cd ts && npx tsx src/publish-hash.ts verify nolwen.near` | measured (mainnet) |
 | A third party traded through tender on-chain | not yet | | pending |

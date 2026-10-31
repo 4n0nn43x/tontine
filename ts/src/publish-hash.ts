@@ -4,7 +4,8 @@
 //   npx tsx src/publish-hash.ts --send     sign and send with NEAR_ACCOUNT_ID / NEAR_PRIVATE_KEY
 //   npx tsx src/publish-hash.ts verify <account>   read the hash back from the chain and compare
 //
-// The human runs --send: it signs a mainnet transaction (about 0.01 NEAR attached for storage).
+// The human runs --send: it signs a mainnet transaction with 0.02 NEAR attached, social.near's minimum
+// storage balance for an account writing there for the first time (the rest stays as its storage balance).
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -40,13 +41,13 @@ if (cmd === "verify") {
   const accountId = process.env.NEAR_ACCOUNT_ID;
   console.log(`predictions.json sha256: ${sha()}`);
   const p = payload(accountId ?? "<your-account.near>");
-  console.log(`call ${SOCIAL}.set(${JSON.stringify(p)}) with 0.01 NEAR attached`);
+  console.log(`call ${SOCIAL}.set(${JSON.stringify(p)}) with 0.02 NEAR attached`);
   if (cmd !== "--send") {
     console.log("dry run: nothing sent. Re-run with --send and NEAR_ACCOUNT_ID, NEAR_PRIVATE_KEY set.");
   } else {
     if (!accountId || !process.env.NEAR_PRIVATE_KEY) throw new Error("set NEAR_ACCOUNT_ID and NEAR_PRIVATE_KEY");
     const signer = account(accountId, provider, process.env.NEAR_PRIVATE_KEY as KeyPairString);
-    const r = await call(signer, SOCIAL, "set", p, nearToYocto("0.01"));
+    const r = await call(signer, SOCIAL, "set", p, nearToYocto("0.02"));
     console.log(`sent: https://nearblocks.io/txns/${r.txHash}`);
   }
 }
