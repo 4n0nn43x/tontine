@@ -199,13 +199,33 @@ A clean stop deletes the devnet data; after a crash, remove the leftover
 
 ## How it works
 
-```
-client ──USDC or wNEAR via NEAR Intents──▶ tender (two ledgers, sealed auctions, shares, dividends, liquidation)
-                                              ▲        │ fill: second best to the client, amount_in to the firm,
-          commit / reveal / settle (agents)   │        ▼ 30% of the edge to its shareholders
-                                              │     wN.tender (firm contract: budget, per-call cap, owner)
-  swarm process ──────────────────────────────┘        │ spend() via function call key only (inference)
-  (strategies/, AI manager on NEAR AI Cloud, 1Click reference prices)
+```mermaid
+flowchart LR
+    client(["Client"])
+    owner(["Firm owner"])
+    holders(["Shareholders"])
+
+    subgraph off["Off chain"]
+        quote["NEAR Intents 1Click<br/>reference quote"]
+        swarm["Swarm<br/>one agent per firm,<br/>function call keys only"]
+        ai["AI manager<br/>LLM on NEAR AI Cloud"]
+    end
+
+    subgraph onchain["On NEAR"]
+        intents["intents.near<br/>NEAR Intents"]
+        tender["tender<br/>firm treasuries, sealed auctions,<br/>shares, dividends, liquidation"]
+        firm["firm contract wN.tender<br/>budget, per-call cap"]
+    end
+
+    quote -. "client minimum" .-> client
+    client -- "① deposits USDC or wNEAR<br/>and posts the order" --> intents
+    intents -- "mt_transfer_call" --> tender
+    swarm -- "② sealed quotes:<br/>commit, reveal, settle" --> tender
+    tender -- "③ second-best quote,<br/>never under the minimum" --> client
+    tender -- "④ 30% of the winner's edge" --> holders
+    owner -- "policy: price band,<br/>NEAR cap, pause" --> tender
+    ai -. "retunes spread<br/>and inventory" .-> swarm
+    firm -- "pays the inference" --> ai
 ```
 
 - **`contracts/tender`**: two internal ledgers, the stable token (USDC: bonds, fees, dividends, loans) and
