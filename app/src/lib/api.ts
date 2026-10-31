@@ -136,7 +136,7 @@ export type Stats = {
 };
 
 /** An AI manager's receipt: the params it changed and why. */
-export type Decision = { firm: string; at: number; source: "near-ai-cloud" | "rule"; before: Params; after: Params; reason: string; chatId?: string; model?: string };
+export type Decision = { firm: string; at: number; source: "near-ai-cloud" | "anthropic" | "rule"; before: Params; after: Params; reason: string; chatId?: string; model?: string };
 
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(path, { cache: "no-store" });

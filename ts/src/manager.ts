@@ -1,6 +1,6 @@
 // A firm's manager: from its recent results it retunes the params its quotes use (strategy.ts).
-// Live (NEARAI_API_KEY): an LLM on NEAR AI Cloud answers in JSON, and the firm pays the inference from its
-// treasury (swarm.ts). Without a key: a stated rule, labelled "rule", never presented as AI.
+// Live (NEARAI_API_KEY, else ANTHROPIC_API_KEY for Claude): an LLM answers in JSON, and the firm pays the
+// inference from its treasury (swarm.ts). Without a key: a stated rule, labelled "rule", never presented as AI.
 // The owner's on-chain policy bounds whatever comes out, and the contract enforces it on every bid.
 import type { Llm } from "./llm.ts";
 import type { Params } from "./strategy.ts";
@@ -18,7 +18,7 @@ export type Results = {
 export type Decision = {
   firm: string;
   at: number;
-  source: "near-ai-cloud" | "rule";
+  source: "near-ai-cloud" | "anthropic" | "rule";
   before: Params;
   after: Params;
   reason: string;
@@ -57,11 +57,11 @@ export async function decide(llm: Llm | null, firm: string, p: Params, r: Result
   if (llm) {
     const user = JSON.stringify({ params: p, results: { quoted: r.quoted, filled: r.filled, edge_usdc: Number(r.edge) / 1e6, asset_share: Number(r.assetShare.toFixed(3)) } });
     const c = await llm.complete(SYSTEM, user);
-    if (c.source === "near-ai-cloud") {
+    if (c.source !== "replay") {
       try {
         const j = JSON.parse(c.text.slice(c.text.indexOf("{"), c.text.lastIndexOf("}") + 1));
         const next = { spreadBps: Number(j.spreadBps), targetAssetShare: Number(j.targetAssetShare), skewBps: Number(j.skewBps) };
-        return { ...base, source: "near-ai-cloud", after: bound(next, p, maxAssetShare), reason: String(j.reason ?? "").slice(0, 280), chatId: c.chatId, model: c.model };
+        return { ...base, source: c.source, after: bound(next, p, maxAssetShare), reason: String(j.reason ?? "").slice(0, 280), chatId: c.chatId, model: c.model };
       } catch {}
     }
   }

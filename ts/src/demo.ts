@@ -200,7 +200,7 @@ async function main() {
     const atlas = firms.find((f) => f.strategy.managed === true)!;
     const d = await swarm.manage(atlas);
     check(
-      `manager decision recorded (${d.source === "rule" ? "rule: no NEARAI_API_KEY" : "LLM on NEAR AI Cloud"}), params bounded`,
+      `manager decision recorded (${d.source === "rule" ? "rule: no LLM key" : d.source === "anthropic" ? "LLM, Claude" : "LLM on NEAR AI Cloud"}), params bounded`,
       d.after.spreadBps >= 1 && d.after.spreadBps <= 300 && d.after.targetAssetShare <= 0.8,
       `spread ${d.before.spreadBps} -> ${d.after.spreadBps} bp: ${d.reason}`,
     );

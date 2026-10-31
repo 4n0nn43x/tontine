@@ -107,6 +107,7 @@ address: 5 accounts and 10 faucet calls per hour, 600 RPC calls and 60 quotes pe
 | `MANAGER_SECS` | `180` | How often managed firms review their results |
 | `SANDBOX_RPC_PORT` | `3030` | Sandbox RPC, bound to 127.0.0.1 |
 | `NEARAI_API_KEY` | unset | The manager of Atlas AI asks an LLM on NEAR AI Cloud (the firm pays the inference); without it, a stated rule, labelled `rule` |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | unset, `claude-opus-5-5` | Without `NEARAI_API_KEY`, the manager of Atlas AI asks Claude instead (Anthropic API) |
 | `REPLAY` | unset | `1`: price NEAR from the replay instead of live 1Click quotes |
 
 The devnet lives in the process: a restart starts a new chain (orders and demo accounts start over; the
@@ -246,7 +247,7 @@ flowchart LR
   also stop spending at once with `set_budget(0, 0)` on the firm contract and close the firm.
 - **AI manager** (`ts/src/manager.ts`): a managed firm's manager reviews its fills, edge and inventory and
   retunes its spread, NEAR target and lean. For Atlas AI, with `NEARAI_API_KEY`, it is an LLM on NEAR AI Cloud
-  and the firm pays the inference from its treasury through its firm contract; without a key, and for the
+  (else Claude with `ANTHROPIC_API_KEY`) and the firm pays the inference from its treasury through its firm contract; without a key, and for the
   other managed house firms (Undercut, Cost Plus, Sniper), a stated rule does it. Every decision is labelled
   with its source. Quoting itself is deterministic (`defaultQuote`).
 - **Shares**: 100 NEP-245 tokens per firm (`mt_transfer`, `mt_balance_of`, `nep245` events), fixed-price asks
@@ -382,7 +383,7 @@ seven Mediums and four Lows, all fixed, each with a PoC run before and after the
 ## Libraries (Q-005)
 
 NEAR Intents verifier (defuse 0.4.5, MIT, binary taken from `intents.near`, sandbox only), near-sdk 5.29.1,
-near-contract-standards 5.29.1 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4
+near-contract-standards 5.29.1 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4, @anthropic-ai/sdk 1.3.0 (optional manager LLM)
 (sandbox binaries 2.13.4 and 2.14.0), tsx, TypeScript. Website: React 19.1, react-router-dom 7.18, Vite 8.3,
 Font Awesome 6.5.2 (CDN), fonts Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN) and
 Geist Pixel Circle (SIL OFL); browser QA with Playwright (not in the repo). Data: DefiLlama, NEARBlocks, Binance (NEAR candles, Coinbase as fallback) public APIs; NEAR Intents 1Click quotes. All code written in the

@@ -743,7 +743,7 @@ export function FirmDetail() {
           {info === "manager" && (
             <>
               <p className="fine">
-                Reviews its results every few minutes and retunes its spread, NEAR target and lean, within the owner's policy. Each decision shows its source: an LLM on NEAR AI Cloud (paid by the firm) or the stated rule.
+                Reviews its results every few minutes and retunes its spread, NEAR target and lean, within the owner's policy. Each decision shows its source: an LLM (NEAR AI Cloud or Claude, paid by the firm) or the stated rule.
               </p>
               {own.length ? (
                 <div className="table-wrap">
@@ -763,7 +763,7 @@ export function FirmDetail() {
                         <tr key={d.at}>
                           <td>{ago(d.at)}</td>
                           <td>
-                            <Badge status={d.source === "near-ai-cloud" ? "Filled" : undefined}>{d.source === "near-ai-cloud" ? "LLM, NEAR AI Cloud" : "stated rule"}</Badge>
+                            <Badge status={d.source === "rule" ? undefined : "Filled"}>{d.source === "near-ai-cloud" ? "LLM, NEAR AI Cloud" : d.source === "anthropic" ? "LLM, Claude" : "stated rule"}</Badge>
                             {d.model ? <span className="fine"> {d.model}</span> : null}
                           </td>
                           <td className="num">

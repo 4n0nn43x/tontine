@@ -7,14 +7,15 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Claude, CLAUDE_MODEL } from "./claude.ts";
 
 export type Completion = {
   text: string;
   chatId: string;
   model: string;
-  /** Signature payload from /v1/signature, null in replay without a recorded one. */
+  /** Signature payload from /v1/signature, null in replay without a recorded one, and with Claude. */
   signature: unknown | null;
-  source: "near-ai-cloud" | "replay";
+  source: "near-ai-cloud" | "anthropic" | "replay";
 };
 
 export interface Llm {
@@ -80,6 +81,17 @@ export class Replay implements Llm {
   }
 }
 
+/** NEAR AI Cloud with NEARAI_API_KEY, else Claude with ANTHROPIC_API_KEY (claude.ts), else the replay. */
 export function makeLlm(): Llm {
-  return process.env.NEARAI_API_KEY && process.env.REPLAY !== "1" ? new NearAiCloud(process.env.NEARAI_API_KEY) : new Replay();
+  if (process.env.REPLAY === "1") return new Replay();
+  if (process.env.NEARAI_API_KEY) return new NearAiCloud(process.env.NEARAI_API_KEY);
+  if (process.env.ANTHROPIC_API_KEY) return new Claude();
+  return new Replay();
+}
+
+/** The model makeLlm() talks to, as published in a managed firm's spec. */
+export function llmLabel(): string {
+  if (process.env.REPLAY !== "1" && process.env.NEARAI_API_KEY) return `${MODEL} on NEAR AI Cloud`;
+  if (process.env.REPLAY !== "1" && process.env.ANTHROPIC_API_KEY) return `${CLAUDE_MODEL} (Anthropic)`;
+  return "none: a stated rule until an LLM key is set";
 }

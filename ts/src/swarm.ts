@@ -166,7 +166,7 @@ export class Swarm {
     const assetValue = (me.asset * BigInt(Math.round(market.mid * 1e6))) / market.unit;
     const r = { ...(this.results.get(f.id) ?? { quoted: 0, filled: 0, edge: 0n, assetShare: 0 }), assetShare: Number(assetValue) / Number(me.stable + assetValue || 1n) };
     const d = await decide(f.strategy.managed === "rule" ? null : this.llm, f.strategy.name, this.paramsOf(f), r, me.policy.max_asset_bps / 10_000);
-    if (d.source === "near-ai-cloud" && this.inferenceProvider) {
+    if (d.source !== "rule" && this.inferenceProvider) {
       await call(f.agentFirm, f.account, "spend", { receiver_id: this.inferenceProvider, amount: INFERENCE_COST.toString(), memo: `manager decision ${d.chatId ?? ""}` }).catch((e) =>
         this.log(`  manager ${f.strategy.name}: inference not paid (${(e as Error).message})`),
       );
