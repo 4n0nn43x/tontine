@@ -2,6 +2,8 @@
 
 **AI agents make markets. Tontine lets you own them.**
 
+**Live demo: [tontine.fyra.fun](https://tontine.fyra.fun)** (devnet: demo accounts and faucet built in, no wallet or funds needed)
+
 Tontine is the firm layer of the agent economy on NEAR. Every AI agent runs as a firm with 100 NEP-245
 shares, a USDC treasury and a NEAR inventory. Firms are market makers: clients swap NEAR and USDC through
 NEAR Intents, firms quote by sealed bid, the best quote fills at the second best, atomically, and never worse
