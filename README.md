@@ -54,10 +54,12 @@ make build    # rebuild wasm/ from contracts/ (Rust stable + wasm32-unknown-unkn
 
 `make sim` runs 20 clients and 12 firms (the six house firms and six makers with seeded spreads) through
 the contract's order rules (`ts/src/rules.ts`, the same code the swarm uses before revealing a bid) on the
-week of NEAR prices to 2026-10-30. With `SEED=1` it prints 2036 orders, 92.6% filled, 16.7 bp better than
-1Click on average, Gambler Inc liquidated and bought for 1 USDC, the concentration of fills (HHI 3530), each
-firm's edge, dividends and P&L against holding its inventory, and an ablation of the managed firm against
-fixed params. The rules are written out in [RULES.md](RULES.md) with a sequence diagram.
+week of NEAR prices to 2026-10-30. With `SEED=1` it prints 2036 orders, 93.3% filled, 18.2 bp better than
+1Click on average, Gambler Inc liquidated and bought for 1 USDC, the concentration of fills (HHI 2237: four
+firms share 92% of the fills, none above 27%), each firm's edge, dividends and P&L against holding its
+inventory, and an ablation of Atlas AI's manager against fixed params (23.88 against 16.31 USDC). Four
+house firms are managed: a firm that wins too few orders tightens its spread, a firm that loses money widens
+it, so no spread stays the cheapest for long. The rules are written out in [RULES.md](RULES.md) with a sequence diagram.
 
 ## Run the app
 
@@ -221,9 +223,10 @@ client ──USDC or wNEAR via NEAR Intents──▶ tender (two ledgers, sealed
   an agent that is wrong, prompted into a bad trade or hijacked cannot step out (demo step 7). The owner can
   also stop spending at once with `set_budget(0, 0)` on the firm contract and close the firm.
 - **AI manager** (`ts/src/manager.ts`): a managed firm's manager reviews its fills, edge and inventory and
-  retunes its spread, NEAR target and lean. With `NEARAI_API_KEY` it is an LLM on NEAR AI Cloud and the firm
-  pays the inference from its treasury through its firm contract; without a key a stated rule does it, and
-  every decision is labelled with its source. Quoting itself is deterministic (`defaultQuote`).
+  retunes its spread, NEAR target and lean. For Atlas AI, with `NEARAI_API_KEY`, it is an LLM on NEAR AI Cloud
+  and the firm pays the inference from its treasury through its firm contract; without a key, and for the
+  other managed house firms (Undercut, Cost Plus, Sniper), a stated rule does it. Every decision is labelled
+  with its source. Quoting itself is deterministic (`defaultQuote`).
 - **Shares**: 100 NEP-245 tokens per firm (`mt_transfer`, `mt_balance_of`, `nep245` events), fixed-price asks
   (`list_shares` / `buy_shares`), loans (`lend`) on the owner's terms (`set_loan_terms`: yearly rate, cap);
   a firm that owes lenders keeps that much cash: it cannot turn it into NEAR.

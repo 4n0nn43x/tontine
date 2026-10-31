@@ -1,6 +1,6 @@
 // `make sim SEED=1`: the swarm's market off chain, with the contract's rules (rules.ts) and the swarm's own
-// quoting (strategy.ts), on NEAR's real price path (fixtures/near-usd-5m.json). No LLM: managed firms use
-// the manager's stated rule. Same seed, same result.
+// quoting (strategy.ts), on NEAR's real price path (fixtures/near-usd-5m.json). No LLM: managed firms, the AI
+// one included, use the manager's stated rule. Same seed, same result.
 //
 //   SEED=1 CLIENTS=20 EXTRA_FIRMS=6 DAYS=7 ORDERS_PER_HOUR=12 npx tsx src/sim.ts [--json]
 import { pathToFileURL } from "node:url";
@@ -26,6 +26,7 @@ function rng(seed: number) {
 
 type Firm = FirmCtx & { name: string; strategy: Strategy; params: Params; dividends: bigint; below: number; volume: bigint; results: Results; managed: boolean; start: { stable: bigint; asset: bigint } };
 
+/** `managed: false` freezes the AI-managed firm's params (the ablation); rule-managed firms still adapt. */
 export type SimOptions = { seed: number; clients: number; extraFirms: number; days: number; ordersPerHour: number; managed?: boolean };
 
 export async function simulate(o: SimOptions) {
@@ -51,7 +52,7 @@ export async function simulate(o: SimOptions) {
     const gambler = s.name === "Gambler Inc";
     const stable = gambler ? USDC(60) : USDC(400);
     const asset = gambler ? NEAR(2) : NEAR(60);
-    const managed = !!s.managed && o.managed !== false;
+    const managed = !!s.managed && !(s.managed === true && o.managed === false);
     return {
       id, account: `w${id + 1}`, name: s.name, strategy: s, params: { ...s.params }, stable, asset, fills: 0, edge: 0n, status: "Solvent",
       policy: { max_asset_bps: gambler ? 10000 : 8000, band_bps: 1000, paused: false },
@@ -179,6 +180,7 @@ export async function simulate(o: SimOptions) {
       // P&L against holding its starting inventory, at the last mid (dividends paid count as earned).
       pnlVsHoldUsdc: (Number(nav(f) + f.dividends) - Number(nav(f.start))) / 1e6,
       spreadBps: f.params.spreadBps,
+      ai: f.strategy.managed === true,
     })),
   };
 }
@@ -187,10 +189,10 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const env = (k: string, d: number) => Number(process.env[k] ?? d);
   const opts = { seed: env("SEED", 1), clients: env("CLIENTS", 20), extraFirms: env("EXTRA_FIRMS", 6), days: env("DAYS", 7), ordersPerHour: env("ORDERS_PER_HOUR", 12) };
   const r = await simulate(opts);
-  // Ablation: the same run with the managed firm on fixed params.
+  // Ablation: the same run with the AI-managed firm on fixed params.
   const fixed = await simulate({ ...opts, managed: false });
   if (process.argv.includes("--json")) {
-    console.log(JSON.stringify({ ...r, ablation: fixed.firms.filter((f) => r.firms.find((x) => x.name === f.name)?.spreadBps !== f.spreadBps) }, null, 2));
+    console.log(JSON.stringify({ ...r, ablation: fixed.firms.filter((f) => f.ai) }, null, 2));
   } else {
     console.log(`seed ${r.seed}, ${r.window.days} days from ${r.window.from} (NEAR ${r.window.nearStart} -> ${r.window.nearEnd}), ${opts.clients} clients, ${r.firms.length} firms`);
     console.log(`orders ${r.orders}, filled ${(r.fillRate * 100).toFixed(1)}%, refunded ${r.refunded}, average ${r.avgImprovementBps.toFixed(1)} bp better than NEAR Intents 1Click, volume ${r.volumeUsdc.toFixed(0)} USDC`);
@@ -199,7 +201,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     console.log("\nfirm                status       fills  share   edge USDC  dividends  P&L vs holding  spread");
     for (const f of r.firms)
       console.log(`${f.name.padEnd(19)} ${f.status.padEnd(11)} ${String(f.fills).padStart(6)} ${(f.share * 100).toFixed(1).padStart(5)}% ${f.edgeUsdc.toFixed(2).padStart(10)} ${f.dividendsUsdc.toFixed(2).padStart(10)} ${f.pnlVsHoldUsdc.toFixed(2).padStart(15)} ${String(f.spreadBps).padStart(6)} bp`);
-    for (const m of r.firms.filter((f) => f.spreadBps !== fixed.firms.find((x) => x.name === f.name)!.spreadBps)) {
+    for (const m of r.firms.filter((f) => f.ai)) {
       const b = fixed.firms.find((x) => x.name === m.name)!;
       console.log(`\nablation, ${m.name}: managed (rule, no LLM) P&L ${m.pnlVsHoldUsdc.toFixed(2)} USDC on ${m.fills} fills, fixed params ${b.pnlVsHoldUsdc.toFixed(2)} USDC on ${b.fills} fills`);
     }

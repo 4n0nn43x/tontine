@@ -197,7 +197,7 @@ async function main() {
     check("sell order filled at least at the 1Click reference", r4.order.status === "Filled" && BigInt(r4.order.out) >= BigInt(r4.order.reference_out), `${fmt(r4.order.out)} USDC for 2 NEAR`);
 
     section("5. Atlas AI's manager retunes its quotes from its results");
-    const atlas = firms.find((f) => f.strategy.managed)!;
+    const atlas = firms.find((f) => f.strategy.managed === true)!;
     const d = await swarm.manage(atlas);
     check(
       `manager decision recorded (${d.source === "rule" ? "rule: no NEARAI_API_KEY" : "LLM on NEAR AI Cloud"}), params bounded`,

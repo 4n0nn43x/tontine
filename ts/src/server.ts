@@ -127,7 +127,7 @@ async function ordersLoop() {
   }
 }
 
-// AI-managed firms review their results and retune their quotes every few minutes.
+// Managed firms (AI or rule) review their results and retune their quotes every few minutes.
 async function managerLoop() {
   for (;;) {
     await sleep(Number(process.env.MANAGER_SECS ?? 180) * 1000);

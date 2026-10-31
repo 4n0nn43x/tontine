@@ -71,8 +71,9 @@ export interface Strategy {
   house: boolean;
   /** Starting params. */
   params: Params;
-  /** An AI manager retunes the params from the firm's results (manager.ts). */
-  managed?: boolean;
+  /** A manager retunes the params from the firm's results (manager.ts): true for the AI manager (an LLM
+   * when NEARAI_API_KEY is set, else the rule), "rule" for the stated rule only. */
+  managed?: boolean | "rule";
   /** Optional: replace the default quote (output for an order, or null to pass). */
   quote?(order: OrderView, me: FirmCtx, market: Market, params: Params): bigint | null;
   /** Optional: sealed price to buy a firm in liquidation (forward auction), paid from the treasury. */

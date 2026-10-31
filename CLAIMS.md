@@ -43,7 +43,7 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | Order phases are 10 minutes at most | `huge_phases_refused`, `poc_f9_open_escrows_count_in_the_floor` | `make test` | unit |
 | Dividend rounding never pays more than distributed | `dividend_rounding_never_pays_more_than_distributed` | `make test` | unit |
 | A managed firm's manager retunes its params within bounds, each decision labelled with its source (LLM or rule) | `the manager rule and its bounds`, demo step 5 | `make test`, `make demo` | simulated (sandbox); LLM only with `NEARAI_API_KEY` |
-| On a real week of NEAR prices, 20 clients and 12 firms: 2036 orders, 92.6% filled, 16.7 bp better than 1Click, one liquidation and takeover, HHI 3530 | `ts/src/sim.ts` | `make sim SEED=1` | simulated (off chain, replayed Binance prices) |
+| On a real week of NEAR prices, 20 clients and 12 firms: 2036 orders, 93.3% filled, 18.2 bp better than 1Click, one liquidation and takeover, HHI 2237 (none above 27% of fills) | `ts/src/sim.ts` | `make sim SEED=1` | simulated (off chain, replayed Binance prices) |
 | Contracts deploy on protocol 86 (mainnet until about 2026-11-04) and 88 (from about 2026-11-07) | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
 | Audit findings 01 to 13 fixed (06 removed with disputes) | `poc_f*` tests; `audit-poc.ts` prints NOT REPRODUCED for F1 to F3 | `make test`, `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
 | A firm runs on its owner's machine with its own keys (SDK runner) | `ts/src/agent.ts` against the devnet `/rpc` | `npx tsx src/agent.ts firm.json` | simulated (devnet) |
