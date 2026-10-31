@@ -21,7 +21,9 @@ export type FirmHandle = {
 /** Inference price per manager decision, paid by the firm from its treasury (USDC base units). */
 export const INFERENCE_COST = 50_000n;
 
-export const bidHash = (amount: bigint, salt: string) => createHash("sha256").update(`${amount}:${salt}`).digest("hex");
+/** The sealed-bid commitment, bound to its auction and firm so another firm cannot copy it. */
+export const bidHash = (auctionId: number, firmId: number, amount: bigint, salt: string) =>
+  createHash("sha256").update(`${auctionId}:${firmId}:${amount}:${salt}`).digest("hex");
 
 const fmtAsset = (v: bigint, side: "Buy" | "Sell") => (side === "Buy" ? `${(Number(v) / 1e24).toFixed(4)} NEAR` : `${(Number(v) / 1e6).toFixed(2)} USDC`);
 
@@ -86,7 +88,7 @@ export class Swarm {
         const salt = randomBytes(16).toString("hex");
         salts.set(id, salt);
         try {
-          await call(byOwner ? f.owner : f.agentTender, this.tender, "commit_bid", { auction_id: auctionId, firm_id: id, hash: bidHash(price, salt) });
+          await call(byOwner ? f.owner : f.agentTender, this.tender, "commit_bid", { auction_id: auctionId, firm_id: id, hash: bidHash(auctionId, id, price, salt) });
           this.log(`  commit  ${f.strategy.name.padEnd(18)} sealed`);
         } catch (e) {
           salts.delete(id);

@@ -41,10 +41,10 @@ test("the manager rule and its bounds", () => {
   assert.deepEqual(b, { spreadBps: 300, targetAssetShare: 0.8, skewBps: 0 }, "capped, and NaN keeps the previous value");
 });
 
-test("bid hash matches the contract format sha256('{amount}:{salt}')", () => {
+test("bid hash matches the contract format sha256('{auction_id}:{firm_id}:{amount}:{salt}')", () => {
   // Same vector is asserted in contracts/tender/src/tests.rs (bid_hash_vector).
-  assert.equal(bidHash(6_000_000n, "s0"), "bb0041d21898d7bb4e1c67959ec2beaa5e433ead7084e524f13dfc179744f9fd");
-  assert.match(bidHash(1n, "x"), /^[0-9a-f]{64}$/);
+  assert.equal(bidHash(7, 3, 6_000_000n, "s0"), "05dbe4e0eaf78d50469d77012dae2f7b250d2c3f6d15adb90999fcdb7f24ff97");
+  assert.match(bidHash(0, 0, 1n, "x"), /^[0-9a-f]{64}$/);
 });
 
 import { multiple, quantile, evaluate, evaluateBuybacks } from "./thesis.ts";

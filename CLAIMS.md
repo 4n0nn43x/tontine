@@ -12,7 +12,7 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | No bid, or fewer than `min_bidders`: everyone is refunded | `no_bid_refunds_the_client`, `too_few_bidders_refund_everyone` | `make test` | unit |
 | Sell orders pay USDC; Tontine's fee comes out of what the winner receives | `sell_orders_pay_stable_and_the_fee_comes_out_of_what_the_firm_receives`, `order_fee_goes_to_tontine`, demo step 4 | `make test`, `make demo` | simulated (sandbox) |
 | 30% of a fill's edge goes to shareholders; a losing fill pays none | `order_fills_at_the_second_best_quote_and_pays_dividends`, `a_losing_fill_pays_no_dividend`, demo step 3 | `make test`, `make demo` | simulated (sandbox) |
-| Reveal must match the commit | `reveal_must_match_commit`, `bid_hash_vector` (Rust and TS share one vector) | `make test` | unit |
+| Reveal must match the commit, which binds the auction and the firm: a copied commit cannot be revealed | `reveal_must_match_commit`, `bid_hash_vector` (Rust and TS share one vector), `poc_f16_a_copied_commit_cannot_be_revealed` | `make test` | unit |
 | One bid per owner per auction (anti-shill), one per firm, never on its owner's own order | `anti_shill_one_bid_per_owner`, `one_bid_per_firm_even_after_a_sale`, `the_client_cannot_fill_its_own_order`, demo step 2 | `make test`, `make demo` | simulated (sandbox) |
 | Bidding requires an owner bond | `bid_requires_bond` | `make test` | unit |
 | A committed bid never revealed costs its owner's bond, paid to the client | `an_unrevealed_bid_pays_the_client_from_the_owner_bond`, `the_slash_follows_the_owner_who_bid`, demo step 6 | `make test`, `make demo` | simulated (sandbox) |
@@ -32,20 +32,23 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | A takeover voids older share asks | `takeover_voids_old_asks` | `make test` | unit |
 | A liquidation without a buyer winds the firm up; an owner closes its firm; a firm with open bids cannot close | `a_liquidation_without_a_buyer_winds_the_firm_up`, `an_owner_closes_its_firm_and_the_shareholders_get_the_treasury`, `a_closed_firm_gives_its_inventory_to_shareholders_in_kind`, `a_firm_with_open_bids_cannot_close` | `make test` | unit |
 | Firm accounts never have a full access key | demo (`view_access_key_list`) | `make demo` | simulated (sandbox) |
+| A firm holds 4 agent keys at most, so a takeover can always delete them; its owner can revoke one | `poc_f15_agent_keys_are_capped`, `create_firm_refuses_extra_agent_keys`, `the_owner_revokes_an_agent_key_and_frees_its_slot` | `make test` | unit |
 | 21 USDC spend on a 20 USDC budget is rejected; a failed spend is rolled back | `spend_21_on_budget_20_rejected`, `failed_transfer_rolls_back`, demo step 9 | `make test`, `make demo` | simulated (sandbox) |
 | Agent key cannot call a deposit-taking method | demo step 9 | `make demo` | simulated (sandbox) |
 | Anyone launches a firm (`create_firm`), owns its 100 shares; the account has two function call keys only | `anyone_creates_a_firm_and_owns_its_shares`, demo step 10 | `make test`, `make demo` | simulated (sandbox) |
 | Only the admin stores the firm code; owners publish their firm's spec | `only_admin_sets_firm_code`, `owners_publish_their_firm_spec` | `make test` | unit |
 | Loans follow the owner's rate and cap, earn interest, are at least 1 USDC, 20 at most; a borrower keeps the cash it owes | `loans_follow_the_owner_terms_and_earn_interest`, `loans_without_terms_stay_at_zero_interest`, `poc_f5_dust_loans_bloat_the_firm`, `poc_f10_lent_cash_stays_cash`, `no_loans_to_a_firm_in_liquidation` | `make test` | unit |
 | 0.5% share sale fee, from the seller's proceeds | `share_sale_fee_comes_out_of_the_seller_proceeds`, `share_market_buy` | `make test` | unit |
+| A share buyer never pays more than the price it saw | `poc_f17_buy_shares_never_pays_more_than_seen` | `make test` | unit |
+| A new storage entry is paid from its own deposit; withdrawals of 0 are refused | `poc_f18_an_empty_storage_deposit_cannot_grow_the_state`, `poc_f18_a_new_entry_is_paid_from_its_deposit`, `poc_f18_zero_withdrawals_are_refused` | `make test` | unit |
 | Keepers are paid from Tontine's fees, never from an empty balance, never for an unfilled or fee-less order | `keepers_are_paid_from_tontine_fees_when_there_are_any`, `poc_f7_...`, `poc_f11_self_fills_do_not_farm_the_keeper_reward` | `make test` | unit |
-| One fill cannot set the reference price; bands are anchored at posting time | `poc_f8_one_fill_cannot_set_the_price`, `poc_f8_a_fill_during_an_auction_cannot_push_bids_out_of_band` | `make test` | unit |
+| One fill cannot set the reference price, nor can a run of self-fills (3% per hour in total, bounds saturate); bands are anchored at posting time | `poc_f8_one_fill_cannot_set_the_price`, `poc_f8_a_fill_during_an_auction_cannot_push_bids_out_of_band`, `poc_f14_self_fills_cannot_ratchet_the_price`, `poc_f14_the_price_bounds_saturate` | `make test` | unit |
 | Order phases are 10 minutes at most | `huge_phases_refused`, `poc_f9_open_escrows_count_in_the_floor` | `make test` | unit |
 | Dividend rounding never pays more than distributed | `dividend_rounding_never_pays_more_than_distributed` | `make test` | unit |
 | A managed firm's manager retunes its params within bounds, each decision labelled with its source (LLM or rule) | `the manager rule and its bounds`, demo step 5 | `make test`, `make demo` | simulated (sandbox); LLM only with `NEARAI_API_KEY` |
-| On a real week of NEAR prices, 20 clients and 12 firms: 2036 orders, 93.3% filled, 18.2 bp better than 1Click, one liquidation and takeover, HHI 2237 (none above 27% of fills) | `ts/src/sim.ts` | `make sim SEED=1` | simulated (off chain, replayed Binance prices) |
+| On a real week of NEAR prices, 20 clients and 12 firms: 2036 orders, 93.3% filled, 18.2 bp better than 1Click, one liquidation and takeover, HHI 2240 (none above 29% of fills) | `ts/src/sim.ts` | `make sim SEED=1` | simulated (off chain, replayed Binance prices) |
 | Contracts deploy on protocol 86 (mainnet until about 2026-11-04) and 88 (from about 2026-11-07) | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
-| Audit findings 01 to 13 fixed (06 removed with disputes) | `poc_f*` tests; `audit-poc.ts` prints NOT REPRODUCED for F1 to F3 | `make test`, `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
+| Audit findings 01 to 18 fixed (06 removed with disputes) | `poc_f*` tests; `audit-poc.ts` prints NOT REPRODUCED for F1 to F3 | `make test`, `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
 | A firm runs on its owner's machine with its own keys (SDK runner) | `ts/src/agent.ts` against the devnet `/rpc` | `npx tsx src/agent.ts firm.json` | simulated (devnet) |
 | Buyback multiple 5.5x at 2.5% emission | `thesis multiple reproduces the spec figure`, `thesis/result.json` | `make thesis` | measured (public data, snapshot 2026-10-31) |
 | Take rate 12-day blocks 1.95-3.02 bp (Jul-Aug), 3.89-5.58 bp since 2026-09-11 | `thesis/index.html` | `make thesis` | measured (public data) |

@@ -157,7 +157,7 @@ async function main() {
     const assetBefore = BigInt(await view(provider, T, "asset_balance_of", { account_id: client.acct.accountId }));
     const r1 = await swarm.runOrder(o1, async () => {
       const ord = await view(provider, T, "get_order", { order_id: o1 });
-      shill = await rejects(call(o1Shell.agentTender, T, "commit_bid", { auction_id: ord.auction, firm_id: o1Shell.id, hash: bidHash(1n, "x") }), "one bid per owner");
+      shill = await rejects(call(o1Shell.agentTender, T, "commit_bid", { auction_id: ord.auction, firm_id: o1Shell.id, hash: bidHash(ord.auction, o1Shell.id, 1n, "x") }), "one bid per owner");
     });
     check("anti-shill: a second firm of the same owner cannot bid", shill !== null && !String(shill).startsWith("unexpected"), shill ?? "");
     const revealed = r1.auction.bids.map((b: any) => b.revealed).filter(Boolean).map(BigInt).sort((a: bigint, b: bigint) => (a < b ? 1 : -1));
@@ -210,8 +210,8 @@ async function main() {
     const a6 = (await view(provider, T, "get_order", { order_id: orderId(p6) })).auction;
     const [quiet, honest] = [firms[3], firms[1]];
     const fair6 = outAt("Buy", USDC(20), prices[at], 5);
-    await call(quiet.agentTender, T, "commit_bid", { auction_id: a6, firm_id: quiet.id, hash: bidHash(fair6, "q") });
-    await call(honest.agentTender, T, "commit_bid", { auction_id: a6, firm_id: honest.id, hash: bidHash(fair6, "h") });
+    await call(quiet.agentTender, T, "commit_bid", { auction_id: a6, firm_id: quiet.id, hash: bidHash(a6, quiet.id, fair6, "q") });
+    await call(honest.agentTender, T, "commit_bid", { auction_id: a6, firm_id: honest.id, hash: bidHash(a6, honest.id, fair6, "h") });
     const clientStable = BigInt(await view(provider, T, "balance_of", { account_id: client.acct.accountId }));
     const a6v = await view(provider, T, "get_auction", { auction_id: a6 });
     await waitUntilChainTime(provider, a6v.commit_end);
@@ -229,7 +229,7 @@ async function main() {
     const a7 = (await view(provider, T, "get_order", { order_id: orderId(p7) })).auction;
     const dump = outAt("Buy", USDC(20), prices[at] / 2, 0);
     const victimAsset = BigInt(await view(provider, T, "asset_balance_of", { account_id: victim.account }));
-    await call(victim.agentTender, T, "commit_bid", { auction_id: a7, firm_id: victim.id, hash: bidHash(dump, "inj") });
+    await call(victim.agentTender, T, "commit_bid", { auction_id: a7, firm_id: victim.id, hash: bidHash(a7, victim.id, dump, "inj") });
     const a7v = await view(provider, T, "get_auction", { auction_id: a7 });
     await waitUntilChainTime(provider, a7v.commit_end);
     const refused = await rejects(call(victim.agentTender, T, "reveal_bid", { auction_id: a7, firm_id: victim.id, amount: dump.toString(), salt: "inj" }), "bid outside the firm's price band");

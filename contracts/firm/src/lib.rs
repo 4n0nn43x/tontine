@@ -11,6 +11,9 @@ use near_sdk::{env, ext_contract, near, require, AccountId, Allowance, Gas, Near
 const SEC: u64 = 1_000_000_000;
 /// Methods an agent key may call on tender (none takes a deposit). Mirrors ts/src/deploy.ts.
 const AGENT_TENDER_METHODS: &str = "commit_bid,reveal_bid,settle,epoch_tick,settle_dividends";
+/// The two keys of create_firm plus room for rotation. Bounds the deletions set_owner makes in one
+/// receipt, so a takeover always fits the gas tender attaches (audit finding F15).
+const MAX_AGENT_KEYS: usize = 4;
 
 #[ext_contract(ext_tender)]
 #[allow(dead_code)]
@@ -57,6 +60,7 @@ impl Firm {
     #[init]
     pub fn new(tender: AccountId, owner: AccountId, budget: U128, max_per_call: U128, epoch_secs: u64, agent_keys: Vec<PublicKey>) -> Self {
         require!(epoch_secs > 0, "epoch_secs must be > 0");
+        require!(agent_keys.len() <= MAX_AGENT_KEYS, "too many agent keys (max 4)");
         Self { tender, owner, budget, max_per_call, spent: U128(0), epoch_secs, epoch_start: env::block_timestamp(), agent_keys }
     }
 
@@ -116,12 +120,21 @@ impl Firm {
         require!(env::predecessor_account_id() == self.owner, "owner only");
         // A duplicate entry would make the key outlive a takeover (audit finding F1).
         require!(!self.agent_keys.contains(&public_key), "key already registered");
+        require!(self.agent_keys.len() < MAX_AGENT_KEYS, "too many agent keys (max 4)");
         let (receiver, methods) =
             if on_tender { (self.tender.clone(), AGENT_TENDER_METHODS) } else { (env::current_account_id(), "spend") };
         self.agent_keys.push(public_key.clone());
         Promise::new(env::current_account_id())
             .add_access_key_allowance(public_key, Allowance::unlimited(), receiver, methods)
             .detach();
+    }
+
+    /// Owner revokes one of its agent keys (a leaked key, or to make room for a new one).
+    pub fn remove_agent_key(&mut self, public_key: PublicKey) {
+        require!(env::predecessor_account_id() == self.owner, "owner only");
+        let i = self.agent_keys.iter().position(|k| *k == public_key).unwrap_or_else(|| env::panic_str("no such agent key"));
+        self.agent_keys.remove(i);
+        Promise::new(env::current_account_id()).delete_key(public_key).detach();
     }
 
     pub fn get_state(&self) -> FirmView {
@@ -219,5 +232,53 @@ mod tests {
         testing_env!(ctx("alice.near").build());
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.set_owner("alice.near".parse().unwrap())));
         assert!(r.is_err());
+    }
+
+    fn nth_key(i: u8) -> PublicKey {
+        let mut b = vec![0u8; 33];
+        b[1] = i + 1;
+        PublicKey::try_from(b).unwrap()
+    }
+
+    /// F15: without a cap, enough agent keys made set_owner run out of gas, so no key was deleted.
+    #[test]
+    fn poc_f15_agent_keys_are_capped() {
+        let tender = "tender.near".parse::<AccountId>().unwrap();
+        let alice = "alice.near".parse::<AccountId>().unwrap();
+        let five: Vec<PublicKey> = (0..5).map(nth_key).collect();
+        testing_env!(ctx("tender.near").build());
+        let r = std::panic::catch_unwind(|| Firm::new(tender.clone(), alice.clone(), U128(1), U128(1), 3600, five.clone()));
+        assert!(r.is_err(), "new refuses more than MAX_AGENT_KEYS keys");
+        let mut f = Firm::new(tender, alice, U128(1), U128(1), 3600, five[..2].to_vec());
+        testing_env!(ctx("alice.near").build());
+        f.add_agent_key(five[2].clone(), true);
+        f.add_agent_key(five[3].clone(), false);
+        assert_eq!(f.get_state().agent_keys.len(), MAX_AGENT_KEYS);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.add_agent_key(five[4].clone(), true)));
+        assert!(r.unwrap_err().downcast_ref::<String>().unwrap().contains("too many agent keys"));
+        // tender's push_owner (takeover and sync_owner) attaches GAS_TRANSFER = 15 TGas to set_owner.
+        let attached = Gas::from_tgas(15);
+        testing_env!(ctx("tender.near").prepaid_gas(attached).build());
+        f.set_owner("bob.near".parse().unwrap());
+        let used = env::used_gas();
+        println!("set_owner deleting {MAX_AGENT_KEYS} keys: {used} of {attached} attached");
+        assert!(f.get_state().agent_keys.is_empty());
+        assert!(used.as_gas() * 4 < attached.as_gas(), "deleting MAX_AGENT_KEYS keys stays well under the gas tender attaches");
+    }
+
+    #[test]
+    fn the_owner_revokes_an_agent_key_and_frees_its_slot() {
+        let keys: Vec<PublicKey> = (0..5).map(nth_key).collect();
+        testing_env!(ctx("tender.near").build());
+        let mut f = Firm::new("tender.near".parse().unwrap(), "alice.near".parse().unwrap(), U128(1), U128(1), 3600, keys[..2].to_vec());
+        testing_env!(ctx("alice.near").build());
+        f.add_agent_key(keys[2].clone(), true);
+        f.add_agent_key(keys[3].clone(), false);
+        f.remove_agent_key(keys[0].clone());
+        assert_eq!(f.get_state().agent_keys.len(), MAX_AGENT_KEYS - 1);
+        f.add_agent_key(keys[4].clone(), true);
+        testing_env!(ctx("mallory.near").build());
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.remove_agent_key(keys[1].clone())));
+        assert!(r.is_err(), "only the owner revokes");
     }
 }

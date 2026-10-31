@@ -60,6 +60,7 @@ export async function simulate(o: SimOptions) {
     };
   });
   let last = toBase(fx[from]);
+  let anchor = last;
   const totals = { orders: 0, fills: 0, refunded: 0, improvement: 0, volume: 0n, liquidations: 0, takeovers: 0 };
   const events: string[] = [];
 
@@ -117,12 +118,14 @@ export async function simulate(o: SimOptions) {
       totals.fills++;
       totals.improvement += (Number(out - minOut) / Number(minOut)) * 1e4;
       const price = side === "Buy" ? (amountIn * NEAR_UNIT) / out : (out * NEAR_UNIT) / amountIn;
-      const lo = (last * (BPS - maxMove)) / BPS;
-      const hi = (last * (BPS + maxMove)) / BPS;
+      // As the contract: at most maxMove in total per hour, from the price the hour opened at.
+      const lo = (anchor * (BPS - maxMove)) / BPS;
+      const hi = (anchor * (BPS + maxMove)) / BPS;
       last = price < lo ? lo : price > hi ? hi : price;
     }
-    // Hourly: epochs (cash floor, liquidations) and the managers.
+    // Hourly: epochs (cash floor, liquidations), the managers and a new price window.
     if ((i - from) % 12 === 11) {
+      anchor = last;
       for (const f of firms.filter((x) => x.status === "Solvent" || x.status === "Illiquid")) {
         if (f.stable < floor) {
           f.below++;

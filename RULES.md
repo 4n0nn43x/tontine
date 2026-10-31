@@ -10,6 +10,8 @@ contract's own test vectors.
 - **Firm**: an AI market maker on its own account `wN.<tender>` with 100 shares, a USDC treasury, a wNEAR
   inventory and an owner who posts a bond. Its agent holds two function call keys: one bids on tender, one
   spends from the firm's budget (inference). No key can attach a deposit, so no agent key moves money out.
+  The owner can add keys with `add_agent_key` and revoke them with `remove_agent_key`, up to 4 at a time, so
+  a takeover deletes them all in one call.
 - **Owner**: bonds 5 USDC or more to let its firms bid, sets their policy, may close them.
 - **Shareholder**: holds shares; receives 30% of each fill's edge, the cash of a wound-up firm and its NEAR.
 - **Keeper**: anyone who settles an auction or ticks an epoch; paid 0.02 USDC from Tontine's fees when they cover it.
@@ -25,7 +27,7 @@ sequenceDiagram
     C->>I: ft_transfer_call (deposit USDC or wNEAR)
     C->>I: mt_transfer_call(tender, msg PostOrder{side, amount_in, min_out})
     I->>T: mt_on_transfer: escrow amount_in, open a sealed auction (reserve = min_out)
-    F->>T: commit_bid(sha256("amount:salt")) during the commit phase
+    F->>T: commit_bid(sha256("auction:firm:amount:salt")) during the commit phase
     F->>T: reveal_bid(amount, salt): policy checked, amount escrowed from the firm
     F->>T: settle (anyone, after the reveal phase)
     T->>C: the second-best amount (or min_out if alone), in the same transaction
@@ -35,7 +37,7 @@ sequenceDiagram
 1. **Post**: the client escrows `amount_in` and sets `min_out`, the least it accepts. The app sets it to the
    NEAR Intents 1Click quote, so a fill is never worse than 1Click. At least 1 USDC of notional (`min_order`);
    phases of 10 minutes at most. The reference price at posting time is stored with the order.
-2. **Commit**: a firm commits `sha256("{amount}:{salt}")` of the amount it will deliver. Only solvent firms;
+2. **Commit**: a firm commits `sha256("{auction_id}:{firm_id}:{amount}:{salt}")` of the amount it will deliver. Only solvent firms;
    one bid per owner (anti-shill) and per firm; never on its owner's own order; never while paused.
 3. **Reveal**: the contract checks, in order: the amount is at least `min_out`; the firm is not liquidating
    or closed; the implied price is within the owner's band of the reference price stored with the order;
@@ -48,7 +50,8 @@ sequenceDiagram
    least `slash`), paid to the client, unless the firm was put in liquidation or closed meanwhile.
 5. **Edge and dividends**: the fill's edge is what the winner received minus what it delivered, valued at
    the previous clearing price. 30% of a positive edge goes to its shareholders at once (reward per share).
-   The clearing price then becomes the reference, moving at most `max_move_bps` per fill.
+   The clearing price then becomes the reference, moving at most `max_move_bps` per hour in total, however
+   many fills there are.
 
 Why the second price: a firm's best strategy is to bid what the fill is worth to it; it keeps the gap to
 the next best as margin. Why sealed: no firm sees the others' quotes before committing.
@@ -74,7 +77,7 @@ the next best as margin. Why sealed: no firm sees the others' quotes before comm
 | `order_fee_bps` | 2 (0.02% of what the winner receives) |
 | `min_order` | 1 USDC |
 | `min_bidders` | 2 |
-| `max_move_bps` | 300 per fill |
+| `max_move_bps` | 300 per hour |
 | `no_reveal_slash_bps`, `slash` | 100 (1% of the order), at least 1 USDC |
 | `treasury_floor`, epochs | 40 USDC, 3 epochs of 30 s |
 | Default policy | band 10%, NEAR share 80% at most |

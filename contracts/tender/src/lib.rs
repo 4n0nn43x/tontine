@@ -29,6 +29,8 @@ const SEC: u64 = 1_000_000_000;
 const MAX_PHASE_SECS: u64 = 30 * 86_400;
 /// Order phases are short: a revealed bid's escrow is out of the firm's treasury until settlement.
 const MAX_ORDER_PHASE_SECS: u64 = 600;
+/// Fills move the reference price by `max_move_bps` at most per window, however many fills there are.
+const PRICE_WINDOW_SECS: u64 = 3600;
 const YEAR_SECS: u128 = 365 * 86_400;
 /// Smallest loan (1 USDC) and most open loans per firm: each loan is a row the firm carries in every call.
 const MIN_LOAN: u128 = 1_000_000;
@@ -95,7 +97,7 @@ pub struct Config {
     /// Smallest order, in stable units (amount_in of a buy, min_out of a sell): no dust fills.
     #[serde(default)]
     pub min_order: U128,
-    /// Most the reference price moves on one fill (0 = no limit): a single fill cannot set it at will.
+    /// Most the reference price moves per hour, however many fills (0 = no limit): fills cannot set it at will.
     #[serde(default)]
     pub max_move_bps: u16,
 }
@@ -195,7 +197,7 @@ pub enum AuctionKind {
 pub struct Bid {
     pub firm_id: u32,
     pub owner: AccountId,
-    /// hex(sha256("{amount}:{salt}"))
+    /// hex(sha256("{auction_id}:{firm_id}:{amount}:{salt}")): bound to its auction and firm, so it cannot be copied.
     pub hash: String,
     pub revealed: Option<U128>,
 }
@@ -357,14 +359,17 @@ pub struct Tender {
     last_epoch: u64,
     /// Stable base units per asset unit at the last fill (`initial_price` before any).
     last_price: u128,
+    /// The reference when the current price window opened, and when it opened (ns).
+    price_anchor: u128,
+    price_anchor_at: u64,
 }
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub fn bid_hash(amount: u128, salt: &str) -> String {
-    hex(&env::sha256(format!("{amount}:{salt}").as_bytes()))
+pub fn bid_hash(auction_id: u64, firm_id: u32, amount: u128, salt: &str) -> String {
+    hex(&env::sha256(format!("{auction_id}:{firm_id}:{amount}:{salt}").as_bytes()))
 }
 
 fn emit(event: &str, data: serde_json::Value) {
@@ -398,6 +403,8 @@ impl Tender {
         require!(config.asset_unit.0 > 0 && config.initial_price.0 > 0, "asset_unit and initial_price must be > 0");
         let mut c = Self {
             last_price: config.initial_price.0,
+            price_anchor: config.initial_price.0,
+            price_anchor_at: now(),
             config,
             balances: LookupMap::new(Key::Balances),
             assets: LookupMap::new(Key::Assets),
@@ -451,14 +458,19 @@ impl Tender {
     #[payable]
     pub fn storage_deposit(&mut self, account_id: Option<AccountId>) -> U128 {
         let who = account_id.unwrap_or_else(env::predecessor_account_id);
+        let s0 = self.usage();
         let b = self.storage.get(&who).copied().unwrap_or(0) + env::attached_deposit().as_yoctonear();
-        self.storage.insert(who, b);
-        U128(b)
+        self.storage.insert(who.clone(), b);
+        self.storage.flush();
+        // A new entry is paid out of the deposit itself: an empty deposit cannot grow the state.
+        self.charge(&who, s0);
+        self.storage_balance_of(who)
     }
 
     #[payable]
     pub fn storage_withdraw(&mut self, amount: U128) -> Promise {
         near_sdk::assert_one_yocto();
+        require!(amount.0 > 0, "amount must be > 0");
         let me = env::predecessor_account_id();
         let b = self.storage.get(&me).copied().unwrap_or(0);
         require!(b >= amount.0, "insufficient storage deposit");
@@ -614,6 +626,7 @@ impl Tender {
 
     fn withdraw_t(&mut self, t: Token, amount: U128, receiver_id: Option<AccountId>) -> Promise {
         near_sdk::assert_one_yocto();
+        require!(amount.0 > 0, "amount must be > 0");
         let me = env::predecessor_account_id();
         let to = receiver_id.unwrap_or_else(|| me.clone());
         self.debit_t(t, &me, amount.0);
@@ -659,6 +672,7 @@ impl Tender {
     #[payable]
     pub fn withdraw_bond(&mut self, amount: U128) {
         near_sdk::assert_one_yocto();
+        require!(amount.0 > 0, "amount must be > 0");
         let me = env::predecessor_account_id();
         require!(self.locks.get(&me).copied().unwrap_or(0) == 0, "bond locked by open bids");
         let b = self.bonds.get(&me).copied().unwrap_or(0);
@@ -890,12 +904,14 @@ impl Tender {
     }
 
     #[payable]
-    pub fn buy_shares(&mut self, firm_id: u32, seller: AccountId, amount: u32) {
+    pub fn buy_shares(&mut self, firm_id: u32, seller: AccountId, amount: u32, max_price_per_share: U128) {
         near_sdk::assert_one_yocto();
         let me = env::predecessor_account_id();
         let key = format!("{firm_id}:{seller}");
         let mut ask = self.asks.get(&key).cloned().unwrap_or_else(|| env::panic_str("no ask"));
         require!(amount > 0 && ask.amount >= amount, "ask too small");
+        // The seller may re-list between the buyer's look and its transaction: never pay more than seen.
+        require!(ask.price_per_share.0 <= max_price_per_share.0, "ask above your maximum price");
         let cost = ask.price_per_share.0 * amount as u128;
         let fee = cost * self.config.trade_fee_bps as u128 / BPS;
         let s0 = self.usage();
@@ -1081,7 +1097,7 @@ impl Tender {
         require!(now() >= a.commit_end && now() < a.reveal_end, "not in reveal phase");
         let i = a.bids.iter().position(|b| b.firm_id == firm_id).unwrap_or_else(|| env::panic_str("no commit"));
         require!(a.bids[i].revealed.is_none(), "already revealed");
-        require!(bid_hash(amount.0, &salt) == a.bids[i].hash, "hash mismatch");
+        require!(bid_hash(auction_id, firm_id, amount.0, &salt) == a.bids[i].hash, "hash mismatch");
         require!(amount.0 >= a.reserve.0, "bid below reserve");
         require!(f.status != FirmStatus::Liquidating && f.status != FirmStatus::Closed, "firm in liquidation or closed");
         let s0 = self.usage();
@@ -1135,7 +1151,7 @@ impl Tender {
         let anchor = o.price.0;
         let band = f.policy.band_bps as u128;
         if band > 0 {
-            require!(price.abs_diff(anchor).saturating_mul(BPS) <= band * anchor, "bid outside the firm's price band");
+            require!(price.abs_diff(anchor).saturating_mul(BPS) <= band.saturating_mul(anchor), "bid outside the firm's price band");
         }
         if o.side == Side::Sell {
             let stable = self.balances.get(&f.account).copied().unwrap_or(0);
@@ -1317,9 +1333,16 @@ impl Tender {
             // Received asset, delivered stable.
             Side::Sell => (self.value(amount_in - fee) as i128 - out as i128, out, out.saturating_mul(unit) / amount_in),
         };
-        // The reference price follows fills, at most max_move_bps per fill.
+        // The reference price follows fills, at most max_move_bps per window in total: a run of
+        // self-fills cannot walk it far, nor overflow it.
         let m = self.config.max_move_bps as u128;
-        let price = if m == 0 { price } else { price.clamp(self.last_price * (BPS - m) / BPS, self.last_price * (BPS + m) / BPS) };
+        if now() >= self.price_anchor_at + PRICE_WINDOW_SECS * SEC {
+            self.price_anchor = self.last_price;
+            self.price_anchor_at = now();
+        }
+        let a = self.price_anchor;
+        let (lo, hi) = ((a.saturating_mul(BPS.saturating_sub(m)) / BPS).max(1), (a.saturating_mul(BPS + m) / BPS).max(a.saturating_add(1)));
+        let price = if m == 0 { price } else { price.clamp(lo, hi) };
         if edge > 0 {
             let div = (edge as u128 * self.config.dividend_bps as u128 / BPS).min(self.balances.get(&f.account).copied().unwrap_or(0));
             let dust = Self::distribute(&mut f, div);
@@ -1583,8 +1606,8 @@ impl Tender {
         let f = self.firm(firm_id);
         U128(f.holdings.iter().find(|h| h.account == account_id).map_or(0, |h| (h.shares as u128 * f.acc_per_share.0 - h.debt.0) / PREC))
     }
-    pub fn hash_bid(&self, amount: U128, salt: String) -> String {
-        bid_hash(amount.0, &salt)
+    pub fn hash_bid(&self, auction_id: u64, firm_id: u32, amount: U128, salt: String) -> String {
+        bid_hash(auction_id, firm_id, amount.0, &salt)
     }
 }
 

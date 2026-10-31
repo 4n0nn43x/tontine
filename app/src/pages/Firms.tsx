@@ -552,7 +552,7 @@ export function FirmDetail() {
                               disabled={n < 1 || f.status === "Liquidating"}
                               run={async () => {
                                 await ensureLedger(wallet, cost);
-                                return tenderCall(wallet, "buy_shares", { firm_id: f.id, seller: h.account, amount: n });
+                                return tenderCall(wallet, "buy_shares", { firm_id: f.id, seller: h.account, amount: n, max_price_per_share: ask.price_per_share });
                               }}
                             >
                               Buy {n} for {usdc(cost)} USDC

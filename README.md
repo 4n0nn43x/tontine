@@ -57,9 +57,9 @@ make build    # rebuild wasm/ from contracts/ (Rust stable + wasm32-unknown-unkn
 `make sim` runs 20 clients and 12 firms (the six house firms and six makers with seeded spreads) through
 the contract's order rules (`ts/src/rules.ts`, the same code the swarm uses before revealing a bid) on the
 week of NEAR prices to 2026-10-30. With `SEED=1` it prints 2036 orders, 93.3% filled, 18.2 bp better than
-1Click on average, Gambler Inc liquidated and bought for 1 USDC, the concentration of fills (HHI 2237: four
-firms share 92% of the fills, none above 27%), each firm's edge, dividends and P&L against holding its
-inventory, and an ablation of Atlas AI's manager against fixed params (23.88 against 16.31 USDC). Four
+1Click on average, Gambler Inc liquidated and bought for 1 USDC, the concentration of fills (HHI 2240: four
+firms share 92% of the fills, none above 29%), each firm's edge, dividends and P&L against holding its
+inventory, and an ablation of Atlas AI's manager against fixed params (25.08 against 16.31 USDC). Four
 house firms are managed: a firm that wins too few orders tightens its spread, a firm that loses money widens
 it, so no spread stays the cheapest for long. The rules are written out in [RULES.md](RULES.md) with a sequence diagram.
 
@@ -230,7 +230,7 @@ flowchart LR
 ```
 
 - **`contracts/tender`**: two internal ledgers, the stable token (USDC: bonds, fees, dividends, loans) and
-  the asset (wNEAR). One sealed-bid second-price auction (commit-reveal, `sha256("{amount}:{salt}")`, highest
+  the asset (wNEAR). One sealed-bid second-price auction (commit-reveal, `sha256("{auction_id}:{firm_id}:{amount}:{salt}")`, highest
   bid wins) serves orders and liquidations. The full rules, with a sequence diagram, are in [RULES.md](RULES.md).
 - **Orders**: a client escrows what it sells and sets its minimum (the reserve, set by the app at the 1Click
   quote). Firms commit the amount they will deliver and escrow it when they reveal, so settlement cannot fail.
@@ -240,7 +240,7 @@ flowchart LR
   (anti-shill), never on its owner's own order, at least two bids to fill.
 - **Edge and dividends**: a fill's edge is what the winner received minus what it delivered, at the previous
   clearing price; 30% of a positive edge goes to the firm's shareholders at once (Synthetix-style reward per
-  share, O(1)). The clearing price becomes the reference, moving 3% per fill at most, on orders of 1 USDC or more.
+  share, O(1)). The clearing price becomes the reference, moving 3% per hour at most in total, on orders of 1 USDC or more.
 - **Policy and kill switch**: the owner sets, on chain, the band around the reference price its firm may
   quote in, the most of its value it may hold in NEAR, and a pause. The contract checks them on every reveal:
   an agent that is wrong, prompted into a bad trade or hijacked cannot step out (demo step 7). The owner can
@@ -345,8 +345,8 @@ NEAR: run it yourself. Keys go to `keys/` (gitignored).
 
 ## Security
 
-A self-audit (2026-10-30) and an independent review of the order contract (2026-10-31) found two Highs,
-seven Mediums and four Lows, all fixed, each with a PoC run before and after the fix: see [audit/findings/](audit/findings/README.md).
+A self-audit (2026-10-30) and two independent reviews of the order contract (2026-10-31) found four Highs,
+nine Mediums and five Lows, all fixed (three Lows found in the last pass are open, listed there), each with a PoC run before and after the fix: see [audit/findings/](audit/findings/README.md).
 
 ## Limits and risks (stated, not hidden)
 
@@ -355,10 +355,11 @@ seven Mediums and four Lows, all fixed, each with a PoC run before and after the
   since 2026-10-27). They fill the orders posted to `tender`: on the devnet a house client and visitors.
   Measured on 2026-10-30, their room is the 0.2% fee 1Click adds without a key; against Rhea's 0.01% NEAR
   pool or 1Click with a partner key it is 0 to 5 bp.
-- The reference price follows fills (3% per fill at most, orders of 1 USDC or more). Someone filling their
-  own orders can still walk it over many fills; it anchors only the owners' bands and the edge, never a
-  floor or a liquidation. If NEAR moves more than a firm's band between two fills, that firm stops quoting
-  until its owner widens the band.
+- The reference price follows fills (3% per hour at most in total, orders of 1 USDC or more). Someone filling
+  their own orders can still walk it 3% an hour; it anchors only the owners' bands and the edge, never a
+  floor or a liquidation. In a fast market it lags NEAR by the same limit. Only fills move it: if NEAR moves,
+  or the reference is pushed, more than a firm's band away, that firm stops quoting until its owner widens
+  the band; its fills then bring the reference back 3% an hour.
 - The edge is measured at the previous clearing price, not an oracle. A firm's NEAR inventory carries market
   risk (the backtest of 2026-10-30 shows 17 to 19% drawdowns from NEAR's moves alone).
 - The Intents DAO, or an account with its `UnrestrictedAccountLocker` or `UnrestrictedAccountManager` role,

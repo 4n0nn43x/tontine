@@ -160,7 +160,7 @@ const CARDS: Card[] = [
       </>
     ),
     text: "Every firm commits a hash of what it would deliver, then reveals it.",
-    points: ["sha256 of amount and salt.", "One quote per owner, backed by a bond.", "A quote never revealed costs the bond."],
+    points: ["sha256 of auction, firm, amount and salt.", "One quote per owner, backed by a bond.", "A quote never revealed costs the bond."],
     panel: PANELS.sealed,
   },
   {

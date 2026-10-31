@@ -78,7 +78,7 @@ async function main() {
     }
     const auctionId = (await view(provider, T, "get_firm", { firm_id: X.id })).liquidation_auction;
     const salt = "s";
-    await call(bob.acct, T, "commit_bid", { auction_id: auctionId, firm_id: Y.id, hash: bidHash(USDC(5), salt) });
+    await call(bob.acct, T, "commit_bid", { auction_id: auctionId, firm_id: Y.id, hash: bidHash(auctionId, Y.id, USDC(5), salt) });
     const a = await view(provider, T, "get_auction", { auction_id: auctionId });
     await waitUntilChainTime(provider, a.commit_end);
     await call(bob.acct, T, "reveal_bid", { auction_id: auctionId, firm_id: Y.id, amount: USDC(5).toString(), salt });
@@ -98,7 +98,7 @@ async function main() {
     await ft(alice.acct, USDC(10), { PostOrder: { side: "Buy", amount_in: USDC(10).toString(), min_out: "1", commit_secs: 3, reveal_secs: 3 } });
     const order = (await view(provider, T, "get_orders", { from: 0, limit: 10 })).at(-1);
     const oa = await view(provider, T, "get_auction", { auction_id: order.auction });
-    await call(X.agentTender, T, "commit_bid", { auction_id: order.auction, firm_id: X.id, hash: bidHash(1n, "z") });
+    await call(X.agentTender, T, "commit_bid", { auction_id: order.auction, firm_id: X.id, hash: bidHash(order.auction, X.id, 1n, "z") });
     await waitUntilChainTime(provider, oa.reveal_end);
     await call(alice.acct, T, "settle", { auction_id: order.auction });
     const aliceAfter = BigInt(await view(provider, T, "balance_of", { account_id: alice.acct.accountId }));
@@ -120,7 +120,7 @@ async function main() {
     await ft(alice.acct, USDC(10), { PostOrder: { side: "Buy", amount_in: USDC(10).toString(), min_out: NEAR(2.4).toString(), commit_secs: 3, reveal_secs: 3 } });
     const o2 = (await view(provider, T, "get_orders", { from: 0, limit: 10 })).at(-1);
     const a2 = await view(provider, T, "get_auction", { auction_id: o2.auction });
-    await call(bob.acct, T, "commit_bid", { auction_id: o2.auction, firm_id: X.id, hash: bidHash(NEAR(2.4), "q") });
+    await call(bob.acct, T, "commit_bid", { auction_id: o2.auction, firm_id: X.id, hash: bidHash(o2.auction, X.id, NEAR(2.4), "q") });
     await waitUntilChainTime(provider, a2.commit_end);
     await call(bob.acct, T, "reveal_bid", { auction_id: o2.auction, firm_id: X.id, amount: NEAR(2.4).toString(), salt: "q" });
     await waitUntilChainTime(provider, a2.reveal_end);

@@ -114,7 +114,7 @@ impl T {
 
     fn bid(&mut self, auction: u64, firm: u32, owner: &str, amount: u128) {
         self.as_(owner, 0);
-        self.c.commit_bid(auction, firm, bid_hash(amount, &format!("s{firm}")));
+        self.c.commit_bid(auction, firm, bid_hash(auction, firm, amount, &format!("s{firm}")));
     }
 
     fn reveal(&mut self, auction: u64, firm: u32, owner: &str, amount: u128) {
@@ -512,7 +512,33 @@ fn one_bid_per_firm_even_after_a_sale() {
 fn bid_hash_vector() {
     ctx("a.near", 0, 0);
     // Same vector is asserted in ts/src/swarm.test.ts: the off-chain commit must match the contract.
-    assert_eq!(bid_hash(6_000_000, "s0"), "bb0041d21898d7bb4e1c67959ec2beaa5e433ead7084e524f13dfc179744f9fd");
+    assert_eq!(bid_hash(7, 3, 6_000_000, "s0"), "05dbe4e0eaf78d50469d77012dae2f7b250d2c3f6d15adb90999fcdb7f24ff97");
+}
+
+/// A sybil copies the best commit and replays its public reveal: the hash binds the firm, so the copy is
+/// refused and the winner still delivers the second-best bid.
+#[test]
+fn poc_f16_a_copied_commit_cannot_be_revealed() {
+    let mut t = T::new();
+    stock(&mut t);
+    let (_, a) = t.post(Side::Buy, 40 * USDC, 9 * NEAR);
+    t.bid(a, 1, "o2.near", 99 * NEAR / 10); // honest best, salt "s1"
+    t.bid(a, 2, "o3.near", 95 * NEAR / 10); // honest second
+    let h = t.c.get_auction(a).bids[0].hash.clone();
+    t.as_("o4.near", 0);
+    t.c.commit_bid(a, 3, h); // copy of o2's hash
+    t.wait(2);
+    t.reveal(a, 1, "o2.near", 99 * NEAR / 10);
+    t.reveal(a, 2, "o3.near", 95 * NEAR / 10);
+    t.as_("o4.near", 0);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.c.reveal_bid(a, 3, U128(99 * NEAR / 10), "s1".into())));
+    let msg = r.err().and_then(|e| e.downcast_ref::<String>().cloned()).unwrap_or_default();
+    assert!(msg.contains("hash mismatch"), "replayed reveal refused, got {msg:?}");
+    t.wait(2);
+    t.c.settle(a);
+    let au = t.c.get_auction(a);
+    assert_eq!(au.winner, Some(1));
+    assert_eq!(au.price.unwrap().0, 95 * NEAR / 10, "winner delivers the second-best bid");
 }
 
 #[test]
@@ -712,7 +738,7 @@ fn share_market_buy() {
     t.as_("o1.near", 1);
     t.c.list_shares(0, 10, U128(USDC));
     t.as_("client.near", 1);
-    t.c.buy_shares(0, acc("o1.near"), 10);
+    t.c.buy_shares(0, acc("o1.near"), 10, U128(USDC));
     assert_eq!(t.c.mt_balance_of(acc("client.near"), "0".into()).0, 10);
     assert_eq!(t.bal("o1.near"), 90 * USDC + 10 * USDC);
     assert!(t.c.get_ask(0, acc("o1.near")).is_none());
@@ -754,7 +780,7 @@ fn takeover_voids_old_asks() {
     t.c.list_shares(0, 10, U128(USDC));
     t.c.firms.get_mut(0).unwrap().takeovers += 1;
     t.as_("client.near", 1);
-    t.c.buy_shares(0, acc("o1.near"), 10);
+    t.c.buy_shares(0, acc("o1.near"), 10, U128(USDC));
 }
 
 #[test]
@@ -857,6 +883,20 @@ fn anyone_creates_a_firm_and_owns_its_shares() {
     assert_eq!(t.c.get_ask(id, acc("investor.near")).unwrap().amount, 40);
 }
 
+/// F15: the firm contract holds at most 4 agent keys; create_firm refuses extra keys before its batch.
+#[test]
+fn create_firm_refuses_extra_agent_keys() {
+    let mut t = T::new();
+    t.as_("admin.near", 0);
+    t.c.set_firm_code(Base64VecU8(vec![0, 97, 115, 109]));
+    t.as_("investor.near", 3 * 10u128.pow(24));
+    let five: Vec<PublicKey> = [PK1, PK2, PK1, PK2, PK1].iter().map(|k| k.parse().unwrap()).collect();
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        t.c.create_firm(five, U128(20 * USDC), U128(USDC), 3600);
+    }));
+    assert!(r.unwrap_err().downcast_ref::<String>().unwrap().contains("two agent keys"));
+}
+
 #[test]
 fn only_admin_sets_firm_code() {
     let mut t = T::new();
@@ -871,7 +911,7 @@ fn share_sale_fee_comes_out_of_the_seller_proceeds() {
     t.as_("o1.near", 1);
     t.c.list_shares(0, 10, U128(USDC));
     t.as_("client.near", 1);
-    t.c.buy_shares(0, acc("o1.near"), 10);
+    t.c.buy_shares(0, acc("o1.near"), 10, U128(USDC));
     assert_eq!(t.bal("client.near"), 90 * USDC, "buyer pays the asked price");
     assert_eq!(t.bal("o1.near"), 90 * USDC + 9_950_000, "seller gets 99.5%");
     assert_eq!(t.bal("admin.near"), 50_000, "0.5% to Tontine");
@@ -1145,4 +1185,90 @@ fn poc_f11_self_fills_do_not_farm_the_keeper_reward() {
         self_fill(&mut t, Side::Buy, 1, 1);
     }
     assert_eq!(t.bal("admin.near"), USDC, "no reward paid on fee-less fills");
+}
+
+/// F14 PoC: self-fills of 1 yocto walked the reference 3% per fill until `last_price * (BPS + m)`
+/// overflowed and every settle with a winner panicked for good. Now fills move it by max_move_bps per
+/// hour in total, and the bounds saturate.
+#[test]
+fn poc_f14_self_fills_cannot_ratchet_the_price() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.c.config.min_order = U128(USDC);
+    t.c.config.max_move_bps = 300;
+    t.c.balances.insert(acc("w4.tender.near"), 10_000 * USDC);
+    t.c.assets.insert(acc("x.near"), 1_000);
+    let start = t.c.get_last_price().0;
+    for _ in 0..20 {
+        let out = (t.c.get_last_price().0 / NEAR * 103 / 100 + 1).max(USDC);
+        self_fill(&mut t, Side::Sell, 1, out);
+    }
+    assert_eq!(t.c.get_last_price().0, start * 103 / 100, "20 fills in an hour move it 3% in total");
+    t.wait(3600);
+    let out = (t.c.get_last_price().0 / NEAR * 103 / 100 + 1).max(USDC);
+    self_fill(&mut t, Side::Sell, 1, out);
+    assert_eq!(t.c.get_last_price().0, start * 103 / 100 * 103 / 100, "the next hour, 3% more");
+}
+
+#[test]
+fn poc_f14_the_price_bounds_saturate() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.c.config.min_order = U128(USDC);
+    t.c.config.max_move_bps = 300;
+    t.c.balances.insert(acc("w4.tender.near"), 10_000 * USDC);
+    t.c.assets.insert(acc("x.near"), 1_000);
+    t.c.last_price = u128::MAX / 10_000;
+    t.c.price_anchor = u128::MAX / 10_000;
+    self_fill(&mut t, Side::Sell, 1, USDC); // panicked with "attempt to multiply with overflow"
+    assert!(t.c.get_last_price().0 > 0);
+}
+
+/// F17 PoC: the seller re-listed at 9x after the buyer looked, and buy_shares paid whatever the ask said.
+#[test]
+#[should_panic(expected = "ask above your maximum price")]
+fn poc_f17_buy_shares_never_pays_more_than_seen() {
+    let mut t = T::new();
+    t.as_("o1.near", 1);
+    t.c.list_shares(0, 10, U128(USDC));
+    t.as_("o1.near", 1);
+    t.c.list_shares(0, 10, U128(9 * USDC)); // front-run re-list
+    t.deposit("investor.near", 100 * USDC);
+    t.as_("investor.near", 1);
+    t.c.buy_shares(0, acc("o1.near"), 10, U128(USDC));
+}
+
+/// F18 PoC: storage_deposit with nothing attached created a ledger entry nobody paid for.
+#[test]
+#[should_panic(expected = "storage deposit too low")]
+fn poc_f18_an_empty_storage_deposit_cannot_grow_the_state() {
+    let mut t = T::new();
+    t.as_("x.near", 0);
+    t.c.storage_deposit(Some(acc("someone-new.near")));
+}
+
+#[test]
+fn poc_f18_a_new_entry_is_paid_from_its_deposit() {
+    let mut t = T::new();
+    t.as_("x.near", 10u128.pow(22));
+    let b = t.c.storage_deposit(Some(acc("someone-new.near"))).0;
+    assert!(b > 0 && b < 10u128.pow(22), "the entry's bytes come out of the deposit");
+    t.as_("x.near", 10u128.pow(22));
+    assert_eq!(t.c.storage_deposit(Some(acc("someone-new.near"))).0, b + 10u128.pow(22), "a top-up costs nothing");
+}
+
+/// F18 siblings: withdrawals of 0 created ledger, bond or storage entries for an account that had none.
+#[test]
+fn poc_f18_zero_withdrawals_are_refused() {
+    let mut t = T::new();
+    for call in ["storage", "bond", "stable"] {
+        t.as_("someone-new.near", 1);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match call {
+            "storage" => drop(t.c.storage_withdraw(U128(0))),
+            "bond" => t.c.withdraw_bond(U128(0)),
+            _ => drop(t.c.withdraw(U128(0), None)),
+        }));
+        let msg = r.err().and_then(|e| e.downcast_ref::<String>().cloned()).unwrap_or_default();
+        assert!(msg.contains("amount must be > 0"), "{call}: {msg}");
+    }
 }
