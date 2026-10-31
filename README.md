@@ -348,7 +348,6 @@ seven Mediums and four Lows, all fixed, each with a PoC run before and after the
 NEAR Intents verifier (defuse 0.4.5, MIT, binary taken from `intents.near`, sandbox only), near-sdk 5.29.1,
 near-contract-standards 5.29.1 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4
 (sandbox binaries 2.13.4 and 2.14.0), tsx, TypeScript. Website: React 19.1, react-router-dom 7.18, Vite 8.3,
-TradingView Lightweight Charts™ (Apache-2.0, attribution and link in the app footer),
 Font Awesome 6.5.2 (CDN), fonts Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN) and
 Geist Pixel Circle (SIL OFL); browser QA with Playwright (not in the repo). Data: DefiLlama, NEARBlocks, Binance (NEAR candles, Coinbase as fallback) public APIs; NEAR Intents 1Click quotes. All code written in the
 hackathon window, with AI assistance.

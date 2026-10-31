@@ -7,10 +7,7 @@ export type Series = { name: string; color: string; points: { time: number; valu
 
 type Lib = typeof import("lightweight-charts");
 
-/**
- * Options shared by every chart. The TradingView logo is off: the attribution notice and the link to
- * tradingview.com that its license asks for are in the app footer (AppShell), on every page with a chart.
- */
+
 function options(lib: Lib, height: number): DeepPartial<TimeChartOptions> {
   return {
     height,
