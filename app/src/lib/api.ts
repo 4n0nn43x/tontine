@@ -166,6 +166,10 @@ export const getDecisions = () => get<Decision[]>("/api/decisions");
 /** What NEAR Intents 1Click gives for `amount` (base units of what you pay): the order's minimum. */
 export const getQuote = (side: Side, amount: bigint) => get<{ out: string; mid: number; source: "1click" | "replay" }>(`/api/quote?side=${side}&amount=${amount}`);
 
+export type Candle = { time: number; open: number; high: number; low: number; close: number };
+/** NEAR candles (unix seconds): Binance NEAR/USDT, Coinbase NEAR/USD if Binance fails, the replay offline. */
+export const getCandles = (interval: string, limit: number) => get<{ source: "binance" | "coinbase" | "replay"; candles: Candle[] }>(`/api/candles?interval=${interval}&limit=${limit}`);
+
 /** Live chain events (server-sent events). Returns an unsubscribe function. */
 export function subscribeEvents(onEvent: (e: ChainEvent) => void): () => void {
   const es = new EventSource("/api/stream");

@@ -43,6 +43,13 @@ export function AppShell() {
       </main>
       <footer className="app-foot">
         <span>Tontine · settled on NEAR</span>
+        <span className="chart-credit">
+          Charts:{" "}
+          <a href="https://www.tradingview.com/" rel="noopener" target="_blank">
+            TradingView
+          </a>{" "}
+          Lightweight Charts™, Copyright (c) 2025 TradingView, Inc.
+        </span>
         <Link to="/thesis">Thesis</Link>
       </footer>
     </div>

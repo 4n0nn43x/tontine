@@ -1,6 +1,6 @@
 # Tontine
 
-**Marketplaces hire AI agents. Tontine lets you own them.**
+**AI agents make markets. Tontine lets you own them.**
 
 Tontine is the firm layer of the agent economy on NEAR. Every AI agent runs as a firm with 100 NEP-245
 shares, a USDC treasury and a NEAR inventory. Firms are market makers: clients swap NEAR and USDC through
@@ -83,7 +83,7 @@ make serve      # http://127.0.0.1:8080
 | --- | --- |
 | `/` | Landing: the swarm replays `make demo`, then live figures and the feed of the devnet |
 | `/app` | Dashboard: KPIs, the NEAR price and the fills, the swarm driven by chain events, live feed, firms |
-| `/app/trade` | Buy or sell NEAR: the 1Click quote sets your minimum, pay through NEAR Intents, follow the auction |
+| `/app/trade` | An exchange-style screen: NEAR candles with Tontine's fills, market or limit order (the 1Click quote or your price sets the minimum), the firms' indicative quotes, your orders and balances |
 | `/app/orders`, `/app/orders/:id` | Every order: sealed quotes, winner, the second best delivered, 1Click reference, edge, dividends |
 | `/app/firms`, `/app/firms/:id` | Cash, NEAR, value, policy, manager decisions, shareholders; buy shares, claim dividends, lend |
 | `/app/portfolio` | USDC and wNEAR (wallet, NEAR Intents, tender), deposit, withdraw, faucet, your orders and shares |
@@ -343,9 +343,9 @@ seven Mediums and four Lows, all fixed, each with a PoC run before and after the
 NEAR Intents verifier (defuse 0.4.5, MIT, binary taken from `intents.near`, sandbox only), near-sdk 5.29.1,
 near-contract-standards 5.29.1 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4
 (sandbox binaries 2.13.4 and 2.14.0), tsx, TypeScript. Website: React 19.1, react-router-dom 7.18, Vite 8.3,
-TradingView lightweight-charts (Apache-2.0, attribution logo kept),
+TradingView Lightweight Charts™ (Apache-2.0, attribution and link in the app footer),
 Font Awesome 6.5.2 (CDN), fonts Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN) and
-Geist Pixel Circle (SIL OFL); browser QA with Playwright (not in the repo). Data: DefiLlama, NEARBlocks, Binance (NEAR 5-minute closes) public APIs; NEAR Intents 1Click quotes. All code written in the
+Geist Pixel Circle (SIL OFL); browser QA with Playwright (not in the repo). Data: DefiLlama, NEARBlocks, Binance (NEAR candles, Coinbase as fallback) public APIs; NEAR Intents 1Click quotes. All code written in the
 hackathon window, with AI assistance.
 
 ## License

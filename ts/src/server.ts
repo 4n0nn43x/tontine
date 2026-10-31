@@ -15,7 +15,7 @@ import { DEVNET_CONFIG, NEAR_, startDevnet, type Devnet } from "./devnet.ts";
 import { Indexer, type ChainEvent } from "./indexer.ts";
 import { pageMeta, withMeta } from "./meta.ts";
 import { makeLlm } from "./llm.ts";
-import { reference, type Reference } from "./prices.ts";
+import { candles, INTERVALS, reference, type Reference } from "./prices.ts";
 import { Swarm, type FirmHandle } from "./swarm.ts";
 import type { Strategy } from "./strategy.ts";
 
@@ -277,6 +277,7 @@ async function readBody(req: IncomingMessage, max = 256 * 1024): Promise<any> {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
 }
 
+const candleCache = new Map<string, { at: number; body: unknown }>();
 const sseClients = new Set<ServerResponse>();
 indexer.subscribe((e: ChainEvent) => {
   const line = `data: ${JSON.stringify(e)}\n\n`;
@@ -371,6 +372,17 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ...indexer.stats, dividends, firms: state.firms.length, totalOrders: state.totalOrders ?? 0 });
     }
     if (url.pathname === "/api/decisions") return json(res, 200, swarm.decisions.slice(-50).reverse());
+    if (url.pathname === "/api/candles") {
+      // NEAR candles for the trade chart (Binance, Coinbase, or the replay), cached 30 s per interval.
+      if (!allow(ip, "candles", 60, 60_000)) return json(res, 429, { error: "slow down" });
+      const interval = url.searchParams.get("interval") ?? "5m";
+      if (!INTERVALS[interval]) return json(res, 400, { error: `interval: ${Object.keys(INTERVALS).join(", ")}` });
+      const limit = Math.min(500, Math.max(10, Number(url.searchParams.get("limit") ?? 300) || 300));
+      const key = `${interval}:${limit}`;
+      const hit = candleCache.get(key);
+      if (!hit || Date.now() - hit.at > 30_000) candleCache.set(key, { at: Date.now(), body: await candles(interval, limit) });
+      return json(res, 200, candleCache.get(key)!.body);
+    }
     if (url.pathname === "/api/quote") {
       // What NEAR Intents 1Click gives for an order: the client's minimum. Live, or the replay when offline.
       if (!allow(ip, "quote", 60, 60_000)) return json(res, 429, { error: "slow down" });

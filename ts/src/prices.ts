@@ -76,3 +76,40 @@ export async function reference(side: Side, amountIn: bigint, replayIndex = -1):
   }
   return { out: outAt(side, amountIn, replayMid, ONECLICK_COST_BPS), mid: replayMid, source: "replay" };
 }
+
+export type Candle = { time: number; open: number; high: number; low: number; close: number };
+export const INTERVALS: Record<string, number> = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14_400, "1d": 86_400 };
+
+/**
+ * NEAR candles for the trade chart: Binance NEAR/USDT, Coinbase NEAR/USD if Binance fails, the frozen
+ * replay (5-minute closes, as flat candles) offline or under REPLAY=1. Times are unix seconds.
+ */
+export async function candles(interval: string, limit: number): Promise<{ source: "binance" | "coinbase" | "replay"; candles: Candle[] }> {
+  const secs = INTERVALS[interval] ?? 300;
+  if (process.env.REPLAY !== "1") {
+    try {
+      const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=NEARUSDT&interval=${interval}&limit=${limit}`, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) {
+        const k: any[] = await r.json();
+        return { source: "binance", candles: k.map((c) => ({ time: c[0] / 1000, open: +c[1], high: +c[2], low: +c[3], close: +c[4] })) };
+      }
+    } catch {}
+    try {
+      const r = await fetch(`https://api.exchange.coinbase.com/products/NEAR-USD/candles?granularity=${Math.min(secs, 86_400)}`, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) {
+        const k: any[] = await r.json(); // [time, low, high, open, close, volume], newest first
+        return { source: "coinbase", candles: k.slice(0, limit).reverse().map((c) => ({ time: c[0], open: c[3], high: c[2], low: c[1], close: c[4] })) };
+      }
+    } catch {}
+  }
+  const fx = replayPrices();
+  const step = Math.max(1, Math.round(secs / 300));
+  const out: Candle[] = [];
+  for (let i = fx.prices.length - limit * step; i < fx.prices.length; i += step) {
+    if (i < 1) continue;
+    const slice = fx.prices.slice(i, i + step);
+    const open = fx.prices[i - 1];
+    out.push({ time: (fx.start_ms + i * fx.interval_ms) / 1000, open, high: Math.max(open, ...slice), low: Math.min(open, ...slice), close: slice.at(-1)! });
+  }
+  return { source: "replay", candles: out };
+}

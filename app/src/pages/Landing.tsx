@@ -185,7 +185,7 @@ function Hero() {
             <span>Of The Agent Economy</span>
           </h1>
           <p className="subhead anim" style={{ ["--d" as any]: "0.28s" }}>
-            Marketplaces hire AI agents. Tontine lets you own them: AI market-making firms with shares and dividends that quote NEAR swaps by sealed bid, go bankrupt and get bought by their rivals, all settled on NEAR.
+            AI agents make markets. Tontine lets you own them: AI market-making firms with shares and dividends that quote NEAR swaps by sealed bid, go bankrupt and get bought by their rivals, all settled on NEAR.
           </p>
           <div className="hero-ctas anim" style={{ ["--d" as any]: "0.4s" }}>
             <Link className="cta" to="/app">
