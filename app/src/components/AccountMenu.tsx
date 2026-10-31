@@ -56,16 +56,23 @@ export function AccountMenu() {
     <div className="account" ref={ref}>
       <button className="btn account-btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className="live-dot" aria-hidden="true" />
-        {short(wallet.accountId, 18)}
-        <span className="account-usdc">{bal ? usdc(BigInt(bal.usdc.wallet) + BigInt(bal.usdc.intents) + BigInt(bal.usdc.tender)) : "…"} USDC</span>
+        <span className="account-name">{short(wallet.accountId, 18)}</span>
+        <span className="account-usdc" title="Trading balance">
+          {bal ? `${usdc(bal.usdc.tender)} USDC · ${near(bal.wnear.tender, 2)} NEAR` : "…"}
+        </span>
       </button>
       {open && (
         <div className="account-panel" role="dialog" aria-label="Demo account">
           <p className="account-id">{wallet.accountId}</p>
+          <div className="account-main">
+            <span>Trading balance</span>
+            <b>{bal ? usdc(bal.usdc.tender) : "…"} USDC</b>
+            <b>{bal ? near(bal.wnear.tender) : "…"} NEAR</b>
+          </div>
           <dl className="balances">
-            {(["wallet", "intents", "tender"] as const).map((k) => (
+            {(bal && (bal.usdc.intents !== "0" || bal.wnear.intents !== "0") ? (["wallet", "intents"] as const) : (["wallet"] as const)).map((k) => (
               <Fragment key={k}>
-                <dt>{k === "wallet" ? "Wallet" : k === "intents" ? "In NEAR Intents" : "In Tontine"}</dt>
+                <dt>{k === "wallet" ? "Wallet" : "In NEAR Intents"}</dt>
                 <dd>
                   {bal ? usdc(bal.usdc[k]) : "…"} USDC · {bal ? near(bal.wnear[k]) : "…"} wNEAR
                 </dd>

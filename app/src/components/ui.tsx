@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { ChainEvent, Side } from "../lib/api";
 import { ago, describe, firmColor } from "../lib/format";
@@ -60,6 +60,55 @@ export function Countdown({ until, now }: { until: bigint; now: bigint }) {
   const s = Number((until - now) / 1_000_000_000n);
   if (s <= 0) return <span className="countdown done">0s</span>;
   return <span className="countdown">{s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`}</span>;
+}
+
+/** A native modal dialog. Its content mounts only while open, so each opening starts fresh; `locked` keeps it open. */
+export function Modal({ open, onClose, title, locked = false, children }: { open: boolean; onClose: () => void; title: ReactNode; locked?: boolean; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const d = ref.current;
+    if (open && !d?.open) d?.showModal();
+    if (!open && d?.open) d.close();
+  }, [open]);
+  const close = () => !locked && onClose();
+  return (
+    <dialog
+      ref={ref}
+      className="modal"
+      // The browser may still force it shut (a second Escape): keep the state in step.
+      onClose={onClose}
+      onCancel={(e) => {
+        e.preventDefault();
+        close();
+      }}
+      onClick={(e) => e.target === ref.current && close()}
+    >
+      {open && (
+        <div className="modal-body">
+          <header className="modal-head">
+            <h2>{title}</h2>
+            <button type="button" className="modal-x" aria-label="Close" disabled={locked} onClick={close}>
+              <i className="fa-solid fa-xmark" aria-hidden="true" />
+            </button>
+          </header>
+          {children}
+        </div>
+      )}
+    </dialog>
+  );
+}
+
+/** A row of tabs; the caller renders the panel of `value`. */
+export function Tabs<K extends string>({ tabs, value, onChange }: { tabs: readonly (readonly [K, ReactNode])[]; value: K; onChange: (k: K) => void }) {
+  return (
+    <div className="tabs" role="tablist">
+      {tabs.map(([k, label]) => (
+        <button key={k} type="button" role="tab" aria-selected={value === k} className={value === k ? "on" : ""} onClick={() => onChange(k)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function Empty({ children }: { children: ReactNode }) {

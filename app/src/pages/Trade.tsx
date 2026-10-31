@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { CandleChart, type Fill } from "../components/Chart";
-import { Badge, Card, Countdown, Empty, FirmChip, TxButton } from "../components/ui";
+import { BalanceRows, MoveFunds, plain, type Move } from "../components/Funds";
+import { Badge, Card, Countdown, Empty, FirmChip, Modal, Tabs, TxButton } from "../components/ui";
 import { getCandles, getQuote, type AppState, type Candle, type ChainEvent, type Config, type Side } from "../lib/api";
 import { bpOver, bpText, gotText, near, paidText, priceOf, toBase, usdc } from "../lib/format";
 import { announceTx, useAppState, useBalances, useChainNow, useConfig, useEvents, useFirmName, useWallet } from "../lib/hooks";
-import { createWallet, postOrder, type Balances, type Wallet } from "../lib/near";
+import { createWallet, postOrder, postOrderFromBalance, type Balances, type TokenName, type Wallet } from "../lib/near";
 
 const COMMIT_SECS = 8;
 const REVEAL_SECS = 6;
@@ -36,12 +37,6 @@ function useCandles(interval: string, limit: number): { data: Candles | null; er
   return { data, error };
 }
 
-/** "12.5" from base units, cut (never rounded up) to `digits` decimals: what an input accepts. */
-function plain(base: bigint, decimals: number, digits = 6): string {
-  const s = (base / 10n ** BigInt(decimals - digits)).toString().padStart(digits + 1, "0");
-  return `${s.slice(0, -digits)}.${s.slice(-digits)}`.replace(/\.?0+$/, "");
-}
-
 const fillsOf = (events: ChainEvent[]) => events.filter((e) => e.standard === "tontine" && e.event === "order_filled");
 const clock = (ms: number) => new Date(ms).toLocaleTimeString("en-GB");
 
@@ -57,6 +52,7 @@ export function Trade() {
   const chart = useCandles(interval, 300);
   const day = useCandles("1h", 24);
   const [tab, setTab] = useState<"trades" | "mine" | "balances">("trades");
+  const [funds, setFunds] = useState<{ move: Move; token: TokenName } | null>(null);
 
   const fills = useMemo(() => fillsOf(events), [events]);
   const marks = useMemo<Fill[]>(() => fills.map((e) => ({ time: e.time / 1000, side: e.data.side })), [fills]);
@@ -101,44 +97,39 @@ export function Trade() {
         </p>
       </Card>
 
-      <Ticket wallet={wallet} bal={bal} config={config} state={state} />
+      <Ticket wallet={wallet} bal={bal} config={config} state={state} onFunds={(move, token) => setFunds({ move, token })} />
 
       <Book state={state} name={name} />
 
       <Card className="trade-tabs">
-        <div className="tabs" role="tablist">
-          {(
-            [
-              ["trades", "Market trades"],
-              ["mine", "My orders"],
-              ["balances", "Balances"],
-            ] as const
-          ).map(([k, label]) => (
-            <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
-              {label}
-            </button>
-          ))}
-        </div>
-        {tab === "trades" ? <Tape fills={fills} name={name} /> : tab === "mine" ? <MyOrders state={state} wallet={wallet} /> : <BalanceTable bal={bal} wallet={wallet} />}
+        <Tabs
+          tabs={[
+            ["trades", "Market trades"],
+            ["mine", "My orders"],
+            ["balances", "Balances"],
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
+        {tab === "trades" ? <Tape fills={fills} name={name} /> : tab === "mine" ? <MyOrders state={state} wallet={wallet} /> : <BalanceTable bal={bal} wallet={wallet} onFunds={(move) => setFunds({ move, token: "usdc" })} />}
       </Card>
 
       <details className="card trade-how">
         <summary>How it works</summary>
         <ol className="steps">
           <li>
-            What you pay goes from your wallet into NEAR Intents (<code>ft_transfer_call</code>).
-          </li>
-          <li>
-            NEAR Intents sends it to tender with your order (<code>mt_transfer_call</code>, <code>PostOrder</code>), which escrows it and opens the auction.
+            An order pays from your trading balance, held in tender, in one transaction (<code>post_order</code>). If it is short, the difference comes from your wallet first, through NEAR Intents.
           </li>
           <li>
             Firms seal their quotes for {COMMIT_SECS} s, reveal them for {REVEAL_SECS} s, then a settle fills you at the second-best quote, never under your minimum, or refunds you.
           </li>
-          <li>
-            What you receive lands in your Tontine balance; withdraw it to your wallet from the <Link to="/app/portfolio">portfolio</Link>.
-          </li>
+          <li>What you receive, or a refund, lands in your trading balance. Withdraw it to your wallet any time.</li>
         </ol>
       </details>
+
+      <Modal open={!!funds} onClose={() => setFunds(null)} title="Trading balance">
+        {wallet && funds && <MoveFunds wallet={wallet} bal={bal} move={funds.move} token={funds.token} onDone={() => setFunds(null)} />}
+      </Modal>
     </div>
   );
 }
@@ -176,7 +167,7 @@ function MarketBar({ state, day, config }: { state: AppState | null; day: Candle
   );
 }
 
-function Ticket({ wallet, bal, config, state }: { wallet: Wallet | null; bal: Balances | null; config: Config | null; state: AppState | null }) {
+function Ticket({ wallet, bal, config, state, onFunds }: { wallet: Wallet | null; bal: Balances | null; config: Config | null; state: AppState | null; onFunds: (m: Move, t: TokenName) => void }) {
   const [side, setSide] = useState<Side>("Buy");
   const [kind, setKind] = useState<"Market" | "Limit">("Market");
   const [amount, setAmount] = useState("40");
@@ -230,8 +221,14 @@ function Ticket({ wallet, bal, config, state }: { wallet: Wallet | null; bal: Ba
   const minOrder = BigInt(config?.tenderConfig?.min_order ?? 0);
   const notional = side === "Buy" ? (amountError ? null : base) : minOut;
   const tooSmall = notional !== null && notional < minOrder;
-  const have = bal ? BigInt(side === "Buy" ? bal.usdc.wallet : bal.wnear.wallet) : null;
-  const enough = have === null || have >= base;
+  // What the order pays from: the trading balance first, the wallet for the rest.
+  const token: TokenName = side === "Buy" ? "usdc" : "wnear";
+  const tokenUnit = side === "Buy" ? "USDC" : "wNEAR";
+  const have = bal ? BigInt(bal[token].tender) : null;
+  const inWallet = bal ? BigInt(bal[token].wallet) : null;
+  const shortfall = have !== null && base > have ? base - have : 0n;
+  const enough = inWallet === null || shortfall <= inWallet;
+  const fmt = (v: bigint | null) => (v === null ? "…" : side === "Buy" ? usdc(v) : near(v));
   const fee = config?.tenderConfig?.order_fee_bps;
   const ready = !amountError && !priceError && !!quote && minOut !== null && minOut > 0n && !tooSmall && enough;
 
@@ -300,9 +297,23 @@ function Ticket({ wallet, bal, config, state }: { wallet: Wallet | null; bal: Ba
           </button>
         ))}
       </div>
-      <p className="hint">
-        In your wallet: {!wallet ? "no account yet" : bal ? (side === "Buy" ? `${usdc(bal.usdc.wallet)} USDC` : `${near(bal.wnear.wallet)} wNEAR`) : "…"}
-      </p>
+      {wallet && (
+        <div className="avail">
+          <span className="muted">Available</span>
+          <b>
+            {fmt(have)} {tokenUnit}
+          </b>
+          <button type="button" className="link" onClick={() => onFunds("deposit", token)}>
+            Deposit
+          </button>
+          <button type="button" className="link" onClick={() => onFunds("withdraw", token)}>
+            Withdraw
+          </button>
+          <span className="avail-wallet">
+            Wallet {fmt(inWallet)} {tokenUnit}
+          </span>
+        </div>
+      )}
 
       <dl className="ticket-sum">
         <dt>You receive at least</dt>
@@ -331,18 +342,26 @@ function Ticket({ wallet, bal, config, state }: { wallet: Wallet | null; bal: Ba
         <TxButton
           className={`btn big go ${side.toLowerCase()}`}
           disabled={!ready}
-          run={() => postOrder(wallet, side, base, minOut!, BigInt(quote!.out), COMMIT_SECS, REVEAL_SECS)}
+          run={() =>
+            shortfall > 0n
+              ? postOrder(wallet, side, base, minOut!, BigInt(quote!.out), COMMIT_SECS, REVEAL_SECS, shortfall)
+              : postOrderFromBalance(wallet, side, base, minOut!, BigInt(quote!.out), COMMIT_SECS, REVEAL_SECS)
+          }
           onDone={(r: any) => {
             const posted = r?.events?.find((e: any) => e.event === "order_posted");
             if (posted) setOrderId(posted.data[0].order_id);
           }}
         >
-          {side} NEAR
+          {shortfall > 0n ? `Deposit ${plain(shortfall, decimals)} ${tokenUnit} from your wallet and ${side.toLowerCase()}` : `${side} NEAR`}
         </TxButton>
       )}
       {!wallet && <p className="fine">A devnet account with 100 test USDC and 20 test wNEAR; its key is generated in your browser and stays there.</p>}
       {tooSmall && <p className="tx-error">Below the smallest order: {usdc(minOrder)} USDC {side === "Buy" ? "paid" : "received"}.</p>}
-      {!enough && <p className="tx-error">Not enough {side === "Buy" ? "USDC" : "wNEAR"} in your wallet: use the faucet in the account menu.</p>}
+      {!enough && (
+        <p className="tx-error">
+          Not enough {tokenUnit}: {fmt(have)} available, {fmt(inWallet)} in your wallet. Use the faucet in the account menu.
+        </p>
+      )}
 
       {orderId !== null && <YourOrder id={orderId} />}
     </Card>
@@ -381,7 +400,7 @@ function YourOrder({ id }: { id: number }) {
           Filled: you received <b>{gotText(o.side, o.out)}</b> for {paidText(o.side, o.amount_in)}, <b>{bpText(bpOver(o.out, o.reference_out))}</b> vs 1Click.
         </p>
       ) : (
-        <p className="result">Refunded: no quote reached your minimum. Your {paidText(o.side, o.amount_in)} is in your Tontine balance.</p>
+        <p className="result">Refunded: no quote reached your minimum. Your {paidText(o.side, o.amount_in)} is back in your trading balance.</p>
       )}
     </div>
   );
@@ -518,39 +537,22 @@ function MyOrders({ state, wallet }: { state: AppState | null; wallet: Wallet | 
   );
 }
 
-function BalanceTable({ bal, wallet }: { bal: Balances | null; wallet: Wallet | null }) {
+function BalanceTable({ bal, wallet, onFunds }: { bal: Balances | null; wallet: Wallet | null; onFunds: (m: Move) => void }) {
   if (!wallet) return <Empty>Create a demo account to trade: your balances show here.</Empty>;
   return (
     <>
-      <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Token</th>
-              <th className="num">Wallet</th>
-              <th className="num">In NEAR Intents</th>
-              <th className="num">In Tontine</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>USDC</td>
-              <td className="num">{bal ? usdc(bal.usdc.wallet) : "…"}</td>
-              <td className="num">{bal ? usdc(bal.usdc.intents) : "…"}</td>
-              <td className="num">{bal ? usdc(bal.usdc.tender) : "…"}</td>
-            </tr>
-            <tr>
-              <td>wNEAR</td>
-              <td className="num">{bal ? near(bal.wnear.wallet) : "…"}</td>
-              <td className="num">{bal ? near(bal.wnear.intents) : "…"}</td>
-              <td className="num">{bal ? near(bal.wnear.tender) : "…"}</td>
-            </tr>
-          </tbody>
-        </table>
+      <BalanceRows bal={bal} />
+      <div className="balance-foot">
+        <p className="fine">Trading balance: held in the tender contract, withdraw any time.</p>
+        <div className="actions-row">
+          <button type="button" className="btn small primary" onClick={() => onFunds("deposit")}>
+            <i className="fa-solid fa-arrow-down" aria-hidden="true" /> Deposit
+          </button>
+          <button type="button" className="btn small" onClick={() => onFunds("withdraw")}>
+            <i className="fa-solid fa-arrow-up" aria-hidden="true" /> Withdraw
+          </button>
+        </div>
       </div>
-      <p className="fine">
-        Orders pay from your wallet. Fills and refunds land in Tontine: withdraw them to your wallet from the <Link to="/app/portfolio">portfolio</Link>.
-      </p>
     </>
   );
 }

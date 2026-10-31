@@ -1,17 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { BalanceRows, MoveFunds } from "../components/Funds";
 import { Badge, Card, Empty, FirmChip, TxButton } from "../components/ui";
 import { nameOf, faucet, getConfig } from "../lib/api";
 import { bpOver, bpText, gotText, near, paidText, toBase, usdc } from "../lib/format";
 import { useAppState, useBalances, useWallet } from "../lib/hooks";
-import { createWallet, depositToTender, tenderCall, view, withdrawToWallet, type TokenName } from "../lib/near";
+import { createWallet, tenderCall, view } from "../lib/near";
 
 export function Portfolio() {
   const wallet = useWallet();
   const bal = useBalances(wallet?.accountId, 3000);
   const { data: state } = useAppState();
-  const [amount, setAmount] = useState("10");
-  const [token, setToken] = useState<TokenName>("usdc");
   const [pending, setPending] = useState<Record<number, string>>({});
   const [listAmount, setListAmount] = useState<Record<number, string>>({});
   const [listPrice, setListPrice] = useState<Record<number, string>>({});
@@ -51,16 +50,7 @@ export function Portfolio() {
     );
   }
 
-  let base = 0n;
-  let amountOk = true;
-  try {
-    base = toBase(amount, token === "usdc" ? 6 : 24);
-    amountOk = base > 0n;
-  } catch {
-    amountOk = false;
-  }
   const myOrders = state?.orders.filter((o) => o.client === wallet.accountId) ?? [];
-  const unit = token === "usdc" ? "USDC" : "wNEAR";
 
   return (
     <div className="page-app">
@@ -73,58 +63,19 @@ export function Portfolio() {
 
       <div className="grid-2">
         <Card title="Balances">
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Token</th>
-                  <th className="num">Wallet</th>
-                  <th className="num">In NEAR Intents</th>
-                  <th className="num">In Tontine</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>USDC</td>
-                  <td className="num">{bal ? usdc(bal.usdc.wallet) : "…"}</td>
-                  <td className="num">{bal ? usdc(bal.usdc.intents) : "…"}</td>
-                  <td className="num">{bal ? usdc(bal.usdc.tender) : "…"}</td>
-                </tr>
-                <tr>
-                  <td>wNEAR</td>
-                  <td className="num">{bal ? near(bal.wnear.wallet) : "…"}</td>
-                  <td className="num">{bal ? near(bal.wnear.intents) : "…"}</td>
-                  <td className="num">{bal ? near(bal.wnear.tender) : "…"}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <BalanceRows bal={bal} />
           <p className="fine">
-            Test tokens (mock USDC and wNEAR contracts) held through <code>intents.near</code>, the mainnet code. Gas: {bal ? near(bal.near, 2) : "…"} NEAR, storage prepaid in Tontine: {bal ? near(bal.storage, 2) : "…"} NEAR. What an order fills to you lands in Tontine.
+            Trading balance: held in the tender contract, withdraw any time. Gas: {bal ? near(bal.near, 2) : "…"} NEAR, storage prepaid: {bal ? near(bal.storage, 2) : "…"} NEAR.
           </p>
         </Card>
 
-        <Card title="Move tokens">
-          <div className="inline">
-            <select value={token} onChange={(e) => setToken(e.target.value as TokenName)} aria-label="Token">
-              <option value="usdc">USDC</option>
-              <option value="wnear">wNEAR</option>
-            </select>
-            <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label={`Amount in ${unit}`} />
-            <span>{unit}</span>
-          </div>
+        <Card title="Deposit or withdraw">
+          <MoveFunds wallet={wallet} bal={bal} />
           <div className="actions-row">
-            <TxButton className="btn primary" disabled={!amountOk} run={() => depositToTender(wallet, base, undefined, token)}>
-              <i className="fa-solid fa-arrow-down" aria-hidden="true" /> Deposit into Tontine
-            </TxButton>
-            <TxButton className="btn" disabled={!amountOk} run={() => withdrawToWallet(wallet, base, token)}>
-              <i className="fa-solid fa-arrow-up" aria-hidden="true" /> Withdraw to wallet
-            </TxButton>
-            <TxButton className="btn" run={() => faucet(wallet.accountId)}>
+            <TxButton className="btn small" run={() => faucet(wallet.accountId)}>
               <i className="fa-solid fa-faucet-drip" aria-hidden="true" /> Get 100 USDC and 20 wNEAR
             </TxButton>
           </div>
-          <p className="fine">Deposits take the mainnet path: wallet, then NEAR Intents (<code>ft_transfer_call</code>), then tender (<code>mt_transfer_call</code>). Withdrawals go back the same way.</p>
         </Card>
       </div>
 

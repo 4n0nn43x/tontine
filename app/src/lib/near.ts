@@ -98,10 +98,25 @@ export async function ensureLedger(w: Wallet, need: bigint) {
   if (have < need) await depositToTender(w, need - have);
 }
 
-/** Post a swap order: escrow `amountIn` (USDC for a buy, wNEAR for a sell) and open its sealed-bid auction. */
-export function postOrder(w: Wallet, side: Side, amountIn: bigint, minOut: bigint, referenceOut: bigint, commitSecs = 8, revealSecs = 6) {
-  const order = { side, amount_in: amountIn.toString(), min_out: minOut.toString(), reference_out: referenceOut.toString(), commit_secs: commitSecs, reveal_secs: revealSecs };
-  return depositToTender(w, amountIn, { PostOrder: order }, side === "Buy" ? "usdc" : "wnear");
+const orderOf = (side: Side, amountIn: bigint, minOut: bigint, referenceOut: bigint, commitSecs: number, revealSecs: number) => ({
+  side,
+  amount_in: amountIn.toString(),
+  min_out: minOut.toString(),
+  reference_out: referenceOut.toString(),
+  commit_secs: commitSecs,
+  reveal_secs: revealSecs,
+});
+
+/** Post a swap order: escrow `amountIn` (USDC for a buy, wNEAR for a sell) and open its sealed-bid auction.
+ * `deposit` comes from the wallet first (two transactions); tender credits it, then debits `amountIn`, so the
+ * trading balance covers the rest. */
+export function postOrder(w: Wallet, side: Side, amountIn: bigint, minOut: bigint, referenceOut: bigint, commitSecs = 8, revealSecs = 6, deposit = amountIn) {
+  return depositToTender(w, deposit, { PostOrder: orderOf(side, amountIn, minOut, referenceOut, commitSecs, revealSecs) }, side === "Buy" ? "usdc" : "wnear");
+}
+
+/** The same order paid from the trading balance (tender's ledger): one transaction. */
+export function postOrderFromBalance(w: Wallet, side: Side, amountIn: bigint, minOut: bigint, referenceOut: bigint, commitSecs = 8, revealSecs = 6) {
+  return tenderCall(w, "post_order", { order: orderOf(side, amountIn, minOut, referenceOut, commitSecs, revealSecs) });
 }
 
 /** Ledger balance out of tender (to intents.near), then out of intents.near to the wallet. */
@@ -116,7 +131,7 @@ export async function tenderCall(w: Wallet, method: string, args: Record<string,
   return tx(w, c.tender, method, args, ONE_YOCTO, 120);
 }
 
-/** One token in its three places: the wallet, NEAR Intents and the tender ledger (base units). */
+/** One token in its three places: the wallet, NEAR Intents and the tender ledger, i.e. the trading balance (base units). */
 export type Spots = { wallet: string; intents: string; tender: string };
 export type Balances = { near: string; storage: string; usdc: Spots; wnear: Spots };
 
