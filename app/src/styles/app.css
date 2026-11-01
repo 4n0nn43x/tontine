@@ -1908,116 +1908,8 @@ details summary {
   justify-content: flex-end;
 }
 
-.arena-hit.pointer,
-.city-page.pointer {
+.arena-hit.pointer {
   cursor: pointer;
-}
-
-.city-page {
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
-  background: #000;
-  color: #fff;
-}
-
-.city-page .city-scene {
-  position: absolute;
-  inset: 0;
-}
-
-.city-head {
-  position: absolute;
-  top: 28px;
-  left: 20px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.city-head h1 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  text-shadow: 0 1px 0 #000;
-}
-
-.city-feed {
-  position: absolute;
-  top: 28px;
-  right: 20px;
-  width: min(360px, 40vw);
-  padding: 6px 12px;
-  border-radius: 12px;
-  background: rgba(10, 6, 16, 0.72);
-  backdrop-filter: blur(6px);
-}
-
-.city-firm {
-  position: absolute;
-  left: 20px;
-  top: 84px;
-  width: min(300px, calc(100vw - 40px));
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: rgba(10, 6, 16, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(6px);
-}
-
-.city-firm header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.city-firm h2 {
-  margin: 0;
-  font-size: 16px;
-  flex: 1;
-}
-
-.city-firm dl {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 14px;
-  margin: 0 0 12px;
-  font-size: 13px;
-}
-
-.city-firm dt {
-  color: rgba(255, 255, 255, 0.55);
-}
-
-.city-firm dd {
-  margin: 0;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.city-close {
-  border: 0;
-  background: none;
-  color: rgba(255, 255, 255, 0.6);
-  cursor: pointer;
-  padding: 4px;
-}
-
-.city-hint,
-.city-empty {
-  position: absolute;
-  left: 20px;
-  bottom: 14px;
-  margin: 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
-}
-
-@media (max-width: 720px) {
-  .city-feed {
-    display: none;
-  }
 }
 
 /* ------------------------------------------------------------------ game layer: ranks, levels, badges, health, toasts */
@@ -2166,10 +2058,6 @@ details summary {
 
 .page-head .achs {
   margin-top: 14px;
-}
-
-.city-firm .achs {
-  margin: -2px 0 12px;
 }
 
 .ach {

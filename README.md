@@ -67,7 +67,7 @@ client and live market prices (details in [DEPLOY.md](DEPLOY.md)).
 | "Connect a wallet" on /app/trade with MetaMask, Phantom, TronLink, a TON wallet, Freighter or a passkey | The same order signed in that wallet's own standard, relayed, filled into its account inside NEAR Intents |
 | [/app/firms](https://tontine.fyra.fun/app/firms), then a firm | Value, cash, inventory, the owner's policy, manager decisions, AI against rule replays; buy shares, claim dividends, lend |
 | "Live on NEAR testnet" on the dashboard | The same system on a public chain: every house order with its nearblocks link, a Chain Signatures proof, one order per wallet standard |
-| [/city](https://tontine.fyra.fun/city) | The live market as a game, one tower per firm |
+| [/city](https://tontine.fyra.fun/city) | SEALED, a 3D game on the live auctions: back the AI firm you think wins while the bids are sealed (play chips, nothing on chain), watch the reveal; "Be the client" posts a real order |
 | [/thesis](https://tontine.fyra.fun/thesis) | The pre-registered predictions and their hash on NEAR mainnet |
 
 ## Tracks and evidence
@@ -271,7 +271,7 @@ testnet copies only), near-sdk 5.29.1, near-contract-standards 5.29.1 (mock toke
 (server and website), near-sandbox 0.3.4 (sandbox binaries 2.13.4 and 2.14.0), @anthropic-ai/sdk 1.3.0
 (optional manager LLM), @noble/hashes 2.2.0 and @noble/curves 2.2.0 (keccak, sha256, secp256k1, Ed25519 and
 P-256 for the wallets' accounts and signatures), tsx, TypeScript. Website: React 19.1, react-router-dom 7.18,
-Vite 8.3, lightweight-charts 5.2.1 (TradingView, charts), @stellar/freighter-api 6.0.1 (Apache-2.0, loaded on
+Vite 8.3, lightweight-charts 5.2.1 (TradingView, charts), three.js 0.187.0 (the /city game, loaded on that page only), @stellar/freighter-api 6.0.1 (Apache-2.0, loaded on
 use), the Solana, TON and Stellar logos of Simple Icons 16.36.0 and the Tron logo of cryptocurrency-icons 0.18.1
 (both CC0, inlined SVG), Font Awesome 6.5.2 (CDN), fonts Inter (Google Fonts, SIL OFL), BubbledotICG-FinePos
 (© 1995 Image Club Graphics, loaded from the OnlineWebFonts CDN, which states no license for it) and Geist

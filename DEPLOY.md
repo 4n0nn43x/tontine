@@ -36,7 +36,7 @@ make serve      # http://127.0.0.1:8080
 | `/app/orders`, `/app/orders/:id` | Every order: sealed quotes, winner, the second best delivered, what the client received, the market reference, the surplus share, edge, dividends |
 | `/app/firms`, `/app/firms/:id` | By market: cash, inventory, value, policy, manager decisions, shareholders; buy shares, claim dividends, lend |
 | `/app/portfolio` | Your trading balance and wallet per token, deposit and withdraw in one step, faucet, your orders and shares |
-| `/city` | The live market as a game |
+| `/city` | SEALED: the three markets as floating islands (three.js), one tower per firm; back the firm you think wins each sealed auction with play chips; `app/plaza-dev.html` is a dev-only harness of the scene (`npm run dev`, then `/plaza-dev.html`) |
 | `/thesis` | The thesis figures, the take rate by 12-day block and the pre-registered predictions |
 
 "Create demo account" generates an ed25519 key in the browser (stored in localStorage, never sent) and
