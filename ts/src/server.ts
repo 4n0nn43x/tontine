@@ -149,6 +149,20 @@ indexer.subscribe((e: ChainEvent) => {
     );
 });
 
+// Watchdog: the devnet node was once OOM-killed while this process kept serving a site whose every chain read
+// failed. If the node stops answering for about 2 minutes, exit: Docker restarts the container (a fresh devnet).
+let nodeDown = 0;
+setInterval(() => {
+  provider.viewBlock({ finality: "optimistic" } as any).then(
+    () => (nodeDown = 0),
+    (e) => {
+      if (++nodeDown < 4) return;
+      log(`devnet node unreachable for 2 minutes (${(e as Error).message}): exiting so the container restarts`);
+      process.exit(1);
+    },
+  );
+}, 30_000).unref();
+
 async function chainNow(): Promise<bigint> {
   const b: any = await provider.viewBlock({ finality: "optimistic" } as any);
   return BigInt(b.header.timestamp_nanosec ?? b.header.timestamp);

@@ -114,7 +114,7 @@ export type Devnet = {
   /** Create a visitor account controlled by a key the visitor generated in their browser. */
   createVisitor(publicKey: string): Promise<string>;
   mint(accountId: string, amount: bigint, t?: TokenKey): Promise<void>;
-  /** Credit test tokens to an account inside NEAR Intents (its trading balance), e.g. a simulated Base deposit to a `0x` account. */
+  /** Credit test tokens to an account inside NEAR Intents (its trading balance), e.g. a simulated deposit to a wallet's implicit account (`0x...` or 64 hex). */
   credit(accountId: string, amount: bigint, t?: TokenKey): Promise<void>;
   /** The faucet: FAUCET of every token, into the trading balance. */
   drip(accountId: string): Promise<void>;
@@ -137,7 +137,11 @@ export function serialize(acct: Account): Account {
 export async function startDevnet(log: (s: string) => void = console.log): Promise<Devnet> {
   const rpcPort = Number(process.env.SANDBOX_RPC_PORT ?? 3030);
   // 2.13.4 runs the protocol mainnet runs today (86): what deploys here deploys there.
-  const sandbox = await Sandbox.start({ version: process.env.SANDBOX_VERSION ?? "2.13.4", config: { rpcPort } });
+  // neard's default caches (512 MB of state, 128 MB of flat state, 500 MB of trie, 50 MB for views) fill up
+  // under the swarm's load until the container's memory limit kills the node (OOM on the VPS, 2026-11-01).
+  // The devnet's state is under 100 MB: small caches cost nothing.
+  const store = { col_state_cache_size: 64 << 20, col_flat_state_cache_size: 32 << 20, trie_cache: { default_max_bytes: 64 << 20 }, view_trie_cache: { default_max_bytes: 16 << 20 } };
+  const sandbox = await Sandbox.start({ version: process.env.SANDBOX_VERSION ?? "2.13.4", config: { rpcPort, additionalConfig: { store } } });
   const provider = new JsonRpcProvider({ url: sandbox.rpcUrl });
   log(`devnet node at ${sandbox.rpcUrl}`);
 
