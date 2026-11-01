@@ -40,11 +40,13 @@ export async function createFirm(opts: {
   budget: bigint;
   maxPerCall: bigint;
   budgetEpochSecs: number;
+  /** The agent keys, when the caller saved them before the transaction (the testnet showcase). */
+  keys?: { tender: KeyPair; firm: KeyPair };
 }): Promise<FirmHandle & { keys: { tender: string; firm: string } }> {
   const { tenderAcct, provider, n, owner } = opts;
   const id = `w${n}.${tenderAcct.accountId}`;
-  const kTender = KeyPair.fromRandom("ed25519");
-  const kFirm = KeyPair.fromRandom("ed25519");
+  const kTender = opts.keys?.tender ?? KeyPair.fromRandom("ed25519");
+  const kFirm = opts.keys?.firm ?? KeyPair.fromRandom("ed25519");
   await tenderAcct.signAndSendTransaction({
     receiverId: id,
     actions: [

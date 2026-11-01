@@ -5,6 +5,7 @@ import { SceneView, type SceneApi } from "../components/SceneView";
 import { Count, fixed, Leaderboard, Skel, useLeaderboard } from "../components/Game";
 import { Badge, Card, Countdown, Empty, EventFeed, Kpi, MarketTabs } from "../components/ui";
 import { RegimeChip } from "../components/Ai";
+import { TestnetCard } from "../components/Testnet";
 import { worstRegime } from "../lib/ai";
 import { regimeOf, SYMBOLS, type AppState, type ChainEvent, type MarketSymbol, type OrderState } from "../lib/api";
 import { ASSETS, bpText, gotText, paidText, usd, usdc, type Asset } from "../lib/format";
@@ -199,6 +200,8 @@ export function Dashboard() {
       >
         <Leaderboard rows={board} market={symbol} />
       </Card>
+
+      <TestnetCard />
     </div>
   );
 }

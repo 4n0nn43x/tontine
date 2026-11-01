@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { getConfig, getDecisions, getEvents, getState, getStats, marketBySymbol, marketOf, nameOf, SYMBOLS, subscribeEvents, type AppState, type ChainEvent, type Config, type Decision, type MarketSymbol, type Stats } from "./api";
+import { getConfig, getDecisions, getEvents, getState, getStats, getTestnet, marketBySymbol, marketOf, nameOf, SYMBOLS, subscribeEvents, type AppState, type ChainEvent, type Config, type Decision, type MarketSymbol, type Stats, type Testnet } from "./api";
 import { ASSETS } from "./format";
 import { balances, loadWallet, onWallet, type Balances, type Wallet } from "./near";
 
@@ -76,6 +76,7 @@ export function useStates(on = true): Record<MarketSymbol, AppState | null> {
   return Object.fromEntries(SYMBOLS.map((s, i) => [s, list[i]?.value ?? null])) as Record<MarketSymbol, AppState | null>;
 }
 export const useStats = sharedPoll<Stats>(getStats, 4000);
+export const useTestnet = sharedPoll<Testnet>(getTestnet, 30000);
 export const useDecisions = sharedPoll<Decision[]>(getDecisions, 10000);
 
 export function useConfig(): Config | null {

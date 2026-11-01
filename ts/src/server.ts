@@ -24,6 +24,7 @@ import { candles, INTERVALS, marketMid, reference, type AssetSymbol, type Refere
 import { dailyCapped, HOUSE_MANDATES, INFERENCE_COST, quietErrors, Swarm, type FirmHandle } from "./swarm.ts";
 import type { Params, Strategy } from "./strategy.ts";
 import type { Decision } from "./manager.ts";
+import { startShowcase } from "./showcase.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PORT = Number(process.env.PORT ?? 8080);
@@ -640,6 +641,7 @@ const server = createServer(async (req, res) => {
       res.writeHead(r.status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       return res.end(await r.text());
     }
+    if (url.pathname === "/api/testnet") return json(res, 200, showcase?.view() ?? { enabled: false });
     if (url.pathname === "/api/config") {
       const firmsOf = (m: Market) =>
         m.firms.map((f) => ({ id: f.id, account: f.account, owner: f.owner.accountId, strategy: f.strategy.name, author: f.strategy.author, house: f.strategy.house, managed: !!f.strategy.managed }));
@@ -823,6 +825,21 @@ const server = createServer(async (req, res) => {
     if (!res.headersSent) json(res, 500, { error: (e as Error).message });
   }
 });
+
+// ------------------------------------------------------------------ testnet showcase (showcase.ts)
+// With TESTNET_ACCOUNT and TESTNET_KEY, the same contracts also run on NEAR testnet, a public chain: a small setup
+// and a house order every half hour; /api/testnet shows the contracts, the recent orders with their
+// transactions, and the Chain Signatures proof.
+const showcase = (() => {
+  const master = process.env.TESTNET_ACCOUNT, key = process.env.TESTNET_KEY;
+  if (!master || !key) return null;
+  try {
+    return startShowcase({ master, key, log: (s) => log(`testnet ${s}`) });
+  } catch (e) {
+    log(`testnet: ${(e as Error).message}`);
+    return null;
+  }
+})();
 
 server.listen(PORT, HOST, () => log(`Tontine app on http://${HOST}:${PORT}`));
 

@@ -189,6 +189,26 @@ export const getConfig = () => (configPromise ??= get<Config>("/api/config").cat
 export const getState = (market: string = "NEAR") => get<AppState>(`/api/state?market=${market}`);
 /** Totals across every market. */
 export const getStats = () => get<Stats>("/api/stats");
+/** The testnet showcase (ts/src/showcase.ts): the same contracts on NEAR testnet, or `enabled: false`. */
+export type TestnetOrder = { id: number; side: Side; amountIn: string; out: string | null; status: string; postTx: string; settleTx: string; at: number };
+export type Testnet =
+  | { enabled: false }
+  | {
+      enabled: true;
+      network: "testnet";
+      explorer: string;
+      status: "waiting-funds" | "setting-up" | "running" | "error";
+      message: string;
+      master: string;
+      balance: number | null;
+      need: number;
+      contracts: { intents: string; usdc: string; wnear: string; tender: string } | null;
+      firms: { id: number; name: string; account: string }[];
+      orders: TestnetOrder[];
+      evm: { firm: string; signer: string; path: string; address: string; recovered: string; ok: boolean; nearTx: string; payloadHash: string; signedTxHash: string; at: number } | null;
+      evmError: string | null;
+    };
+export const getTestnet = () => get<Testnet>("/api/testnet");
 export const getEvents = (limit = 100) => get<ChainEvent[]>(`/api/events?limit=${limit}`);
 export const getThesis = () => get<{ result: any; predictions: any; predictionsSha256: string | null }>("/api/thesis");
 export const createDemoAccount = (publicKey: string) => post<{ accountId: string }>("/api/account", { publicKey });

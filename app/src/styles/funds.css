@@ -103,3 +103,91 @@ i.chain-mark {
 .wallet-panel {
   width: min(340px, calc(100vw - 24px));
 }
+
+/* The testnet showcase on the dashboard: status, contracts, recent orders with their transactions, Chain Signatures. */
+.testnet-status {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line-2);
+}
+
+.testnet-status.running {
+  color: #5ee6c8;
+  border-color: rgba(94, 230, 200, 0.4);
+}
+
+.testnet-status.error {
+  color: #ff8a8a;
+}
+
+.testnet-contracts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 14px 0;
+  font-size: 13px;
+}
+
+.testnet-contracts dt {
+  color: var(--muted);
+}
+
+.testnet-contracts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.testnet-orders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.testnet-order {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) 96px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  font-size: 14px;
+}
+
+.testnet-links {
+  font-size: 13px;
+}
+
+.testnet-evm {
+  margin-top: 16px;
+  font-size: 14px;
+}
+
+.testnet-evm h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.testnet-evm p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 860px) {
+  .testnet-order {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+  }
+  .testnet-order .order-what {
+    white-space: normal;
+  }
+  .testnet-order .badge {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .testnet-order .order-amount,
+  .testnet-links {
+    grid-column: 2 / -1;
+  }
+}

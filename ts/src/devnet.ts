@@ -94,6 +94,35 @@ export const DEVNET_CONFIG = {
   launchShares: 2,
 };
 
+/** tender's `new` config with DEVNET_CONFIG (the testnet showcase overrides a few fields). */
+export function tenderConfig(o: { admin: string; intents: string; token: string; assetToken: string; unit: bigint; mid: number }) {
+  return {
+    admin: o.admin,
+    payment: { Intents: { contract: o.intents, token_id: o.token } },
+    asset: { Intents: { contract: o.intents, token_id: o.assetToken } },
+    asset_unit: o.unit.toString(),
+    initial_price: BigInt(Math.round(o.mid * 1e6)).toString(),
+    dividend_bps: DEVNET_CONFIG.dividendBps,
+    liquidation_fee_bps: DEVNET_CONFIG.liquidationFeeBps,
+    min_bond: DEVNET_CONFIG.minBond.toString(),
+    slash: DEVNET_CONFIG.slash.toString(),
+    treasury_floor: DEVNET_CONFIG.floor.toString(),
+    epochs_before_liquidation: DEVNET_CONFIG.epochsBeforeLiquidation,
+    epoch_secs: DEVNET_CONFIG.epochSecs,
+    liquidation_commit_secs: DEVNET_CONFIG.liquidationPhaseSecs,
+    liquidation_reveal_secs: DEVNET_CONFIG.liquidationPhaseSecs,
+    order_fee_bps: DEVNET_CONFIG.orderFeeBps,
+    trade_fee_bps: DEVNET_CONFIG.tradeFeeBps,
+    keeper_reward: DEVNET_CONFIG.keeperReward.toString(),
+    no_reveal_slash_bps: DEVNET_CONFIG.noRevealSlashBps,
+    min_bidders: DEVNET_CONFIG.minBidders,
+    min_order: DEVNET_CONFIG.minOrder.toString(),
+    max_move_bps: DEVNET_CONFIG.maxMoveBps,
+    surplus_bps: DEVNET_CONFIG.surplusBps,
+    launch_shares: DEVNET_CONFIG.launchShares,
+  };
+}
+
 export type Devnet = {
   /**
    * The neard process and its home (chain data, config), whether it survives restarts (DEVNET_DIR), and
@@ -433,33 +462,7 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
     const { unit } = ASSETS[def.symbol];
     // The real price to start from: the market mid, or the replay when offline.
     const start = await reference("Buy", USDC(100), -1, def.symbol);
-    await deployContract(tender, wasm("tender"), "new", {
-      config: {
-        admin: T,
-        payment: { Intents: { contract: I, token_id: token } },
-        asset: { Intents: { contract: I, token_id: `nep141:${ft.accountId}` } },
-        asset_unit: unit.toString(),
-        initial_price: BigInt(Math.round(start.mid * 1e6)).toString(),
-        dividend_bps: DEVNET_CONFIG.dividendBps,
-        liquidation_fee_bps: DEVNET_CONFIG.liquidationFeeBps,
-        min_bond: DEVNET_CONFIG.minBond.toString(),
-        slash: DEVNET_CONFIG.slash.toString(),
-        treasury_floor: DEVNET_CONFIG.floor.toString(),
-        epochs_before_liquidation: DEVNET_CONFIG.epochsBeforeLiquidation,
-        epoch_secs: DEVNET_CONFIG.epochSecs,
-        liquidation_commit_secs: DEVNET_CONFIG.liquidationPhaseSecs,
-        liquidation_reveal_secs: DEVNET_CONFIG.liquidationPhaseSecs,
-        order_fee_bps: DEVNET_CONFIG.orderFeeBps,
-        trade_fee_bps: DEVNET_CONFIG.tradeFeeBps,
-        keeper_reward: DEVNET_CONFIG.keeperReward.toString(),
-        no_reveal_slash_bps: DEVNET_CONFIG.noRevealSlashBps,
-        min_bidders: DEVNET_CONFIG.minBidders,
-        min_order: DEVNET_CONFIG.minOrder.toString(),
-        max_move_bps: DEVNET_CONFIG.maxMoveBps,
-        surplus_bps: DEVNET_CONFIG.surplusBps,
-        launch_shares: DEVNET_CONFIG.launchShares,
-      },
-    });
+    await deployContract(tender, wasm("tender"), "new", { config: tenderConfig({ admin: T, intents: I, token, assetToken: `nep141:${ft.accountId}`, unit, mid: start.mid }) });
     // The code `create_firm` deploys when anyone launches a firm.
     await call(tender, T, "set_firm_code", { code: Buffer.from(wasm("firm")).toString("base64") }, 0n, TGAS(200));
     log(`market ${def.symbol}/USDC: tender=${T}, ${ft.accountId} (mock), ${def.symbol} ${start.mid.toFixed(3)} USD (${start.source})`);

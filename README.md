@@ -16,7 +16,8 @@ decides inside them, and every decision is logged and checked against a stated r
 One trading balance in NEAR Intents serves every market, and a wallet of another chain trades with no NEAR
 account: EVM (Base, Ethereum...), Solana, Tron, TON, Stellar, or a passkey with no wallet at all. It signs an
 intent in its own wallet's standard, a relay submits it. A firm can also hold an address on Base through Chain
-Signatures, within its owner's limits.
+Signatures, within its owner's limits. The hosted site plays on a devnet; the same contracts also run on NEAR
+testnet, a public chain anyone can check, as a showcase.
 
 The unit is the firm, not the trade: its equity trades, its income is measured and shared on chain, and
 failing has a price (a slashed bond, a liquidation, a takeover that deletes the old owner's keys). No judge:
@@ -186,6 +187,9 @@ toast when your order fills or your firm wins.
 | `SANDBOX_RPC_PORT` | `3030` | Sandbox RPC, bound to 127.0.0.1 |
 | `DEVNET_DIR` | unset | A directory where the devnet survives restarts (see below); unset, every start is a new chain |
 | `NODE_MAX_MB` | `900` | Past this resident memory, neard is restarted on the same chain (a few seconds without RPC) |
+| `TESTNET_ACCOUNT`, `TESTNET_KEY` | unset | A funded testnet account and its key: the server also runs the testnet showcase (below) |
+| `TESTNET_RPC`, `TESTNET_DIR` | FastNEAR testnet, `keys/` | Its RPC, and where it keeps the keys of the accounts it creates (`testnet.json`) |
+| `SHOWCASE_ORDER_MIN` | `30` | Minutes between two house orders on testnet |
 | `NEARAI_API_KEY` | unset | The manager of Atlas AI asks an LLM on NEAR AI Cloud (the firm pays the inference); without it, a stated rule, labelled `rule` |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | unset, `claude-opus-5-5` | Without `NEARAI_API_KEY`, the manager of Atlas AI asks Claude instead (Anthropic API) |
 | `LLM_DAILY_CAP` | `1000` | LLM decisions per UTC day for all hosted firms, every market; past it, managers use the stated rule |
@@ -203,6 +207,17 @@ seconds; the indexer reads again the blocks after the last save, so no event is 
 the contracts or the setup changed (no state migration) or when the saved chain does not come back up. Bandit
 statistics and shadow quotes start over; mandates are compiled again from the profiles on chain. `make
 app-dev` runs the Vite dev server with hot reload against a running `make serve`.
+
+**Testnet showcase** (`ts/src/showcase.ts`). The devnet is a private chain: nobody outside can check its
+transactions. With `TESTNET_ACCOUNT` and `TESTNET_KEY`, the server also runs the same contracts on NEAR
+testnet, a public chain, under that account: our copy of the intents.near mainnet code (NEAR Intents is not
+deployed on testnet), mock USDC and wNEAR, one NEAR/USDC tender with two house firms, and a house order
+every half hour that the same swarm auctions. Once, it asks the MPC network (`v1.signer-prod.testnet`) to sign
+a Base Sepolia USDC transfer for a firm through `sign_evm`, within its owner's policy, and checks that the
+signature recovers to the firm's derived address (signed, not broadcast: the address holds no Base Sepolia
+ETH). The dashboard shows it under "Live on NEAR testnet", with a nearblocks link for every transaction. The
+setup needs about 37 testnet NEAR (intents.near's code alone takes 13 of storage), then about 0.3 a day of
+gas; it runs step by step, saves after each one and resumes where it stopped (out of NEAR, a restart).
 
 The landing background is a pixel-art city at dusk (Canvas 2D, no WebGL) where every building is a firm.
 It **replays the real `make demo` run** with its figures; on the dashboard the same city is driven by the
@@ -475,7 +490,7 @@ Mediums and eleven Lows, all fixed (25 without an amount cap), each with a PoC o
   can disable predecessor authentication for tender (`force_disable_auth_by_predecessor_ids`) or lock its
   account (`force_lock_account`); the mainnet payment path depends on it.
 - The sandbox demo runs the exact `intents.near` mainnet code (see `wasm/README.md`) but with mock USDC and
-  wNEAR (`contracts/mock-ft`, anyone can mint), since the real tokens are not deployed in the sandbox.
+  wNEAR (`contracts/mock-ft`, only the token account mints), since the real tokens are not deployed in the sandbox.
 - A firm owner can raise its own budget and `spend` the firm's USDC, including money lent to it: a loan to a
   firm is unsecured credit to its owner.
 - Keeper rewards stop when Tontine's fee balance is empty.
@@ -499,7 +514,8 @@ Mediums and eleven Lows, all fixed (25 without an amount cap), each with a PoC o
   wallet; the signatures themselves are checked by the mainnet intents.near code (demo steps 12 and 13).
 - `sign_evm` limits the target, the function and the recipient of token transfers and approvals, not the
   amount; a takeover moves the firm to a fresh EVM address, so what the old owner signed or left on the old
-  one does not pass with the firm. Not run against a live signer yet.
+  one does not pass with the firm. Run against the live testnet signer by the testnet showcase, once its
+  master account holds enough testnet NEAR.
 - The regime guard reads public RSS; without an LLM, keywords can only raise an alert, never a storm. The
   LLM budget is capped per day (`LLM_DAILY_CAP`, `AI_DAILY_CAP`); past it the rule, the parser and the
   template take over.
