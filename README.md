@@ -189,7 +189,7 @@ toast when your order fills or your firm wins.
 | `NODE_MAX_MB` | `900` | Past this resident memory, neard is restarted on the same chain (a few seconds without RPC) |
 | `TESTNET_ACCOUNT`, `TESTNET_KEY` | unset | A funded testnet account and its key: the server also runs the testnet showcase (below) |
 | `TESTNET_RPC`, `TESTNET_DIR` | FastNEAR testnet, `keys/` | Its RPC, and where it keeps the keys of the accounts it creates (`testnet.json`) |
-| `SHOWCASE_ORDER_MIN` | `30` | Minutes between two house orders on testnet |
+| `SHOWCASE_ORDER_MIN` | `5` | Minutes between two house orders on testnet (each market in turn) |
 | `NEARAI_API_KEY` | unset | The manager of Atlas AI asks an LLM on NEAR AI Cloud (the firm pays the inference); without it, a stated rule, labelled `rule` |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | unset, `claude-opus-5-5` | Without `NEARAI_API_KEY`, the manager of Atlas AI asks Claude instead (Anthropic API) |
 | `LLM_DAILY_CAP` | `1000` | LLM decisions per UTC day for all hosted firms, every market; past it, managers use the stated rule |
@@ -209,15 +209,20 @@ statistics and shadow quotes start over; mandates are compiled again from the pr
 app-dev` runs the Vite dev server with hot reload against a running `make serve`.
 
 **Testnet showcase** (`ts/src/showcase.ts`). The devnet is a private chain: nobody outside can check its
-transactions. With `TESTNET_ACCOUNT` and `TESTNET_KEY`, the server also runs the same contracts on NEAR
-testnet, a public chain, under that account: our copy of the intents.near mainnet code (NEAR Intents is not
-deployed on testnet), mock USDC and wNEAR, one NEAR/USDC tender with two house firms, and a house order
-every half hour that the same swarm auctions. Once, it asks the MPC network (`v1.signer-prod.testnet`) to sign
-a Base Sepolia USDC transfer for a firm through `sign_evm`, within its owner's policy, and checks that the
-signature recovers to the firm's derived address (signed, not broadcast: the address holds no Base Sepolia
-ETH). The dashboard shows it under "Live on NEAR testnet", with a nearblocks link for every transaction. The
-setup needs about 37 testnet NEAR (intents.near's code alone takes 13 of storage), then about 0.3 a day of
-gas; it runs step by step, saves after each one and resumes where it stopped (out of NEAR, a restart).
+transactions, but it answers in a second and has no rate limit, so visitors trade there. With
+`TESTNET_ACCOUNT` and `TESTNET_KEY`, the server also runs the whole system on NEAR testnet, a public chain,
+under that account, at a pace the free RPCs allow (about 8 requests a second, measured): our copy of the
+intents.near mainnet code (NEAR Intents is not deployed on testnet), mock USDC, wNEAR, wETH and wSOL, the three
+tenders with the devnet's twelve house firms and their managers, and a house order every 5 minutes on each
+market in turn, auctioned by the same swarm. Once each, it proves on that public chain what the sandbox cannot
+or only simulates: the MPC network (`v1.signer-prod.testnet`) signs a Base Sepolia USDC transfer for a firm
+through `sign_evm`, within its owner's policy, and the signature recovers to the firm's derived address
+(signed, not broadcast: the address holds no Base Sepolia ETH); and one order from each wallet standard (EVM,
+Tron, Solana, Stellar, TON, passkey), signed by a fresh key, relayed with `execute_intents`, filled and paid
+back with `withdraw_to_intents`. The dashboard shows it under "Live on NEAR testnet", with a nearblocks link
+for every transaction. The setup needs about 100 testnet NEAR (intents.near's code alone takes 13 of storage),
+then about 3 a day of gas and order storage; it runs step by step, saves after each one and resumes where it
+stopped (out of NEAR, a restart).
 
 The landing background is a pixel-art city at dusk (Canvas 2D, no WebGL) where every building is a firm.
 It **replays the real `make demo` run** with its figures; on the dashboard the same city is driven by the

@@ -1,4 +1,4 @@
-import type { TestnetOrder } from "../lib/api";
+import type { TestnetOrder, TestnetWallet } from "../lib/api";
 import { ASSETS, gotText, paidText, short } from "../lib/format";
 import { useTestnet } from "../lib/hooks";
 import { Badge, Card } from "./ui";
@@ -7,10 +7,19 @@ const ago = (at: number) => {
   const m = Math.round((Date.now() - at) / 60_000);
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
 };
+const WALLETS: [string, string][] = [
+  ["erc191", "EVM (ERC-191)"],
+  ["tip191", "Tron (TIP-191)"],
+  ["raw_ed25519", "Solana (Ed25519)"],
+  ["sep53", "Stellar (SEP-53)"],
+  ["ton_connect", "TON (TonConnect)"],
+  ["webauthn", "Passkey (WebAuthn)"],
+];
 
 /**
- * The testnet showcase next to the devnet: the same contracts on NEAR testnet, a public chain, with links to
- * every transaction on nearblocks and the Chain Signatures proof. Nothing when the server runs no showcase.
+ * The whole system on NEAR testnet, a public chain, next to the devnet the site plays on: its contracts, the
+ * house orders of the three markets, one order relayed from each wallet standard and the Chain Signatures proof,
+ * each with its nearblocks link. Nothing when the server runs no testnet showcase.
  */
 export function TestnetCard() {
   const { data: t } = useTestnet();
@@ -34,30 +43,55 @@ export function TestnetCard() {
       action={<span className={`testnet-status ${t.status}`}>{status}</span>}
     >
       <p className="caption">
-        The same contracts on a public chain: every transaction below can be checked on nearblocks. NEAR Intents is not deployed on testnet, so it runs our copy of the
-        intents.near mainnet code, as the devnet does; the site you trade on stays the devnet.
+        The same system on a public chain, run by the server: every transaction below can be checked on nearblocks. The site you trade on stays the devnet, which answers in
+        a second. NEAR Intents is not deployed on testnet, so it runs our copy of the intents.near mainnet code.
       </p>
       {t.status !== "running" && <p className="fine">{t.status === "waiting-funds" ? `${t.master} holds ${t.balance?.toFixed(2) ?? "…"} testnet NEAR; the setup needs about ${t.need}.` : t.message}</p>}
       {t.contracts && (
         <dl className="testnet-contracts">
-          <dt>Tender</dt>
-          <dd>{link(addr(t.contracts.tender), t.contracts.tender)}</dd>
           <dt>NEAR Intents (copy)</dt>
           <dd>{link(addr(t.contracts.intents), t.contracts.intents)}</dd>
-          <dt>Firms</dt>
-          <dd>
-            {t.firms.map((f, i) => (
-              <span key={f.id}>
-                {i > 0 && ", "}
-                {link(addr(f.account), f.name)}
-              </span>
-            ))}
-          </dd>
+          {t.markets.map((m) => (
+            <div key={m.symbol} className="testnet-market">
+              <dt>{m.symbol}/USDC</dt>
+              <dd>
+                {link(addr(m.tender), m.tender)}
+                {m.firms.length > 0 && " · "}
+                {m.firms.map((f, i) => (
+                  <span key={f.id}>
+                    {i > 0 && ", "}
+                    {link(addr(f.account), f.name)}
+                  </span>
+                ))}
+              </dd>
+            </div>
+          ))}
         </dl>
       )}
       {t.orders.length > 0 && <TestnetOrders orders={t.orders.slice(0, 6)} tx={tx} />}
       {t.status === "running" && (
         <div className="testnet-evm">
+          <h3>
+            <i className="fa-solid fa-wallet" aria-hidden="true" /> Wallets of other chains
+          </h3>
+          <ul className="testnet-wallets">
+            {WALLETS.map(([std, label]) => {
+              const w = t.wallets.find((x: TestnetWallet) => x.standard === std);
+              return (
+                <li key={std}>
+                  <span>{label}</span>
+                  {w ? (
+                    <span className="testnet-links">
+                      {link(tx(w.relayTx), "relayed")}
+                      {w.settleTx && <> · {link(tx(w.settleTx), "settled")}</>} <Badge status={w.status} />
+                    </span>
+                  ) : (
+                    <span className="muted">pending</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
           <h3>
             <i className="fa-solid fa-signature" aria-hidden="true" /> Chain Signatures
           </h3>
@@ -77,31 +111,36 @@ export function TestnetCard() {
 }
 
 function TestnetOrders({ orders, tx }: { orders: TestnetOrder[]; tx: (h: string) => string }) {
-  const near = ASSETS.NEAR;
   return (
     <div className="testnet-orders">
-      {orders.map((o) => (
-        <div key={o.id} className="testnet-order">
-          <span className="order-id">#{o.id}</span>
-          <span className="order-what">{o.side === "Buy" ? `Buy NEAR with ${paidText(o.side, o.amountIn, near)}` : `Sell ${paidText(o.side, o.amountIn, near)}`}</span>
-          <span className="order-amount">{o.out ? `got ${gotText(o.side, o.out, near)}` : ""}</span>
-          <span className="testnet-links">
-            <a href={tx(o.postTx)} target="_blank" rel="noreferrer">
-              posted
-            </a>
-            {o.settleTx && (
-              <>
-                {" · "}
-                <a href={tx(o.settleTx)} target="_blank" rel="noreferrer">
-                  settled
-                </a>
-              </>
-            )}{" "}
-            <span className="muted">{ago(o.at)}</span>
-          </span>
-          <Badge status={o.status} />
-        </div>
-      ))}
+      {orders.map((o) => {
+        const a = ASSETS[o.symbol] ?? ASSETS.NEAR;
+        return (
+          <div key={`${o.symbol}${o.id}`} className="testnet-order">
+            <span className="order-id">#{o.id}</span>
+            <span className="order-what">
+              <span className="mk-tag">{o.symbol}</span>
+              {o.side === "Buy" ? `Buy ${o.symbol} with ${paidText(o.side, o.amountIn, a)}` : `Sell ${paidText(o.side, o.amountIn, a)}`}
+            </span>
+            <span className="order-amount">{o.out ? `got ${gotText(o.side, o.out, a)}` : ""}</span>
+            <span className="testnet-links">
+              <a href={tx(o.postTx)} target="_blank" rel="noreferrer">
+                posted
+              </a>
+              {o.settleTx && (
+                <>
+                  {" · "}
+                  <a href={tx(o.settleTx)} target="_blank" rel="noreferrer">
+                    settled
+                  </a>
+                </>
+              )}{" "}
+              <span className="muted">{ago(o.at)}</span>
+            </span>
+            <Badge status={o.status} />
+          </div>
+        );
+      })}
     </div>
   );
 }

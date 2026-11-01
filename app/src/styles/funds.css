@@ -139,6 +139,29 @@ i.chain-mark {
   overflow-wrap: anywhere;
 }
 
+.testnet-market {
+  display: contents;
+}
+
+.testnet-wallets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 18px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.testnet-wallets li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
 .testnet-orders {
   display: flex;
   flex-direction: column;
