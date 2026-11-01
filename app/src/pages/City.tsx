@@ -359,7 +359,7 @@ export function City() {
             {p.today}
           </span>
           {p.badges.map((b) => (
-            <i key={b} className={`fa-solid ${BADGES[b]?.icon ?? "fa-star"} badge`} title={`${BADGES[b]?.label}: ${BADGES[b]?.tip}`} aria-label={BADGES[b]?.label} />
+            <i key={b} className={`fa-solid ${BADGES[b]?.icon ?? "fa-star"} sealed-badge`} title={`${BADGES[b]?.label}: ${BADGES[b]?.tip}`} aria-label={BADGES[b]?.label} />
           ))}
         </div>
       </header>

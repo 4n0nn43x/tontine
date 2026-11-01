@@ -138,7 +138,7 @@
 .sealed-me .today.up {
   color: #7be0b4;
 }
-.sealed-me .badge {
+.sealed-me .sealed-badge {
   color: var(--gold);
   font-size: 12px;
   opacity: 0.9;
