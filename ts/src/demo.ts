@@ -10,8 +10,10 @@ import { makeLlm } from "./llm.ts";
 import { Swarm, bidHash, type FirmHandle } from "./swarm.ts";
 import { CLIENT_TOLERANCE_BPS, outAt, replayPrices, toBase } from "./prices.ts";
 import { marketHouse } from "./devnet.ts";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { p256 } from "@noble/curves/nist.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { checkRelay, evmAccount, orderPayload, Payouts, signErc191, submitRelay } from "./relay.ts";
+import { accountOf, checkRelay, evmAccount, orderPayload, Payouts, signAs, signErc191, submitRelay } from "./relay.ts";
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -449,6 +451,36 @@ async function main() {
       evmNear === BigInt(re12.order.out) && BigInt(await view(provider, T, "asset_balance_of", { account_id: evm })) === 0n,
       `${fmtNear(evmNear)} wNEAR on ${evm} in intents.near, 0 left in tender`,
     );
+
+    section("13. Tron, Solana, Stellar, TON and passkey users too: each wallet's own signature, verified by intents.near");
+    // The same order, signed as TronLink (TIP-191), Phantom (raw Ed25519), Freighter (SEP-53), a TON wallet
+    // (TonConnect signData) and a passkey (WebAuthn, P-256) sign it, each from the implicit account of its key.
+    const curves = { tip191: secp256k1, raw_ed25519: ed25519, sep53: ed25519, ton_connect: ed25519, webauthn: p256 } as const;
+    const fills13: string[] = [];
+    for (const st of ["tip191", "raw_ed25519", "sep53", "ton_connect", "webauthn"] as const) {
+      const key = curves[st].utils.randomSecretKey();
+      const who = accountOf(st, key);
+      await mint("usdc", usdc.acct.accountId, USDC(10));
+      await call(usdc.acct, usdc.acct.accountId, "ft_transfer_call", { receiver_id: I, amount: USDC(10).toString(), msg: who }, 1n, TGAS(100));
+      const ref = outAt("Buy", USDC(10), prices[at], CLIENT_TOLERANCE_BPS);
+      const text = orderPayload({
+        signer: who,
+        intents: I,
+        tender: T,
+        token: STABLE,
+        amount: USDC(10),
+        order: { side: "Buy", amount_in: USDC(10).toString(), min_out: ref.toString(), reference_out: ref.toString(), commit_secs: 3, reveal_secs: 3 },
+        salt: await view(provider, I, "current_salt"),
+        deadlineMs: Date.now() + 5 * 60_000,
+      });
+      const signed = signAs(st, text, key);
+      const r = await submitRelay(relayer, provider, I, signed, checkRelay(signed, targets));
+      const o = await view(provider, T, "get_order", { order_id: r.orderId });
+      check(`${st}: intents.near verified it, and tender saw the implicit account as the client`, o.client === who && o.status === "Open" && (await mtBal(who)) === 0n, `${who}, order #${r.orderId}, tx ${r.txHash}`);
+      const re = await swarm.runOrder(r.orderId); // at once: the commit phase lasts 3 s
+      if (re.order.status === "Filled" && BigInt(re.order.out) >= ref) fills13.push(`${st} ${fmtNear(re.order.out)} NEAR`);
+    }
+    check("all five orders filled, at least the market reference", fills13.length === 5, fills13.join(", "));
 
     section("P&L per firm (on-chain)");
     for (const f of await view(provider, T, "get_firms")) {

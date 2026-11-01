@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { BalanceRows, EvmFunds, InMarkets, MoveFunds } from "../components/Funds";
+import { BalanceRows, ChainFunds, InMarkets, MoveFunds } from "../components/Funds";
+import { ConnectWallet } from "../components/Wallets";
 import { Badge, Card, Empty, FirmChip, TxButton } from "../components/ui";
 import { nameOf, faucet, getConfig, marketBySymbol, SYMBOLS } from "../lib/api";
 import { ASSETS, bpOver, bpText, gotText, near, paidText, toBase, usdc } from "../lib/format";
 import { inMarket, useBalances, useStates, useWallet } from "../lib/hooks";
-import { connectEthereum, createWallet, tenderCall, view } from "../lib/near";
+import { createWallet, tenderCall, view } from "../lib/near";
 
 export function Portfolio() {
   const wallet = useWallet();
@@ -47,11 +48,9 @@ export function Portfolio() {
             <TxButton className="btn primary" run={() => createWallet()}>
               <i className="fa-solid fa-wallet" aria-hidden="true" /> Create demo account
             </TxButton>
-            <TxButton className="btn" run={() => connectEthereum()}>
-              <i className="fa-brands fa-ethereum" aria-hidden="true" /> Connect an Ethereum wallet
-            </TxButton>
           </div>
-          <p className="fine">An Ethereum wallet trades from its 0x account in NEAR Intents: it signs each order, the relay pays the gas.</p>
+          <ConnectWallet className="btn" />
+          <p className="fine">A wallet of another chain (EVM, Solana, Tron, TON, Stellar) or a passkey trades from its own account in NEAR Intents: it signs each order, the relay pays the gas.</p>
         </Card>
       </div>
     );
@@ -70,18 +69,18 @@ export function Portfolio() {
 
       <div className="grid-2">
         <Card title="Balances">
-          <BalanceRows bal={bal} wallet={!wallet.evm} />
+          <BalanceRows bal={bal} wallet={!wallet.chain} />
           <InMarkets wallet={wallet} bal={bal} />
           <p className="fine">
-            {wallet.evm
-              ? "Trading balance: your 0x account in NEAR Intents, used by every market."
+            {wallet.chain
+              ? "Trading balance: your wallet's account in NEAR Intents, used by every market."
               : `Trading balance: held in NEAR Intents, used by every market. Gas: ${bal ? near(bal.near, 2) : "…"} NEAR, storage prepaid: ${bal ? near(bal.storage, 2) : "…"} NEAR.`}
           </p>
         </Card>
 
-        {wallet.evm ? (
+        {wallet.chain ? (
           <Card title="Add funds">
-            <EvmFunds wallet={wallet} />
+            <ChainFunds wallet={wallet} />
           </Card>
         ) : (
           <Card title="Deposit or withdraw">

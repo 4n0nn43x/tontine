@@ -1,13 +1,12 @@
-/* The trading balance: the account menu's Ethereum option and the "in markets" line. */
+/* The trading balance: the account menu's wallet picker and the "in markets" line. */
 
-.account:has(.eth-connect) {
+.account:has(.wallet-connect) {
   display: flex;
   gap: 8px;
 }
 
-.account-name .fa-ethereum {
+.account-name .chain-mark {
   margin-right: 4px;
-  color: #9fb4ff;
 }
 
 .in-markets {
@@ -20,7 +19,87 @@
 }
 
 @media (max-width: 860px) {
-  .eth-label {
+  .wallet-label {
     display: none;
   }
+}
+
+/* Wallets of other chains: one button each, its mark, its name and the wallets that work. */
+.wallet-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.wallet-picker .tx {
+  display: grid;
+}
+
+.wallet-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  justify-content: flex-start;
+}
+
+.wallet-choice:disabled {
+  opacity: 0.45;
+}
+
+.wc-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wc-text small {
+  color: var(--muted, #8a93a6);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chain-mark {
+  flex: none;
+  width: 30px;
+  text-align: center;
+  color: #9fb4ff;
+}
+
+i.chain-mark {
+  font-size: 18px;
+}
+
+.chain-mark.chain-logo {
+  display: inline-grid;
+  place-items: center;
+  height: 22px;
+}
+
+.chain-mark.chain-logo svg {
+  width: 22px;
+  height: 22px;
+}
+
+.account-name .chain-mark {
+  width: auto;
+  height: auto;
+  font-size: 14px;
+}
+
+.account-name .chain-mark.chain-logo {
+  vertical-align: -2px;
+}
+
+.account-name .chain-mark.chain-logo svg {
+  width: 15px;
+  height: 15px;
+}
+
+.wallet-panel {
+  width: min(340px, calc(100vw - 24px));
 }

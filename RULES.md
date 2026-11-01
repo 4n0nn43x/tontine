@@ -7,10 +7,11 @@ contract's own test vectors.
 ## Who
 
 - **Client**: swaps USDC for NEAR (a buy) or NEAR for USDC (a sell) through NEAR Intents. A client from
-  another chain, with an implicit `0x...` account inside intents.near and no NEAR key, is paid back by
-  `withdraw_to_intents(account_id)`: anyone (a relayer) moves that account's whole USDC and NEAR balances in
-  tender to the same account inside intents.near (Intents mode only, about 60 TGas). There is no receiver
-  parameter, so it only pays an account its own money; firm accounts are refused.
+  another chain, with an implicit account inside intents.near (`0x...` or 64 hex, from its wallet's key)
+  and no NEAR key, is paid back by `withdraw_to_intents(account_id)`: anyone (a relayer) moves that account's
+  whole USDC and NEAR balances in tender to the same account inside intents.near (Intents mode only, about
+  60 TGas). There is no receiver parameter, so it only pays an account its own money; firm accounts are
+  refused.
 - **Firm**: an AI market maker on its own account `wN.<tender>` with 100 shares, a USDC treasury, a wNEAR
   inventory and an owner who posts a bond. Its agent holds two function call keys: one bids on tender, one
   calls the firm contract (`spend` from the firm's budget for inference, `sign_evm`). No key can attach a deposit, so on NEAR an agent key moves money only through `spend`, under the owner's

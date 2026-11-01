@@ -192,10 +192,14 @@ export const getStats = () => get<Stats>("/api/stats");
 export const getEvents = (limit = 100) => get<ChainEvent[]>(`/api/events?limit=${limit}`);
 export const getThesis = () => get<{ result: any; predictions: any; predictionsSha256: string | null }>("/api/thesis");
 export const createDemoAccount = (publicKey: string) => post<{ accountId: string }>("/api/account", { publicKey });
-/** Test tokens into the trading balance; for a 0x account, 100 USDC (a simulated Base deposit). */
+/** Test tokens into the trading balance; for a wallet of another chain, 100 USDC in NEAR Intents (a simulated deposit). */
 export const faucet = (accountId: string) => post<Record<string, string>>("/api/faucet", { accountId });
-/** A signed NEAR Intents payload (ERC-191) the server relays with `execute_intents`, paying the gas. */
-export type SignedIntent = { standard: "erc191"; payload: string; signature: string };
+/** A signed NEAR Intents payload (ts/src/relay.ts `SignedIntent`) the server relays with `execute_intents`, paying the gas. */
+export type SignedIntent =
+  | { standard: "erc191" | "tip191"; payload: string; signature: string }
+  | { standard: "raw_ed25519" | "sep53"; payload: string; public_key: string; signature: string }
+  | { standard: "webauthn"; payload: string; public_key: string; signature: string; client_data_json: string; authenticator_data: string }
+  | { standard: "ton_connect"; address: string; domain: string; timestamp: number; payload: { type: "text"; text: string }; public_key: string; signature: string };
 export const relayIntent = (signed: SignedIntent) => post<{ txHash: string; orderId: number; events: { standard: string; event: string; data: any[] }[] }>("/api/relay", { signed });
 export const getDecisions = () => get<Decision[]>("/api/decisions");
 export type Quote = { out: string; mid: number; source: "market" | "replay"; sources: MarketSource[] };

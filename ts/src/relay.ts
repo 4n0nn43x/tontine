@@ -1,26 +1,41 @@
-// An EVM user trades without a NEAR account. Its NEAR Intents account is implicit: the lower-case `0x`
-// address, which signs intents with ERC-191 (`personal_sign`). This file builds and signs such an intent (one
-// `transfer` to a market's tender whose `msg` posts the order), checks it before the relayer pays the gas,
-// submits it with `execute_intents`, and pays fills back to NEAR Intents (the payout keeper).
+// A user of another chain trades without a NEAR account. Its NEAR Intents account is implicit, derived from
+// its wallet's key, and it signs intents with its own wallet's message standard: an EVM wallet (Base,
+// Ethereum...) with ERC-191 `personal_sign`, Tron with TIP-191, Solana with a raw Ed25519 signature, Stellar
+// with SEP-53, TON with TonConnect `signData`, and a passkey with WebAuthn. This file builds and signs such an
+// intent (one `transfer` to a market's tender whose `msg` posts the order), checks it before the relayer pays
+// the gas, submits it with `execute_intents`, and pays fills back to NEAR Intents (the payout keeper).
 //
 // Format: github.com/near/intents at 16d04f6 (defuse 0.4.5, the code of intents.near): DefusePayload
 // (core/src/payload/mod.rs), Transfer and NotifyOnTransfer (core/src/intents/tokens.rs), VersionedNonce V1
-// (core/src/nonce/versioned.rs), SignedErc191Payload (core/src/payload/erc191.rs, crates/signatures/erc191).
+// (core/src/nonce/versioned.rs), MultiPayload (core/src/payload/multi.rs) and its standards
+// (core/src/payload/*.rs, crates/signatures/*), implicit accounts (core/src/public_key.rs).
 import { createHash, randomBytes } from "node:crypto";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { p256 } from "@noble/curves/nist.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { baseEncode, type Account, type JsonRpcProvider, nearToYocto } from "near-api-js";
 import { call, view, TGAS, type Event } from "./chain.ts";
 
-/** A signed intent as `execute_intents` takes it (MultiPayload, `standard: "erc191"`). */
-export type SignedIntent = { standard: "erc191"; payload: string; signature: string };
+/**
+ * A signed intent as `execute_intents` takes it (MultiPayload), in every standard intents.near verifies but
+ * NEP-413 (a NEAR key sends its own transactions). Keys and signatures are `<curve>:<base58>`.
+ */
+export type SignedIntent =
+  | { standard: "erc191" | "tip191"; payload: string; signature: string }
+  | { standard: "raw_ed25519" | "sep53"; payload: string; public_key: string; signature: string }
+  | { standard: "webauthn"; payload: string; public_key: string; signature: string; client_data_json: string; authenticator_data: string }
+  | { standard: "ton_connect"; address: string; domain: string; timestamp: number; payload: { type: "text"; text: string }; public_key: string; signature: string };
+export type Standard = SignedIntent["standard"];
+export const STANDARDS: Standard[] = ["erc191", "tip191", "raw_ed25519", "sep53", "ton_connect", "webauthn"];
 /** What tender's `PostOrder` message carries. */
 export type PostOrderArgs = { side: "Buy" | "Sell"; amount_in: string; min_out: string; reference_out?: string; commit_secs: number; reveal_secs: number };
 
 /** Gas tender's `mt_on_transfer` gets to post the order (defuse's default is 30 TGas). */
 export const ORDER_MIN_GAS = TGAS(50);
 /**
- * Storage the relayer prepays in a tender for a `0x` account (NEP-145), at 1e19 yoctoNEAR a byte: an order and
+ * Storage the relayer prepays in a tender for an implicit account (NEP-145), at 1e19 yoctoNEAR a byte: an order and
  * its auction take 269 bytes, an account's first order 578 (its storage and ledger entries too; measured on the
  * devnet, 2026-11-01), so 0.05 NEAR covers about 17 orders.
  */
@@ -34,15 +49,40 @@ const MAX_AHEAD_MS = 10 * 60_000;
 /** `VersionedNonce::VERSIONED_MAGIC_PREFIX`. */
 const NONCE_MAGIC = Buffer.from("5628f6c6", "hex");
 
-/** The implicit NEAR Intents account of a secp256k1 key: `0x` + hex(keccak256(x || y)[12..]), the EVM address. */
+/** The implicit NEAR Intents account of a secp256k1 key: `0x` + hex(keccak256(x || y)[12..]), the EVM address (Tron's too). */
 export function evmAccount(secretKey: Uint8Array): string {
   return "0x" + Buffer.from(keccak_256(secp256k1.getPublicKey(secretKey, false).subarray(1)).subarray(12)).toString("hex");
 }
+/** The implicit account of an Ed25519 public key (Solana, Stellar, TON, an Ed25519 passkey): its 64 hex characters. */
+export const ed25519Account = (publicKey: Uint8Array) => Buffer.from(publicKey).toString("hex");
+/** The implicit account of a P-256 public key (x || y, 64 bytes; a passkey): `0x` + hex(keccak256("p256" || x || y)[12..]). */
+export const p256Account = (xy: Uint8Array) => "0x" + Buffer.from(keccak_256(Buffer.concat([Buffer.from("p256"), xy])).subarray(12)).toString("hex");
 
 /** ERC-191 prehash, as `personal_sign` and defuse's `Erc191::prehash`: keccak256("\x19Ethereum Signed Message:\n" + len + msg). */
 export function erc191Hash(msg: string): Uint8Array {
   const m = Buffer.from(msg, "utf8");
   return keccak_256(Buffer.concat([Buffer.from(`\x19Ethereum Signed Message:\n${m.length}`), m]));
+}
+/** TIP-191 prehash, as TronLink's `signMessageV2`: the same with "\x19TRON Signed Message:\n". */
+export function tip191Hash(msg: string): Uint8Array {
+  const m = Buffer.from(msg, "utf8");
+  return keccak_256(Buffer.concat([Buffer.from(`\x19TRON Signed Message:\n${m.length}`), m]));
+}
+/** SEP-53 prehash (Stellar wallets' `signMessage`): sha256("Stellar Signed Message:\n" || msg). */
+export const sep53Hash = (msg: string) => sha256(Buffer.concat([Buffer.from("Stellar Signed Message:\n"), Buffer.from(msg, "utf8")]));
+/**
+ * TonConnect `signData` prehash of a text: sha256(0xffff || "ton-connect/sign-data/" || workchain (i32 BE) ||
+ * address (32) || domain length (u32 BE) || domain || timestamp (u64 BE) || "txt" || text length (u32 BE) || text).
+ */
+export function tonConnectHash(address: string, domain: string, timestamp: number, text: string): Uint8Array {
+  const [wc, hash] = address.split(":");
+  const d = Buffer.from(domain, "utf8"), t = Buffer.from(text, "utf8");
+  const n = Buffer.alloc(4 + 4 + 8 + 4);
+  n.writeInt32BE(Number(wc), 0);
+  n.writeUInt32BE(d.length, 4);
+  n.writeBigUInt64BE(BigInt(timestamp), 8);
+  n.writeUInt32BE(t.length, 16);
+  return sha256(Buffer.concat([Buffer.from("ffff", "hex"), Buffer.from("ton-connect/sign-data/"), n.subarray(0, 4), Buffer.from(hash, "hex"), n.subarray(4, 8), d, n.subarray(8, 16), Buffer.from("txt"), n.subarray(16), t]));
 }
 
 /** VersionedNonce V1, base64: magic (4) || version 0 (1) || salt (4) || deadline ns, i64 LE (8) || random (15). */
@@ -56,7 +96,7 @@ export function versionedNonce(saltHex: string, deadlineMs: number, random: Uint
   return b.toString("base64");
 }
 
-/** The payload an EVM account signs: one transfer of `amount` of `token` to `tender`, whose msg posts `order`. */
+/** The payload a wallet signs: one transfer of `amount` of `token` to `tender`, whose msg posts `order`. */
 export function orderPayload(p: { signer: string; intents: string; tender: string; token: string; amount: bigint; order: PostOrderArgs; salt: string; deadlineMs: number }): string {
   return JSON.stringify({
     signer_id: p.signer,
@@ -68,9 +108,40 @@ export function orderPayload(p: { signer: string; intents: string; tender: strin
 }
 
 /** Sign with a local key (the demo, tests): 65 bytes r || s || v, v in {0, 1}, as defuse's Secp256k1RecoverableSignature. */
-export function signErc191(payload: string, secretKey: Uint8Array): SignedIntent {
-  const sig = secp256k1.sign(erc191Hash(payload), secretKey, { prehash: false, format: "recovered" }); // noble: v || r || s
-  return { standard: "erc191", payload, signature: `secp256k1:${baseEncode(Buffer.concat([sig.subarray(1), sig.subarray(0, 1)]))}` };
+export function signErc191(payload: string, secretKey: Uint8Array, standard: "erc191" | "tip191" = "erc191"): SignedIntent {
+  const sig = secp256k1.sign((standard === "tip191" ? tip191Hash : erc191Hash)(payload), secretKey, { prehash: false, format: "recovered" }); // noble: v || r || s
+  return { standard, payload, signature: `secp256k1:${baseEncode(Buffer.concat([sig.subarray(1), sig.subarray(0, 1)]))}` };
+}
+
+/**
+ * Sign with a local key as each wallet does (the demo, tests): an EVM or Tron wallet with a secp256k1 key,
+ * Phantom (`raw_ed25519`, the payload itself), a Stellar or TON wallet with an Ed25519 key, a passkey with a
+ * P-256 key (the authenticator data and client data a browser would produce). `address` is the TON wallet's.
+ */
+export function signAs(standard: Standard, payload: string, secretKey: Uint8Array, o: { address?: string; domain?: string; now?: number } = {}): SignedIntent {
+  if (standard === "erc191" || standard === "tip191") return signErc191(payload, secretKey, standard);
+  const ed = (msg: Uint8Array) => ({ public_key: `ed25519:${baseEncode(ed25519.getPublicKey(secretKey))}`, signature: `ed25519:${baseEncode(ed25519.sign(msg, secretKey))}` });
+  if (standard === "raw_ed25519") return { standard, payload, ...ed(Buffer.from(payload, "utf8")) };
+  if (standard === "sep53") return { standard, payload, ...ed(sep53Hash(payload)) };
+  if (standard === "ton_connect") {
+    const address = o.address ?? "0:" + "00".repeat(32), domain = o.domain ?? "tontine.fyra.fun", timestamp = Math.floor((o.now ?? Date.now()) / 1000);
+    return { standard, address, domain, timestamp, payload: { type: "text", text: payload }, ...ed(tonConnectHash(address, domain, timestamp, payload)) };
+  }
+  // WebAuthn: the authenticator signs authenticatorData || sha256(clientDataJSON), whose challenge is sha256(payload).
+  const client_data_json = JSON.stringify({ type: "webauthn.get", challenge: Buffer.from(sha256(Buffer.from(payload, "utf8"))).toString("base64url"), origin: `https://${o.domain ?? "tontine.fyra.fun"}` });
+  const auth = Buffer.concat([sha256(Buffer.from(o.domain ?? "tontine.fyra.fun")), Buffer.from([0x05, 0, 0, 0, 1])]); // rpIdHash, flags UP | UV, counter
+  const sig = p256.sign(Buffer.concat([auth, sha256(Buffer.from(client_data_json))]), secretKey, { lowS: true });
+  return {
+    standard, payload, client_data_json, authenticator_data: auth.toString("base64url"),
+    public_key: `p256:${baseEncode(p256.getPublicKey(secretKey, false).subarray(1))}`, signature: `p256:${baseEncode(sig)}`,
+  };
+}
+
+/** The implicit account a local key signs for in `standard` (see signAs). */
+export function accountOf(standard: Standard, secretKey: Uint8Array): string {
+  if (standard === "erc191" || standard === "tip191") return evmAccount(secretKey);
+  if (standard === "webauthn") return p256Account(p256.getPublicKey(secretKey, false).subarray(1));
+  return ed25519Account(ed25519.getPublicKey(secretKey));
 }
 
 /**
@@ -84,23 +155,56 @@ const fail = (m: string): never => {
   throw new Error(m);
 };
 
+const B58 = (min: number, max: number) => new RegExp(`^[1-9A-HJ-NP-Za-km-z]{${min},${max}}$`);
+const isStr = (v: unknown, max: number): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
+
 /**
- * Everything the relay checks before it pays any gas: one ERC-191 transfer intent from an implicit `0x`
- * account to one of the tenders, in the token the order sells, of exactly its `amount_in`, whose msg is a
- * PostOrder of at least the tender's `min_order`, with a deadline at most 10 minutes ahead. intents.near checks the signature, nonce and balance
- * (`simulate_intents`, in `submitRelay`).
+ * The signed envelope of each standard, checked for shape only (intents.near verifies the signature): the
+ * DefusePayload JSON it carries (TonConnect's is the signed text) and the curve of its key.
+ */
+function envelope(signed: any): { text: string; curve: "secp256k1" | "ed25519" | "p256" } {
+  if (!signed || typeof signed !== "object" || !STANDARDS.includes(signed.standard)) fail(`signed: one of ${STANDARDS.join(", ")}`);
+  const st: Standard = signed.standard;
+  const text = st === "ton_connect" ? signed.payload?.text : signed.payload;
+  if (!isStr(text, 4096)) fail("payload: a JSON string of at most 4 KB");
+  if (st === "erc191" || st === "tip191") {
+    if (!isStr(signed.signature, 120) || !B58(80, 100).test(signed.signature.slice(10)) || !signed.signature.startsWith("secp256k1:")) fail("signature: secp256k1:<base58 of 65 bytes>");
+    return { text, curve: "secp256k1" };
+  }
+  const curve = st === "webauthn" && String(signed.public_key).startsWith("p256:") ? "p256" : "ed25519";
+  const [pk, sig] = [signed.public_key, signed.signature].map((v) => (typeof v === "string" && v.startsWith(curve + ":") ? v.slice(curve.length + 1) : ""));
+  if (!(curve === "p256" ? B58(64, 90) : B58(32, 44)).test(pk)) fail(`public_key: ${curve}:<base58 of ${curve === "p256" ? "x || y, 64" : "32"} bytes>`);
+  if (!B58(64, 90).test(sig)) fail(`signature: ${curve}:<base58 of 64 bytes>`);
+  if (st === "webauthn" && (!isStr(signed.client_data_json, 1024) || typeof signed.authenticator_data !== "string" || !/^[A-Za-z0-9_-]{50,400}$/.test(signed.authenticator_data)))
+    fail("webauthn: client_data_json (JSON text) and authenticator_data (base64url)");
+  if (st === "ton_connect") {
+    if (!isStr(signed.address, 80) || !/^-?[0-9]{1,10}:[0-9a-fA-F]{64}$/.test(signed.address)) fail("address: the TON wallet's raw address, <workchain>:<64 hex>");
+    if (!isStr(signed.domain, 253)) fail("domain: the domain the wallet signed for");
+    if (!Number.isSafeInteger(signed.timestamp) || signed.timestamp <= 0) fail("timestamp: seconds");
+    if (signed.payload.type !== "text" || Object.keys(signed.payload).length !== 2) fail("payload: a TonConnect text payload");
+  }
+  return { text, curve };
+}
+
+/** The DefusePayload JSON a signed intent carries. */
+export const intentText = (signed: SignedIntent) => envelope(signed).text;
+
+/**
+ * Everything the relay checks before it pays any gas: one transfer intent, in one of the standards above,
+ * from the implicit account of its key to one of the tenders, in the token the order sells, of exactly its
+ * `amount_in`, whose msg is a PostOrder of at least the tender's `min_order`, with a deadline at most 10
+ * minutes ahead. intents.near checks the signature, nonce and balance (`simulate_intents`, in `submitRelay`).
  */
 export function checkRelay(signed: any, t: RelayTargets, now = Date.now()): RelayOrder {
-  if (!signed || typeof signed !== "object" || signed.standard !== "erc191") fail("signed: an erc191 payload");
-  if (typeof signed.payload !== "string" || signed.payload.length > 4096) fail("payload: a JSON string of at most 4 KB");
-  if (typeof signed.signature !== "string" || !/^secp256k1:[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(signed.signature)) fail("signature: secp256k1:<base58 of 65 bytes>");
+  const { text, curve } = envelope(signed);
   let p: any;
   try {
-    p = JSON.parse(signed.payload);
+    p = JSON.parse(text);
   } catch {
     fail("payload: not JSON");
   }
-  if (typeof p?.signer_id !== "string" || !/^0x[0-9a-f]{40}$/.test(p.signer_id)) fail("signer_id: an implicit EVM account, lower-case 0x + 40 hex");
+  if (typeof p?.signer_id !== "string" || !(curve === "ed25519" ? /^[0-9a-f]{64}$/ : /^0x[0-9a-f]{40}$/).test(p.signer_id))
+    fail(`signer_id: the implicit account of the ${curve} key, ${curve === "ed25519" ? "64 lower-case hex" : "lower-case 0x + 40 hex"}`);
   if (p.verifying_contract !== t.intents) fail(`verifying_contract: ${t.intents}`);
   const deadline = Date.parse(p.deadline);
   if (!(deadline > now && deadline <= now + MAX_AHEAD_MS)) fail("deadline: in the next 10 minutes");
@@ -138,7 +242,7 @@ export function checkRelay(signed: any, t: RelayTargets, now = Date.now()): Rela
  * Submit a checked intent: `simulate_intents` first (signature, nonce, balance; a view, no gas), then
  * STORAGE_DEPOSIT of tender storage if the account has under STORAGE_MIN (a new account, a used-up deposit, or
  * dust someone deposited for it) and `fundStorage()` allows it, then `execute_intents` from the relayer,
- * which pays the gas. The tender sees the `0x` account as the client and posts the order. If it refuses
+ * which pays the gas. The tender sees the implicit account as the client and posts the order. If it refuses
  * the order, intents.near returns the tokens to the signer (`mt_resolve_transfer`).
  */
 export async function submitRelay(
@@ -180,7 +284,7 @@ export class RelayGate {
 
   async run<T>(signed: SignedIntent, signer: string, submit: () => Promise<T>, now = Date.now()): Promise<T> {
     for (const [h, at] of this.seen) if (at <= now - MAX_AHEAD_MS) this.seen.delete(h);
-    const h = createHash("sha256").update(signed.payload).digest("hex");
+    const h = createHash("sha256").update(intentText(signed)).digest("hex");
     if (this.seen.has(h)) throw new Error("this intent was already submitted");
     if (this.busy.has(signer)) throw new Error("another intent of this account is being submitted, try again in a few seconds");
     this.seen.set(h, now);

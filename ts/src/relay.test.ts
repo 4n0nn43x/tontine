@@ -1,9 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { p256 } from "@noble/curves/nist.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { baseDecode } from "near-api-js";
 import {
-  checkRelay, erc191Hash, evmAccount, orderPayload, Payouts, RelayGate, signErc191, STORAGE_CAP, STORAGE_DEPOSIT, STORAGE_MIN, submitRelay, versionedNonce, type PostOrderArgs, type RelayTargets,
+  accountOf, checkRelay, ed25519Account, erc191Hash, evmAccount, intentText, orderPayload, p256Account, Payouts, RelayGate, sep53Hash, signAs, signErc191, STANDARDS, STORAGE_CAP, STORAGE_DEPOSIT, STORAGE_MIN, submitRelay, tip191Hash, tonConnectHash, versionedNonce,
+  type PostOrderArgs, type RelayTargets,
 } from "./relay.ts";
 
 // defuse's own vector (crates/signatures/erc191/src/lib.rs, near/intents 16d04f6): this key signed "Hello world!".
@@ -200,4 +204,77 @@ test("relay gate: storage capped per account, and only counted when the rate lim
   for (let i = 0; i < n; i++) assert.equal(gate.fundStorage("0xa"), true, `deposit ${i + 1}`);
   assert.equal(gate.fundStorage("0xa"), false, "over STORAGE_CAP");
   assert.equal(gate.fundStorage("0xb"), true, "another account");
+});
+
+// ------------------------------------------------------------------ the other wallets' standards
+
+const hex = (h: string) => Buffer.from(h, "hex");
+const b58 = (k: string) => baseDecode(k.slice(k.indexOf(":") + 1));
+
+test("TIP-191, SEP-53, TonConnect, raw Ed25519 and WebAuthn match defuse's vectors (near/intents 16d04f6)", () => {
+  // crates/signatures/tip191: the same key as the ERC-191 vector signed "Hello, TRON!" in TronLink's format.
+  const tron = hex("eea1651a60600ec4d9c45e8ae81da1a78377f789f0ac2019de66ad943459913015ef9256809ee0e6bb76e303a0b4802e475c1d26ade5d585292b80c9fe9cb10c01");
+  const pub = secp256k1.recoverPublicKey(Buffer.concat([tron.subarray(64), tron.subarray(0, 64)]), tip191Hash("Hello, TRON!"), { prehash: false });
+  assert.equal(Buffer.from(secp256k1.Point.fromBytes(pub).toBytes(false).subarray(1)).toString("hex"), PK);
+  // crates/signatures/sep53: a Stellar key (strkey: base32 of version byte, 32-byte key, CRC16) signed "Hello, World!".
+  const g = "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L";
+  let bits = "";
+  for (const c of g) bits += "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".indexOf(c).toString(2).padStart(5, "0");
+  const stellar = Uint8Array.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2))).subarray(1, 33);
+  assert.ok(ed25519.verify(hex("7cee5d6d885752104c85eea421dfdcb95abf01f1271d11c4bec3fcbd7874dccd6e2e98b97b8eb23b643cac4073bb77de5d07b0710139180ae9f3cbba78f2ba04"), sep53Hash("Hello, World!"), stellar));
+  // crates/signatures/ton-connect: a wallet's signData of a text.
+  const ton = tonConnectHash("0:f4809e5ffac9dc42a6b1d94c5e74ad5fd86378de675c805f2274d0055cbc9378", "ton-connect.github.io", 1747759882, "Hello, TON!".repeat(100));
+  assert.ok(ed25519.verify(hex("7bc628f6d634ab6ddaf10463742b13f0ede3cb828737d9ce1962cc808fbfe7035e77c1a3d0b682acf02d645cc1a244992b276552c0e1c57d30b03c2820d73d01"), ton, hex("22e795a07e832fc9084ca35a488a711f1dbedef637d4e886a6997d93ee2c2e37")));
+  // core/src/payload/multi.rs: Phantom signs the payload bytes; the account is the key in hex.
+  const phantom = { payload: '{"signer_id":"74affa71ab030d400fdfa1bed033dfa6fd3ae34f92d17c046ebe368e80d53751","verifying_contract":"intents.near","deadline":{"timestamp":1732035219},"nonce":"XVoKfmScb3G+XqH9ke/fSlJ/3xO59sNhCxhpG821BH8=","intents":[{"intent":"token_diff","diff":{"nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near":"-1000","nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near":"998"}}]}', public_key: "ed25519:8rVvtHWFr8hasdQGGD5WiQBTyr4iH2ruEPPVfj491RPN", signature: "ed25519:3vtbNQJHZfuV1s5DykzyjkbNLc583hnkrhTz57eDhd966iqzkor6Twgr4Loh2C195SCSEsiGfrd6KcxpjNq9ZbVj" };
+  assert.equal(ed25519Account(b58(phantom.public_key)), "74affa71ab030d400fdfa1bed033dfa6fd3ae34f92d17c046ebe368e80d53751");
+  assert.ok(ed25519.verify(b58(phantom.signature), Buffer.from(phantom.payload), b58(phantom.public_key)));
+  // core/src/payload/webauthn.rs: a P-256 passkey; the challenge is sha256(payload), the account keccak("p256" || x || y).
+  const pk = b58("p256:2V8Np9vGqLiwVZ8qmMmpkxU7CTRqje4WtwFeLimSwuuyF1rddQK5fELiMgxUnYbVjbZHCNnGc6fAe4JeDcVxgj3Q");
+  assert.equal(p256Account(pk), "0x3602b546589a8fcafdce7fad64a46f91db0e4d50");
+  const payload = '{"signer_id":"0x3602b546589a8fcafdce7fad64a46f91db0e4d50","verifying_contract":"defuse.test.near","deadline":"2025-03-30T00:00:00Z","nonce":"A3nsY1GMVjzyXL3mUzOOP3KT+5a0Ruy+QDNWPhchnxM=","intents":[{"intent":"transfer","receiver_id":"user1.test.near","tokens":{"nep141:ft1.poa-factory.test.near":"1000"}}]}';
+  const cdj = '{"type":"webauthn.get","challenge":"4cveZsIe6p-WaEcL-Lhtzt3SZuXbYsjDdlFhLNrSjjk","origin":"https://defuse-widget-git-feat-passkeys-defuse-94bbc1b2.vercel.app"}';
+  assert.equal(JSON.parse(cdj).challenge, Buffer.from(sha256(Buffer.from(payload))).toString("base64url"));
+  const auth = Buffer.from("933cQogpBzE3RSAYSAkfWoNEcBd3X84PxE8iRrRVxMgdAAAAAA", "base64url");
+  const sig = b58("p256:3KBMZ72BHUiVfE1ey5dpi3KgbXvSEf9kuxgBEax7qLBQtidZExxxjjQk1hTTGFRrPvUoEStfrjoFNVVW4Abar94W");
+  assert.ok(p256.verify(sig, Buffer.concat([auth, sha256(Buffer.from(cdj))]), Buffer.concat([Buffer.from([4]), pk]), { lowS: true }));
+});
+
+test("each wallet's standard: signed by its key, checked by the relay from its implicit account", () => {
+  const t: RelayTargets = { intents: "intents.sandbox", tenders: { "tender.sandbox": ["nep141:usdc.sandbox", "nep141:wnear.sandbox"] } };
+  const order: PostOrderArgs = { side: "Buy", amount_in: "40000000", min_out: "7000000000000000000000000", commit_secs: 8, reveal_secs: 6 };
+  const now = Date.now();
+  const key = { erc191: secp256k1, tip191: secp256k1, raw_ed25519: ed25519, sep53: ed25519, ton_connect: ed25519, webauthn: p256 };
+  for (const st of STANDARDS) {
+    const sk = key[st].utils.randomSecretKey();
+    const signer = accountOf(st, sk);
+    assert.match(signer, ["raw_ed25519", "sep53", "ton_connect"].includes(st) ? /^[0-9a-f]{64}$/ : /^0x[0-9a-f]{40}$/, st);
+    const text = orderPayload({ signer, intents: t.intents, tender: "tender.sandbox", token: "nep141:usdc.sandbox", amount: 40_000_000n, order, salt: "0a0b0c0d", deadlineMs: now + 60_000 });
+    const signed = signAs(st, text, sk, { now });
+    assert.equal(intentText(signed), text, st);
+    assert.equal(checkRelay(signed, t, now).signer, signer, st);
+    // The account must be the implicit form of the standard's key.
+    const other = JSON.parse(text);
+    other.signer_id = signer.startsWith("0x") ? "ab".repeat(32) : "0x" + "ab".repeat(20);
+    assert.throws(() => checkRelay(signAs(st, JSON.stringify(other), sk, { now }), t, now), /signer_id/, st);
+  }
+  const sk = ed25519.utils.randomSecretKey();
+  const text = orderPayload({ signer: accountOf("ton_connect", sk), intents: t.intents, tender: "tender.sandbox", token: "nep141:usdc.sandbox", amount: 40_000_000n, order, salt: "0a0b0c0d", deadlineMs: now + 60_000 });
+  const ton: any = signAs("ton_connect", text, sk, { now });
+  assert.equal(ton.address, "0:" + "00".repeat(32));
+  assert.ok(ed25519.verify(b58(ton.signature), tonConnectHash(ton.address, ton.domain, ton.timestamp, text), b58(ton.public_key)));
+  for (const [edit, why] of [
+    [(s: any) => (s.address = "EQ" + "A".repeat(46)), /address/],
+    [(s: any) => (s.timestamp = "1"), /timestamp/],
+    [(s: any) => (s.payload = { type: "binary", bytes: "AA" }), /payload/],
+    [(s: any) => (s.public_key = s.public_key.replace("ed25519:", "secp256k1:")), /public_key/],
+  ] as const) {
+    const s = structuredClone(ton);
+    edit(s);
+    assert.throws(() => checkRelay(s, t, now), why);
+  }
+  const pass: any = signAs("webauthn", text, p256.utils.randomSecretKey());
+  assert.throws(() => checkRelay({ ...pass, authenticator_data: undefined }, t, now), /authenticator_data/);
+  // A gate keyed by the signed text works for TonConnect's object payload too.
+  assert.doesNotThrow(() => new RelayGate().run(ton, "a", async () => 0));
 });

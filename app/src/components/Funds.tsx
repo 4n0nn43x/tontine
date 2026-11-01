@@ -2,7 +2,7 @@ import { useState } from "react";
 import { faucet, marketBySymbol, SYMBOLS, type Config, type MarketSymbol } from "../lib/api";
 import { amount, ASSETS, digitsOf, toBase, wrapped } from "../lib/format";
 import { useConfig } from "../lib/hooks";
-import { depositToIntents, inMarkets, moveToTrading, withdrawToWallet, type Balances, type Spots, type Wallet } from "../lib/near";
+import { CHAINS, depositToIntents, inMarkets, moveToTrading, withdrawToWallet, type Balances, type Spots, type Wallet } from "../lib/near";
 import { TxButton } from "./ui";
 
 export type Move = "deposit" | "withdraw";
@@ -86,14 +86,15 @@ export function MoveFunds({ wallet, bal, move: m0 = "deposit", token: t0 = "USDC
   );
 }
 
-/** For an Ethereum wallet: simulated Base USDC on the devnet; the way back to Base is mainnet only. */
-export function EvmFunds({ wallet }: { wallet: Wallet }) {
+/** For a wallet of another chain: simulated USDC on the devnet; deposits from its chain and the way back are mainnet only. */
+export function ChainFunds({ wallet }: { wallet: Wallet }) {
+  const from = wallet.chain ? CHAINS[wallet.chain].from : "another chain";
   return (
     <div className="move">
       <TxButton className="btn primary big go" run={() => faucet(wallet.accountId)}>
-        <i className="fa-solid fa-faucet-drip" aria-hidden="true" /> Simulate a Base deposit: 100 USDC
+        <i className="fa-solid fa-faucet-drip" aria-hidden="true" /> Simulate a deposit from {from}: 100 USDC
       </TxButton>
-      <p className="fine">On mainnet your USDC comes from Base through NEAR Intents. Withdrawing back to Base is mainnet only.</p>
+      <p className="fine">On mainnet your USDC comes from {from} through NEAR Intents (any chain it bridges, for a passkey). Withdrawing back is mainnet only.</p>
     </div>
   );
 }
@@ -138,7 +139,7 @@ export function InMarkets({ wallet, bal }: { wallet: Wallet; bal: Balances | nul
     <div className="avail in-markets">
       <span className="muted">In markets</span>
       <span>{text}</span>
-      {wallet.evm ? (
+      {wallet.chain ? (
         <span className="avail-wallet">Paid back to your trading balance after each fill.</span>
       ) : (
         <TxButton className="btn small" run={() => moveToTrading(wallet, bal)}>

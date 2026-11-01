@@ -3,8 +3,9 @@ import { Link } from "react-router-dom";
 import { faucet } from "../lib/api";
 import { near, short } from "../lib/format";
 import { announceTx, useBalances, useWallet } from "../lib/hooks";
-import { connectEthereum, createWallet, forgetWallet, type Wallet } from "../lib/near";
+import { CHAINS, createWallet, forgetWallet, type Wallet } from "../lib/near";
 import { InMarkets, TOKENS, tokenText } from "./Funds";
+import { ChainMark, WalletPicker } from "./Wallets";
 import "../styles/funds.css";
 
 export function AccountMenu() {
@@ -47,11 +48,17 @@ export function AccountMenu() {
         <button className="btn primary" disabled={busy} onClick={() => act(async () => (await createWallet(), setOpen(true)))}>
           {busy ? <i className="fa-solid fa-circle-notch fa-spin" aria-hidden="true" /> : <i className="fa-solid fa-wallet" aria-hidden="true" />} Create demo account
         </button>
-        <button className="btn eth-connect" disabled={busy} title="Connect an Ethereum wallet" aria-label="Connect an Ethereum wallet" onClick={() => act(async () => (await connectEthereum(), setOpen(true)))}>
-          <i className="fa-brands fa-ethereum" aria-hidden="true" />
-          <span className="eth-label">Ethereum wallet</span>
+        <button className="btn wallet-connect" disabled={busy} aria-expanded={open} title="Connect a wallet of another chain" aria-label="Connect a wallet" onClick={() => setOpen((o) => !o)}>
+          <i className="fa-solid fa-link" aria-hidden="true" />
+          <span className="wallet-label">Connect wallet</span>
         </button>
         {error && <span className="tx-error account-error">{error}</span>}
+        {open && (
+          <div className="account-panel wallet-panel" role="dialog" aria-label="Connect a wallet">
+            <p className="fine">Trade from your own wallet: it signs each order, the relay pays the gas.</p>
+            <WalletPicker />
+          </div>
+        )}
       </div>
     );
   }
@@ -62,14 +69,14 @@ export function AccountMenu() {
       <button className="btn account-btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className="live-dot" aria-hidden="true" />
         <span className="account-name">
-          {wallet.evm && <i className="fa-brands fa-ethereum" aria-hidden="true" />} {short(wallet.accountId, 18)}
+          {wallet.chain && <ChainMark chain={wallet.chain} />} {short(wallet.accountId, 18)}
         </span>
         <span className="account-usdc" title="Trading balance (NEAR Intents)">
           {usdcText} USDC
         </span>
       </button>
       {open && (
-        <div className="account-panel" role="dialog" aria-label={wallet.evm ? "Ethereum account" : "Demo account"}>
+        <div className="account-panel" role="dialog" aria-label={wallet.chain ? `${CHAINS[wallet.chain].name} wallet` : "Demo account"}>
           <p className="account-id">{wallet.accountId}</p>
           <div className="account-main">
             <span>Trading balance</span>
@@ -79,12 +86,12 @@ export function AccountMenu() {
             {TOKENS.slice(1).map((t) => (
               <Row key={t.key} label={t.name} value={bal ? tokenText(t.key, t.spot(bal)?.intents) : "…"} />
             ))}
-            {!wallet.evm && <Row label="Gas" value={bal ? `${near(bal.near, 2)} NEAR` : "…"} />}
+            {!wallet.chain && <Row label="Gas" value={bal ? `${near(bal.near, 2)} NEAR` : "…"} />}
           </dl>
           <InMarkets wallet={wallet} bal={bal} />
           <div className="account-actions">
             <button className="btn" disabled={busy} onClick={() => act(() => faucet(wallet.accountId))}>
-              <i className="fa-solid fa-faucet-drip" aria-hidden="true" /> {wallet.evm ? "Simulate a Base deposit" : "Get test tokens"}
+              <i className="fa-solid fa-faucet-drip" aria-hidden="true" /> {wallet.chain ? `Simulate a deposit from ${CHAINS[wallet.chain].from}` : "Get test tokens"}
             </button>
             <Link className="btn" to="/app/portfolio" onClick={() => setOpen(false)}>
               <i className="fa-solid fa-briefcase" aria-hidden="true" /> Portfolio
@@ -108,20 +115,28 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function Fine({ wallet }: { wallet: Wallet }) {
-  const forget = (q: string) => confirm(q) && forgetWallet();
-  return wallet.evm ? (
+  // A wallet disconnects at once. A demo key or a passkey's public key lives only in this browser: forgetting it
+  // loses the account, so a second click confirms, in place (no browser dialog).
+  const [sure, setSure] = useState(false);
+  const forget = (
+    <button className="link" onClick={() => (sure ? forgetWallet() : setSure(true))}>
+      {sure ? "Click again: the account cannot be opened again" : "Forget it"}
+    </button>
+  );
+  return wallet.chain === "passkey" ? (
     <p className="fine">
-      Ethereum account: your 0x address is your NEAR Intents account. You sign each order in your wallet, the relay pays the gas. Withdrawing back to Base is mainnet only.{" "}
-      <button className="link" onClick={() => forget("Disconnect this Ethereum wallet?")}>
+      Passkey account: derived from the passkey's key, which this browser keeps. You confirm each order with your face, fingerprint or PIN; the relay pays the gas. {forget}
+    </p>
+  ) : wallet.chain ? (
+    <p className="fine">
+      {CHAINS[wallet.chain].name} wallet: its key gives your NEAR Intents account. You sign each order in your wallet, the relay pays the gas. Withdrawing back to {CHAINS[wallet.chain].from} is mainnet only.{" "}
+      <button className="link" onClick={forgetWallet}>
         Disconnect
       </button>
     </p>
   ) : (
     <p className="fine">
-      Devnet account: its key was generated in this browser and never left it. Test tokens only.{" "}
-      <button className="link" onClick={() => forget("Forget this demo account? Its key is only stored in this browser.")}>
-        Forget it
-      </button>
+      Devnet account: its key was generated in this browser and never left it. Test tokens only. {forget}
     </p>
   );
 }

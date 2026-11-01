@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { CandleChart, type Fill } from "../components/Chart";
-import { BalanceRows, EvmFunds, InMarkets, MoveFunds, plain, type Move, type TokenKey } from "../components/Funds";
+import { BalanceRows, ChainFunds, InMarkets, MoveFunds, plain, type Move, type TokenKey } from "../components/Funds";
+import { ConnectWallet } from "../components/Wallets";
 import { Badge, Card, Countdown, Empty, FirmChip, MarketTabs, Modal, Tabs, TxButton } from "../components/ui";
 import { getCandles, getQuote, type AppState, type Candle, type ChainEvent, type Config, type MarketSource, type MarketSymbol, type Quote, type Side } from "../lib/api";
 import { amount, bpOver, bpText, clientOut, digitsOf, gotText, paidText, priceOf, toBase, usd, usdc, wrapped, type Asset } from "../lib/format";
 import { announceTx, inMarket, useAppState, useBalances, useChainNow, useConfig, useEvents, useFirmName, useMarket, useWallet } from "../lib/hooks";
-import { connectEthereum, createWallet, postOrder, type Balances, type Wallet } from "../lib/near";
+import { createWallet, postOrder, type Balances, type Wallet } from "../lib/near";
 
 const COMMIT_SECS = 8;
 const REVEAL_SECS = 6;
@@ -135,7 +136,7 @@ export function Trade() {
         <summary>How it works</summary>
         <ol className="steps">
           <li>
-            An order pays from your trading balance in NEAR Intents, in one transfer to the {symbol} market (<code>mt_transfer_call</code>, or an intent your Ethereum wallet signs). If it is short, the difference comes from your wallet first.
+            An order pays from your trading balance in NEAR Intents, in one transfer to the {symbol} market (<code>mt_transfer_call</code>, or an intent your wallet signs). If it is short, the difference comes from your wallet first.
           </li>
           <li>
             Firms seal their quotes for {COMMIT_SECS} s, reveal them for {REVEAL_SECS} s, then a settle fills you at the second-best quote, never under your minimum, or refunds you.
@@ -145,7 +146,7 @@ export function Trade() {
       </details>
 
       <Modal open={!!funds} onClose={() => setFunds(null)} title="Trading balance">
-        {wallet && funds && (wallet.evm ? <EvmFunds wallet={wallet} /> : <MoveFunds wallet={wallet} bal={bal} move={funds.move} token={funds.token} onDone={() => setFunds(null)} />)}
+        {wallet && funds && (wallet.chain ? <ChainFunds wallet={wallet} /> : <MoveFunds wallet={wallet} bal={bal} move={funds.move} token={funds.token} onDone={() => setFunds(null)} />)}
       </Modal>
     </div>
   );
@@ -263,8 +264,8 @@ function Ticket({
   const have = spot ? BigInt(spot.intents) : null;
   const inWallet = spot ? BigInt(spot.wallet) : null;
   const shortfall = have !== null && base > have ? base - have : 0n;
-  // An Ethereum account has no NEAR wallet: only its trading balance pays.
-  const enough = inWallet === null || shortfall <= (wallet?.evm ? 0n : inWallet);
+  // A wallet of another chain has no NEAR wallet: only its trading balance pays.
+  const enough = inWallet === null || shortfall <= (wallet?.chain ? 0n : inWallet);
   const fmt = (v: bigint | null) => (v === null ? "…" : side === "Buy" ? usdc(v) : amount(v, asset.decimals, digitsOf(asset)));
   const fee = config?.tenderConfig?.order_fee_bps;
   const surplus = config?.markets.find((m) => m.symbol === symbol)?.tenderConfig?.surplus_bps;
@@ -342,14 +343,14 @@ function Ticket({
             {fmt(have)} {tokenUnit}
           </b>
           <button type="button" className="link" onClick={() => onFunds("deposit", token)}>
-            {wallet.evm ? "Add funds" : "Deposit"}
+            {wallet.chain ? "Add funds" : "Deposit"}
           </button>
-          {!wallet.evm && (
+          {!wallet.chain && (
             <button type="button" className="link" onClick={() => onFunds("withdraw", token)}>
               Withdraw
             </button>
           )}
-          {!wallet.evm && (
+          {!wallet.chain && (
             <span className="avail-wallet">
               Wallet {fmt(inWallet)} {tokenUnit}
             </span>
@@ -381,9 +382,7 @@ function Ticket({
           <TxButton className="btn big go" run={() => createWallet()}>
             <i className="fa-solid fa-wallet" aria-hidden="true" /> Create demo account
           </TxButton>
-          <TxButton className="btn go" run={() => connectEthereum()}>
-            <i className="fa-brands fa-ethereum" aria-hidden="true" /> Connect an Ethereum wallet
-          </TxButton>
+          <ConnectWallet />
         </>
       ) : (
         <TxButton
@@ -395,15 +394,15 @@ function Ticket({
             if (posted) setOrderId(posted.data[0].order_id);
           }}
         >
-          {shortfall > 0n && !wallet.evm ? `Deposit ${plain(shortfall, decimals)} ${tokenUnit} from your wallet and ${side.toLowerCase()}` : `${side} ${symbol}${wallet.evm ? ", sign in your wallet" : ""}`}
+          {shortfall > 0n && !wallet.chain ? `Deposit ${plain(shortfall, decimals)} ${tokenUnit} from your wallet and ${side.toLowerCase()}` : `${side} ${symbol}${wallet.chain ? ", sign in your wallet" : ""}`}
         </TxButton>
       )}
       {!wallet && <p className="fine">A devnet account with test USDC, wNEAR, wETH and wSOL; its key is generated in your browser and stays there.</p>}
       {tooSmall && <p className="tx-error">Below the smallest order: {usdc(minOrder)} USDC {side === "Buy" ? "paid" : "received"}.</p>}
       {!enough && (
         <p className="tx-error">
-          {wallet?.evm
-            ? `Not enough ${tokenUnit}: ${fmt(have)} available. ${side === "Buy" ? "Get simulated Base USDC in the account menu." : `Buy ${symbol} first.`}`
+          {wallet?.chain
+            ? `Not enough ${tokenUnit}: ${fmt(have)} available. ${side === "Buy" ? "Simulate a deposit in the account menu." : `Buy ${symbol} first.`}`
             : `Not enough ${tokenUnit}: ${fmt(have)} available, ${fmt(inWallet)} in your wallet. Use the faucet in the account menu.`}
         </p>
       )}
@@ -590,14 +589,14 @@ function BalanceTable({ bal, wallet, symbol, onFunds }: { bal: Balances | null; 
   if (!wallet) return <Empty>Create a demo account to trade: your balances show here.</Empty>;
   return (
     <>
-      <BalanceRows bal={bal} tokens={["USDC", symbol]} wallet={!wallet.evm} />
+      <BalanceRows bal={bal} tokens={["USDC", symbol]} wallet={!wallet.chain} />
       <div className="balance-foot">
         <p className="fine">Trading balance: held in NEAR Intents, one for every market.</p>
         <div className="actions-row">
           <button type="button" className="btn small primary" onClick={() => onFunds("deposit")}>
-            <i className="fa-solid fa-arrow-down" aria-hidden="true" /> {wallet.evm ? "Add funds" : "Deposit"}
+            <i className="fa-solid fa-arrow-down" aria-hidden="true" /> {wallet.chain ? "Add funds" : "Deposit"}
           </button>
-          {!wallet.evm && (
+          {!wallet.chain && (
             <button type="button" className="btn small" onClick={() => onFunds("withdraw")}>
               <i className="fa-solid fa-arrow-up" aria-hidden="true" /> Withdraw
             </button>

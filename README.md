@@ -13,8 +13,9 @@ their cash stays under a floor, and are bought by rivals through the same auctio
 its limits on chain (price band, asset share, kill switch) and can write a mandate in plain English; the AI
 decides inside them, and every decision is logged and checked against a stated rule.
 
-One trading balance in NEAR Intents serves every market, and an Ethereum (Base) wallet trades with no NEAR
-account: it signs an intent, a relay submits it. A firm can also hold an address on Base through Chain
+One trading balance in NEAR Intents serves every market, and a wallet of another chain trades with no NEAR
+account: EVM (Base, Ethereum...), Solana, Tron, TON, Stellar, or a passkey with no wallet at all. It signs an
+intent in its own wallet's standard, a relay submits it. A firm can also hold an address on Base through Chain
 Signatures, within its owner's limits.
 
 The unit is the firm, not the trade: its equity trades, its income is measured and shared on chain, and
@@ -52,6 +53,7 @@ NEAR at a real Binance close (5.347 USD, 2026-10-08), then:
 | 10 | A client account, not the admin, calls `create_firm` with 3 NEAR | `PASS a non-admin account launched a firm and holds its 100 shares`, `PASS tender created its account with the firm contract and two function call keys only` |
 | 11 | A second tender trades wETH against USDC; a client buys ETH with 40 USDC | `PASS an ETH/USDC order filled on the ETH tender, at least the market reference` |
 | 12 | A fresh EVM key (a Base user, no NEAR account) gets USDC in NEAR Intents, signs an ERC-191 `transfer` intent with a `PostOrder` msg, and a relay submits it | `PASS the relayer paid the gas and the 0x account's storage; tender saw the 0x account as the client`, `PASS the relay refuses a transfer to an account that is not a tender, and intents.near a replayed intent`, `PASS the 0x account's order filled, at least the market reference`, `PASS the keeper paid the fill back to the 0x account in NEAR Intents (withdraw_to_intents)` |
+| 13 | The same order signed as TronLink (TIP-191), Phantom (raw Ed25519), Freighter (SEP-53), a TON wallet (TonConnect `signData`) and a passkey (WebAuthn, P-256) sign it, each from the implicit account of its key | `PASS tip191: intents.near verified it, and tender saw the implicit account as the client`, the same for `raw_ed25519`, `sep53`, `ton_connect` and `webauthn`, `PASS all five orders filled, at least the market reference` |
 
 Other commands:
 
@@ -129,15 +131,28 @@ One trading balance: your NEAR Intents account (`mt_balance_of`) serves every ma
 `withdraw_to_intents(client)`, so the proceeds are back in NEAR Intents within seconds. Money left in a
 tender (dividends, share sales) shows as "in markets", moved back in one click.
 
-"Connect an Ethereum wallet" (`window.ethereum`): the lower-case `0x` address is the account inside NEAR
-Intents, with no NEAR account. On the devnet the faucet credits it 100 USDC (a simulated Base deposit; on
-mainnet, 1Click or the bridge from Base). Each order is a `transfer` intent to the tender with a `PostOrder`
-msg, signed with `personal_sign` (ERC-191); `POST /api/relay` checks it (one transfer to a tender, the token
+"Connect a wallet": a wallet of another chain trades from an implicit account inside NEAR Intents, derived
+from its key, with no NEAR account. intents.near verifies each wallet's own message standard:
+
+| Wallet | Signs with | Account inside NEAR Intents |
+| --- | --- | --- |
+| EVM (MetaMask, Rabby, Coinbase Wallet; Base, Ethereum...) | `personal_sign`, ERC-191 | its lower-case `0x` address |
+| Tron (TronLink) | `signMessageV2`, TIP-191 | the same `0x` form of its address |
+| Solana (Phantom, Solflare, Backpack) | `signMessage`, raw Ed25519 | its public key in hex (64 characters) |
+| TON (Tonkeeper, MyTonWallet extensions) | TonConnect `signData`, text | its public key in hex |
+| Stellar (Freighter) | `signMessage`, SEP-53 | its public key in hex |
+| Passkey (Face ID, Touch ID, Windows Hello) | WebAuthn, P-256 | `0x` + keccak256("p256" + key), 20 bytes |
+
+A passkey is created on the site and its public key is kept in the browser (WebAuthn returns it only at
+creation): forgetting it loses the account. On the devnet the faucet credits an account 100 USDC (a
+simulated deposit; on mainnet, 1Click or the NEAR Intents bridge from its chain). Each order is a
+`transfer` intent to the tender with a `PostOrder` msg, signed in the wallet; `POST /api/relay` checks it
+(the envelope of its standard, the account form of its key, one transfer to a tender, the token
 the order sells, at least the market's minimum order, a deadline under 10 minutes), relays one intent at a
 time per signer and never the same one twice, simulates it, tops the account's tender storage up to
 0.05 NEAR when it runs low (0.3 NEAR per account at most) and submits `execute_intents`. Limits: 30 intents
 per IP per 10 minutes, storage for 3 new accounts per IP and 40 in all an hour; the devnet refills the
-relayer from the root account. Withdrawing back to Base is mainnet only.
+relayer from the root account. Withdrawing back to the wallet's chain is mainnet only.
 
 The AI in the app, each part with a stated fallback and a daily budget (about 950 LLM calls, 0.14 USD, on
 Qwen3.8-27B in a TEE on NEAR AI Cloud):
@@ -468,9 +483,11 @@ Mediums and eleven Lows, all fixed (25 without an amount cap), each with a PoC o
 - USDC is held per market (one tender each): the keeper moves fills and refunds back to NEAR Intents, but
   money a user moved into a tender for a share purchase or a bond can be swept back by a payout landing in
   between (retry the step). Firm and order ids repeat across markets (links carry `?market=`).
-- The relay pays the gas of every intent and up to 0.3 NEAR of tender storage per `0x` account (0.05 at a
-  time; 3 new accounts per IP and 40 in all an hour). Real deposits from Base and withdrawals to Base go
-  through NEAR Intents on mainnet only.
+- The relay pays the gas of every intent and up to 0.3 NEAR of tender storage per wallet account (0.05 at a
+  time; 3 new accounts per IP and 40 in all an hour). Real deposits from a wallet's chain and withdrawals to
+  it go through NEAR Intents on mainnet only. The wallet connectors follow each wallet's documented API and
+  are tested in a browser against mocks of those APIs and Chrome's virtual authenticator, not with every real
+  wallet; the signatures themselves are checked by the mainnet intents.near code (demo steps 12 and 13).
 - `sign_evm` limits the target, the function and the recipient of token transfers and approvals, not the
   amount; a takeover moves the firm to a fresh EVM address, so what the old owner signed or left on the old
   one does not pass with the firm. Not run against a live signer yet.
@@ -483,8 +500,11 @@ Mediums and eleven Lows, all fixed (25 without an amount cap), each with a PoC o
 NEAR Intents verifier (defuse 0.4.5, MIT, binary taken from `intents.near`, sandbox only), near-sdk 5.29.1,
 near-contract-standards 5.29.1 (mock token only), near-api-js 7.4.0, near-sandbox 0.3.4 (sandbox binaries
 2.13.4 and 2.14.0), @anthropic-ai/sdk 1.3.0 (optional manager LLM), @noble/hashes 2.2.0 and @noble/curves
-2.2.0 (keccak and secp256k1 for EVM addresses and ERC-191 intents), tsx, TypeScript. Website: React 19.1,
-react-router-dom 7.18, Vite 8.3, lightweight-charts 5.2.1 (TradingView, charts), Font Awesome 6.5.2 (CDN),
+2.2.0 (keccak, sha256, secp256k1, Ed25519 and P-256 for the wallets' accounts and signatures), tsx,
+TypeScript. Website: React 19.1, react-router-dom 7.18, Vite 8.3, lightweight-charts 5.2.1 (TradingView,
+charts), @noble/curves and @noble/hashes 2.2.0 (passkey accounts), @stellar/freighter-api 6.0.1
+(Apache-2.0, Stellar wallet, loaded on use), the Solana, TON and Stellar logos of Simple Icons 16.36.0 and
+the Tron logo of cryptocurrency-icons 0.18.1 (both CC0, inlined SVG), Font Awesome 6.5.2 (CDN),
 fonts Inter (Google Fonts), BubbledotICG-FinePos (OnlineWebFonts CDN) and Geist Pixel Circle (SIL OFL);
 browser QA with Playwright (not in the repo). Data: DefiLlama, NEARBlocks, Binance (NEAR, ETH and SOL
 candles, Coinbase as fallback) public APIs; Binance, OKX and Coinbase tickers for the market mid; CoinDesk,

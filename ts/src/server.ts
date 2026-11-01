@@ -452,12 +452,13 @@ async function readBody(req: IncomingMessage, max = 256 * 1024): Promise<any> {
 const faucetBody = () => Object.fromEntries(Object.entries(FAUCET).map(([k, v]) => [k, String(v)]));
 
 // ------------------------------------------------------------------ relay
-// An EVM user's signed intent (one transfer to a tender with a PostOrder msg, ts/src/relay.ts) is submitted
-// with `execute_intents` by the relayer, which pays the gas and 0.05 NEAR of tender storage when the 0x
-// account has under 0.01 NEAR there. Abuse limits: 30 intents per IP per 10 minutes, one at a time per
-// account, each signed intent once; orders under the tender's min_order refused before any gas; storage only
-// for an intent that intents.near simulates (valid signature, unused nonce, enough balance), 0.3 NEAR per
-// account at most, 3 deposits an hour per IP and 40 across the server (2 NEAR an hour at most).
+// A wallet's signed intent (EVM, Tron, Solana, Stellar, TON or passkey; one transfer to a tender with a
+// PostOrder msg, ts/src/relay.ts) is submitted with `execute_intents` by the relayer, which pays the gas and
+// 0.05 NEAR of tender storage when the account has under 0.01 NEAR there. Abuse limits: 30 intents per IP
+// per 10 minutes, one at a time per account, each signed intent once; orders under the tender's min_order
+// refused before any gas; storage only for an intent that intents.near simulates (valid signature, unused
+// nonce, enough balance), 0.3 NEAR per account at most, 3 deposits an hour per IP and 40 across the server
+// (2 NEAR an hour at most).
 const relayTargets: RelayTargets = {
   intents: devnet.intents,
   tenders: Object.fromEntries(markets.map((m) => [m.T, [devnet.token, m.assetToken]])),
@@ -699,12 +700,13 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/api/faucet" && req.method === "POST") {
       if (!allow(ip, "faucet", 10, 3_600_000)) return json(res, 429, { error: "Faucet limit reached for this address, try again in an hour." });
       const { accountId } = await readBody(req, 4096);
-      // An Ethereum account gets test USDC in NEAR Intents: a simulated Base deposit (on mainnet, 1Click or the bridge).
-      if (typeof accountId === "string" && /^0x[0-9a-f]{40}$/.test(accountId)) {
+      // A wallet of another chain (an implicit account: 0x + 40 hex, or 64 hex) gets test USDC in NEAR Intents, a
+      // simulated deposit from its chain (on mainnet, 1Click or the NEAR Intents bridge).
+      if (typeof accountId === "string" && /^(0x[0-9a-f]{40}|[0-9a-f]{64})$/.test(accountId)) {
         await devnet.credit(accountId, USDC(EVM_FAUCET_USDC));
-        return json(res, 200, { accountId, usdc: String(EVM_FAUCET_USDC), source: "simulated Base deposit" });
+        return json(res, 200, { accountId, usdc: String(EVM_FAUCET_USDC), source: "simulated deposit" });
       }
-      if (typeof accountId !== "string" || !/^v[a-z0-9]+\.sandbox$/.test(accountId)) return json(res, 400, { error: "only demo accounts and 0x accounts can use the faucet" });
+      if (typeof accountId !== "string" || !/^v[a-z0-9]+\.sandbox$/.test(accountId)) return json(res, 400, { error: "only demo accounts and wallet accounts can use the faucet" });
       await devnet.drip(accountId);
       return json(res, 200, { accountId, ...faucetBody() });
     }
