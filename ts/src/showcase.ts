@@ -33,6 +33,8 @@ const FILE = path.join(DIR, "testnet.json");
 const ORDER_MIN = Number(process.env.SHOWCASE_ORDER_MIN ?? 5);
 const MANAGER_SECS = Number(process.env.MANAGER_SECS ?? 180);
 const SIGNER = "v1.signer-prod.testnet";
+/** Requests a second the showcase sends the RPC: the free FastNEAR one allows about 8 (measured, 2026-11-01). */
+const RPS = Number(process.env.SHOWCASE_RPS ?? 4);
 const EXPLORER = "https://testnet.nearblocks.io";
 const MARKETS: { symbol: AssetSymbol; token: string; tender: string; owner: string }[] = [
   { symbol: "NEAR", token: "wnear", tender: "tender", owner: "o" },
@@ -85,6 +87,30 @@ export type ShowcaseView = {
   wallets: WalletProof[];
 };
 
+/**
+ * A provider for a free public RPC: at most `rps` requests a second through it (every account built on it
+ * shares the pace), and a request it refuses for its rate limit (-429) is sent again after a growing wait.
+ */
+function limited(provider: JsonRpcProvider, rps: number): JsonRpcProvider {
+  const send = provider.sendJsonRpc.bind(provider);
+  let next = 0;
+  (provider as any).sendJsonRpc = async (method: string, params: unknown) => {
+    for (let i = 0; ; i++) {
+      const now = Date.now();
+      const at = Math.max(now, next);
+      next = at + 1000 / rps;
+      if (at > now) await sleep(at - now);
+      try {
+        return await send(method as any, params as any);
+      } catch (e) {
+        if (i >= 6 || !/-429|Rate limits exceeded|Too Many Requests/i.test(String((e as Error).message))) throw e;
+        await sleep(1000 * 2 ** i);
+      }
+    }
+  };
+  return provider;
+}
+
 /** The first version ran the NEAR market alone: its steps and firms become the NEAR market's. */
 function migrate(st: any): State {
   if (!st.firms) return { wallets: [], ...st };
@@ -107,7 +133,7 @@ function migrate(st: any): State {
 
 export function startShowcase(opts: { master: string; key: string; log: (s: string) => void }): { view(): ShowcaseView } {
   const { master, log } = opts;
-  const provider = new JsonRpcProvider({ url: RPC });
+  const provider = limited(new JsonRpcProvider({ url: RPC }), RPS);
   const id = (name: string) => `${name}.${master}`;
   const I = id("intents"), U = id("usdc");
   const tenderOf = (s: string) => id(MARKETS.find((m) => m.symbol === s)!.tender);
@@ -263,7 +289,32 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
     }
   }
 
+  /**
+   * Orders an auction left open (an RPC refusal in the middle of it) are settled once their reveal phase is
+   * over, by anyone (here a firm's agent): filled or refunded. Their saved status follows.
+   */
+  async function settleStale(s: AssetSymbol) {
+    const T = tenderOf(s);
+    const open = [...st.orders.filter((o) => o.symbol === s), ...(s === "NEAR" ? st.wallets.map((w) => ({ ...w, id: w.orderId })) : [])].filter((o) => o.status === "Open");
+    if (!open.length) return;
+    const now = BigInt(((await provider.viewBlock({ finality: "final" } as any)) as any).header.timestamp_nanosec);
+    for (const o of open) {
+      const order = await view(provider, T, "get_order", { order_id: o.id });
+      if (order.status === "Open") {
+        const a = await view(provider, T, "get_auction", { auction_id: order.auction });
+        if (!a.settled && BigInt(a.reveal_end) < now) await call(swarms.get(s)!.firms[0].agentTender, T, "settle", { auction_id: order.auction }).catch(() => null);
+      }
+      const after = await view(provider, T, "get_order", { order_id: o.id });
+      for (const x of [...st.orders.filter((y) => y.symbol === s && y.id === o.id), ...(s === "NEAR" ? st.wallets.filter((w) => w.orderId === o.id) : [])]) {
+        x.status = after.status;
+        x.out = after.status === "Filled" ? String(after.out) : null;
+      }
+    }
+    save();
+  }
+
   async function order(s: AssetSymbol) {
+    await settleStale(s).catch((e) => log(`${s} settle: ${(e as Error).message}`));
     await topUp(s);
     const n = st.orders.filter((o) => o.symbol === s).length;
     const buy = n % 2 === 0;
@@ -403,7 +454,9 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
     for (;;) {
       try {
         await balance();
-        for (const std of STANDARDS.filter((s) => !st.wallets.some((w) => w.standard === s)).slice(0, 1))
+        // A standard whose order did not fill (an RPC refusal in its auction) tries again, three times at most.
+        const tries = (s: Standard) => st.wallets.filter((w) => w.standard === s).length;
+        for (const std of STANDARDS.filter((s) => !st.wallets.some((w) => w.standard === s && w.status === "Filled") && tries(s) < 3 && !st.wallets.some((w) => w.standard === s && w.status === "Open")).slice(0, 1))
           await walletProof(std).catch((e) => log(`wallet ${std}: ${(e as Error).message}`));
         if (Date.now() - lastTick > 3600_000) {
           for (const m of MARKETS) await epoch(m.symbol).catch((e) => log(`${m.symbol} epoch: ${(e as Error).message}`));

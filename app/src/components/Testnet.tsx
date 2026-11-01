@@ -76,7 +76,9 @@ export function TestnetCard() {
           </h3>
           <ul className="testnet-wallets">
             {WALLETS.map(([std, label]) => {
-              const w = t.wallets.find((x: TestnetWallet) => x.standard === std);
+              // Its filled order, else its latest try (a try refunded after an RPC refusal is tried again).
+              const tries = t.wallets.filter((x: TestnetWallet) => x.standard === std);
+              const w = tries.find((x) => x.status === "Filled") ?? tries.at(-1);
               return (
                 <li key={std}>
                   <span>{label}</span>
