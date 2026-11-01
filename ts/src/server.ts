@@ -305,7 +305,10 @@ async function epochLoop(m: Market) {
 
 // A house client keeps the markets busy: it visits them in turn and posts one order on a market with none
 // open, buys and sells in turn, its minimum set at the market mid less the client tolerance (orders are
-// labelled as house orders in the app).
+// labelled as house orders in the app). In a storm the house firms pause or quote 30 to 40 bp from the mid
+// (their mandates), past that tolerance: the house client then accepts STORM_EXTRA_BPS more, as a client who
+// still wants to trade would, or nothing would fill until the news calms down.
+const STORM_EXTRA_BPS = 40n;
 let houseIndex = 0;
 async function houseClientLoop() {
   await sleep(4000);
@@ -319,15 +322,16 @@ async function houseClientLoop() {
         // Buys of 10 to 59 USDC; sells of 3 to 24 USD of the asset.
         const amountIn = buy ? USDC(10 + Math.floor(Math.random() * 50)) : units((3 + Math.floor(Math.random() * 22)) / (await m.mid()), m.decimals);
         const q = await reference(side, amountIn, -1, m.symbol);
+        const minOut = m.swarm.regime === "storm" ? (q.out * (10_000n - STORM_EXTRA_BPS)) / 10_000n : q.out;
         await devnet.deposit(
           devnet.houseClient,
           amountIn,
-          { PostOrder: { side, amount_in: amountIn.toString(), min_out: q.out.toString(), reference_out: q.out.toString(), commit_secs: 8, reveal_secs: 6 } },
+          { PostOrder: { side, amount_in: amountIn.toString(), min_out: minOut.toString(), reference_out: q.out.toString(), commit_secs: 8, reveal_secs: 6 } },
           buy ? "usdc" : m.token,
           m.T,
         );
         const paid = buy ? `${Number(amountIn) / 1e6} USDC` : `${(Number(amountIn) / Number(m.unit)).toFixed(4)} ${m.symbol}`;
-        log(`house client posted a ${m.symbol} ${side} order (${paid}, at least the market reference, ${q.source})`);
+        log(`house client posted a ${m.symbol} ${side} order (${paid}, at least the market reference${minOut < q.out ? ` less ${STORM_EXTRA_BPS} bp (storm)` : ""}, ${q.source})`);
       }
     } catch (e) {
       log(`house client ${m.symbol}: ${(e as Error).message}`);
