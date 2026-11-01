@@ -70,6 +70,19 @@ export class Indexer {
     return () => this.listeners.delete(fn);
   }
 
+  /** What a restart needs to carry on (DEVNET_DIR): the next height to read, the events kept and the totals. */
+  dump() {
+    return { next: this.next, seq: this.seq, events: this.events, stats: this.stats, byContract: [...this.byContract] };
+  }
+
+  /** Back to a dump, before `start(dump.next)`: the blocks after it are read again, so no event is lost. */
+  restore(d: ReturnType<Indexer["dump"]>) {
+    this.seq = d.seq;
+    this.events = d.events;
+    Object.assign(this.stats, d.stats);
+    for (const [k, v] of d.byContract) this.byContract.set(k, v);
+  }
+
   async start(fromHeight?: number) {
     const head: any = await rpc(this.url, "block", { finality: "final" });
     this.next = fromHeight ?? head.header.height;

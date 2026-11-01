@@ -1,9 +1,15 @@
 // A long-running NEAR devnet for the hosted app: a local sandbox node with one tender per market (NEAR, ETH
 // and SOL against USDC), the firm contracts, the exact intents.near mainnet code and mock tokens, plus the
 // house firms, their owners and a house client.
+import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Sandbox, DEFAULT_ACCOUNT_ID, DEFAULT_PRIVATE_KEY } from "near-sandbox";
 import { JsonRpcProvider, KeyPair, actions, nearToYocto, type Account } from "near-api-js";
-import { account, call, USDC, TGAS } from "./chain.ts";
+import { account, call, view, USDC, TGAS } from "./chain.ts";
 import { createAccount, createFirm, deployContract, wasm } from "./deploy.ts";
 import { loadStrategies, type Strategy } from "./strategy.ts";
 import type { FirmHandle } from "./swarm.ts";
@@ -89,7 +95,13 @@ export const DEVNET_CONFIG = {
 };
 
 export type Devnet = {
-  sandbox: Sandbox;
+  /**
+   * The neard process and its home (chain data, config), whether it survives restarts (DEVNET_DIR), and
+   * `restart()`: stop neard and run it again on the same home (the same chain, a few seconds without RPC).
+   */
+  node: { homeDir: string; child: ChildProcess; persistent: boolean; restart(): Promise<void> };
+  /** True when this start resumed a saved chain instead of creating one. */
+  resumed: boolean;
   provider: JsonRpcProvider;
   rpcUrl: string;
   root: Account;
@@ -134,16 +146,242 @@ export function serialize(acct: Account): Account {
   return acct;
 }
 
+// 2.13.4 runs the protocol mainnet runs today (86): what deploys here deploys there.
+const VERSION = process.env.SANDBOX_VERSION ?? "2.13.4";
+// neard's default caches (512 MB of state, 128 MB of flat state, 500 MB of trie, 50 MB for views) fill up
+// under the swarm's load until the container's memory limit kills the node (OOM on the VPS, 2026-11-01).
+// The devnet's state is under 100 MB: small caches cost nothing. A single node serves no state sync: no
+// state snapshot every epoch (60 blocks here), and fewer open RocksDB files (their index blocks stay in memory).
+const STORE = {
+  max_open_files: 512,
+  col_state_cache_size: 64 << 20,
+  col_flat_state_cache_size: 32 << 20,
+  trie_cache: { default_max_bytes: 64 << 20 },
+  view_trie_cache: { default_max_bytes: 16 << 20 },
+  state_snapshot_config: { state_snapshot_type: "Disabled" },
+};
+
+/** STORE into a home's config.json: a resumed chain gets the settings of this version too. */
+function applyStore(homeDir: string) {
+  const file = path.join(homeDir, "config.json");
+  const cfg = JSON.parse(readFileSync(file, "utf8"));
+  const merge = (a: any, b: any): any => (b && typeof b === "object" && !Array.isArray(b) ? Object.fromEntries([...new Set([...Object.keys(a ?? {}), ...Object.keys(b)])].map((k) => [k, k in b ? merge(a?.[k], b[k]) : a[k]])) : b);
+  cfg.store = merge(cfg.store, STORE);
+  writeFileSync(file, JSON.stringify(cfg, null, 2));
+}
+
+/**
+ * What a persistent devnet keeps in DEVNET_DIR/devnet.json to resume its chain on the next start: the node's
+ * home, the private keys of every account the server signs with (a test chain's), and the layout.
+ */
+type Saved = {
+  fingerprint: string;
+  homeDir: string;
+  keys: Record<string, string>;
+  intents: string;
+  usdc: string;
+  inference: string;
+  houseClient: string;
+  relayer: string;
+  fts: [TokenKey, string][];
+  markets: { symbol: AssetSymbol; tender: string; ft: string; start: { mid: number; source: Reference["source"] }; firms: { id: number; account: string; owner: string; tender: string; firm: string; strategy: string }[] }[];
+};
+
+const houseOf = (s: AssetSymbol, strategies: Strategy[]) => (s === "NEAR" ? strategies : marketHouse(s));
+
+/** What the saved chain was built from: the contracts, the setup and the house firms. Any change: a new chain. */
+function fingerprint(strategies: Strategy[]): string {
+  const h = createHash("sha256");
+  for (const n of ["intents_mainnet", "mock_ft", "tender", "firm"]) h.update(wasm(n));
+  const setup = { VERSION, DEVNET_CONFIG, MARKETS, house: MARKETS.map((m) => houseOf(m.symbol, strategies).map((s) => s.name)) };
+  h.update(JSON.stringify(setup, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
+  return h.digest("hex");
+}
+
+const freePort = () =>
+  new Promise<number>((resolve, reject) => {
+    const srv = createServer();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const port = (srv.address() as { port: number }).port;
+      srv.close(() => resolve(port));
+    });
+  });
+
+/** Run neard on an existing home, as near-sandbox does, and wait for its RPC (RocksDB may replay its log first). */
+async function runNode(homeDir: string, rpcPort: number): Promise<{ child: ChildProcess; rpcUrl: string }> {
+  applyStore(homeDir);
+  const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "node_modules", "near-sandbox", "bin", `near-sandbox-${VERSION}`, "near-sandbox");
+  const rpcUrl = `http://127.0.0.1:${rpcPort}`;
+  const child = spawn(bin, ["--home", homeDir, "run", "--rpc-addr", `127.0.0.1:${rpcPort}`, "--network-addr", `127.0.0.1:${await freePort()}`], { stdio: "ignore" });
+  for (let t = Date.now(); Date.now() - t < 120_000; await new Promise((r) => setTimeout(r, 500))) {
+    if (child.exitCode !== null) break;
+    if (await fetch(`${rpcUrl}/status`).then((r) => r.ok, () => false)) return { child, rpcUrl };
+  }
+  child.kill("SIGKILL");
+  throw new Error(`neard did not answer on ${rpcUrl}`);
+}
+
+/** The node handle: stop neard (SIGTERM, then SIGKILL after 5 s) and run it again on the same home and port. */
+function nodeHandle(homeDir: string, child: ChildProcess, persistent: boolean, rpcPort: number): Devnet["node"] {
+  const node: Devnet["node"] = {
+    homeDir,
+    child,
+    persistent,
+    async restart() {
+      const old = node.child;
+      if (old.exitCode === null && old.signalCode === null) {
+        const exited = new Promise((r) => old.once("exit", r));
+        old.kill("SIGTERM");
+        const t = setTimeout(() => old.kill("SIGKILL"), 5000);
+        await exited;
+        clearTimeout(t);
+      }
+      node.child = (await runNode(homeDir, rpcPort)).child;
+    },
+  };
+  return node;
+}
+
+/** The devnet from its saved layout: accounts with their keys (one transaction at a time each), firms, helpers. */
+function assemble(node: Devnet["node"], resumed: boolean, rpcUrl: string, saved: Saved, strategies: Strategy[]): Devnet {
+  const provider = new JsonRpcProvider({ url: rpcUrl });
+  const acct = (id: string) => serialize(account(id, provider, saved.keys[id] as any));
+  const root = acct(DEFAULT_ACCOUNT_ID);
+  const usdc = acct(saved.usdc);
+  const fts = new Map<TokenKey, Account>(saved.fts.map(([t, id]) => [t, id === saved.usdc ? usdc : acct(id)]));
+  const owners = new Map<string, Account>();
+  const ownerOf = (id: string) => owners.get(id) ?? (owners.set(id, acct(id)), owners.get(id)!);
+  const markets: DevMarket[] = saved.markets.map((sm) => {
+    const def = MARKETS.find((x) => x.symbol === sm.symbol)!;
+    const { decimals, unit } = ASSETS[sm.symbol];
+    const house = houseOf(sm.symbol, strategies);
+    const firms: FirmHandle[] = sm.firms.map((f) => ({
+      id: f.id,
+      account: f.account,
+      owner: ownerOf(f.owner),
+      agentTender: serialize(account(f.account, provider, f.tender as any)),
+      agentFirm: serialize(account(f.account, provider, f.firm as any)),
+      strategy: house.find((s) => s.name === f.strategy)!,
+    }));
+    const ft = fts.get(def.token)!;
+    return { symbol: sm.symbol, decimals, unit, color: def.color, tender: acct(sm.tender), token: def.token, ft, assetToken: `nep141:${ft.accountId}`, firms, start: { out: 0n, mid: sm.start.mid, source: sm.start.source, sources: [] } };
+  });
+  const near = markets[0];
+  const I = saved.intents;
+  const relayer = acct(saved.relayer);
+
+  const mint = async (accountId: string, amount: bigint, t: TokenKey = "usdc") => {
+    const ft = fts.get(t)!;
+    await call(ft, ft.accountId, "mint", { account_id: accountId, amount: amount.toString() });
+  };
+  const deposit = async (from: Account, amount: bigint, msg?: object, t: TokenKey = "usdc", tender = near.tender.accountId) => {
+    const ft = fts.get(t)!;
+    await call(from, ft.accountId, "ft_transfer_call", { receiver_id: I, amount: amount.toString(), msg: "" }, 1n, TGAS(100));
+    return call(from, I, "mt_transfer_call", { receiver_id: tender, token_id: `nep141:${ft.accountId}`, amount: amount.toString(), approval: null, memo: null, msg: msg ? JSON.stringify(msg) : "" }, 1n, TGAS(250));
+  };
+  const decimalsOf = (t: TokenKey) => (t === "usdc" ? 6 : markets.find((m) => m.token === t)!.decimals);
+  // The token mints to itself, then deposits into intents.near for `accountId` (deposit msg = receiver id).
+  const credit = async (accountId: string, amount: bigint, t: TokenKey = "usdc") => {
+    const ft = fts.get(t)!;
+    await mint(ft.accountId, amount, t);
+    await call(ft, ft.accountId, "ft_transfer_call", { receiver_id: I, amount: amount.toString(), msg: accountId }, 1n, TGAS(100));
+  };
+  const drip = async (id: string) => {
+    await Promise.all([...fts.keys()].map((t) => credit(id, units(FAUCET[t], decimalsOf(t)), t)));
+  };
+  let visitors = 0;
+  const createVisitor = async (publicKey: string) => {
+    const id = `v${Date.now().toString(36)}${(visitors++).toString(36)}.${DEFAULT_ACCOUNT_ID}`;
+    await root.createAccount({ newAccountId: id, publicKey, nearToTransfer: nearToYocto("5") }); // enough to launch a firm (3 NEAR)
+    await drip(id);
+    // Registered with every token at 0, so a withdrawal from NEAR Intents to the wallet (ft_withdraw) lands.
+    await Promise.all([...fts.keys()].map((t) => mint(id, 0n, t)));
+    await storage(root, id, markets);
+    return id;
+  };
+  const fundRelayer = async () => {
+    const have = await relayer.getBalance();
+    if (have >= NEAR_(50)) return 0n;
+    await root.transfer({ receiverId: relayer.accountId, amount: NEAR_(200) - have });
+    return NEAR_(200) - have;
+  };
+
+  return {
+    node,
+    resumed,
+    provider,
+    rpcUrl,
+    root,
+    tender: near.tender,
+    usdc,
+    wnear: near.ft,
+    intents: I,
+    token: `nep141:${usdc.accountId}`,
+    assetToken: near.assetToken,
+    inference: saved.inference,
+    houseClient: acct(saved.houseClient),
+    relayer,
+    firms: near.firms,
+    strategies,
+    markets,
+    deposit,
+    createVisitor,
+    mint,
+    credit,
+    drip,
+    fundRelayer,
+  };
+}
+
+/** Each tender keeps its own storage deposits. */
+const storage = (payer: Account, forId: string, tenders: DevMarket[]) =>
+  Promise.all(tenders.map((m) => call(payer, m.tender.accountId, "storage_deposit", { account_id: forId }, nearToYocto("0.5"))));
+
+/**
+ * The devnet. With DEVNET_DIR set, the chain survives restarts: the node's home and the keys stay there, and
+ * the next start resumes them. A new chain starts when there is none, when the contracts or the setup changed
+ * (no state migration), or when the saved one does not come back up. Without DEVNET_DIR, every start is a new
+ * chain, as `make serve` always did.
+ */
 export async function startDevnet(log: (s: string) => void = console.log): Promise<Devnet> {
   const rpcPort = Number(process.env.SANDBOX_RPC_PORT ?? 3030);
-  // 2.13.4 runs the protocol mainnet runs today (86): what deploys here deploys there.
-  // neard's default caches (512 MB of state, 128 MB of flat state, 500 MB of trie, 50 MB for views) fill up
-  // under the swarm's load until the container's memory limit kills the node (OOM on the VPS, 2026-11-01).
-  // The devnet's state is under 100 MB: small caches cost nothing.
-  const store = { col_state_cache_size: 64 << 20, col_flat_state_cache_size: 32 << 20, trie_cache: { default_max_bytes: 64 << 20 }, view_trie_cache: { default_max_bytes: 16 << 20 } };
-  const sandbox = await Sandbox.start({ version: process.env.SANDBOX_VERSION ?? "2.13.4", config: { rpcPort, additionalConfig: { store } } });
+  const dir = process.env.DEVNET_DIR ? path.resolve(process.env.DEVNET_DIR) : null;
+  const strategies = await loadStrategies();
+  if (dir) {
+    const file = path.join(dir, "devnet.json");
+    try {
+      if (existsSync(file)) {
+        const saved: Saved = JSON.parse(readFileSync(file, "utf8"));
+        if (saved.fingerprint !== fingerprint(strategies)) log("devnet: the contracts or the setup changed since the saved chain: a new chain");
+        else {
+          const { child, rpcUrl } = await runNode(saved.homeDir, rpcPort);
+          try {
+            await view(new JsonRpcProvider({ url: rpcUrl }), saved.markets[0].tender, "get_config");
+          } catch (e) {
+            child.kill("SIGKILL");
+            throw e;
+          }
+          log(`devnet: resumed the saved chain at ${rpcUrl} (${saved.homeDir})`);
+          return assemble(nodeHandle(saved.homeDir, child, true, rpcPort), true, rpcUrl, saved, strategies);
+        }
+      }
+    } catch (e) {
+      log(`devnet: the saved chain did not come back (${(e as Error).message}): a new chain`);
+    }
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+  }
+
+  // near-sandbox makes the node's home in the temp directory: in DEVNET_DIR when the chain must survive.
+  const tmp = process.env.TMPDIR;
+  if (dir) process.env.TMPDIR = dir;
+  const sandbox = await Sandbox.start({ version: VERSION, config: { rpcPort, additionalConfig: { store: STORE } } }).finally(() => {
+    if (dir) process.env.TMPDIR = tmp;
+  });
   const provider = new JsonRpcProvider({ url: sandbox.rpcUrl });
   log(`devnet node at ${sandbox.rpcUrl}`);
+  const keys: Record<string, string> = {};
 
   // The sandbox root key is public knowledge: replace it before anything else is exposed.
   const rootKey = KeyPair.fromRandom("ed25519");
@@ -153,10 +391,12 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
     actions: [actions.addFullAccessKey(rootKey.getPublicKey()), actions.deleteKey(KeyPair.fromString(DEFAULT_PRIVATE_KEY as any).getPublicKey())],
     throwOnFailure: true,
   });
+  keys[DEFAULT_ACCOUNT_ID] = rootKey.toString();
   const root = serialize(account(DEFAULT_ACCOUNT_ID, provider, rootKey));
 
   const mk = async (name: string, near: string) => {
     const a = await createAccount(root, `${name}.${DEFAULT_ACCOUNT_ID}`, near, provider);
+    keys[a.acct.accountId] = a.key.toString();
     return serialize(a.acct);
   };
   const usdc = await mk("usdc", "20");
@@ -168,14 +408,12 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
   const houseClient = await mk("client", "40");
   const relayer = await mk("relayer", "200");
   const intentsAcct = await mk("intents", "100");
-  const strategies = await loadStrategies();
   // The NEAR market runs the strategies in strategies/; ETH and SOL run their own house firms.
-  const houseOf = (s: AssetSymbol) => (s === "NEAR" ? strategies : marketHouse(s));
   const owners = new Map<AssetSymbol, Account[]>();
   for (const m of MARKETS) {
     const prefix = m.symbol === "NEAR" ? "o" : `o${m.symbol.toLowerCase()}`;
     const list: Account[] = [];
-    for (let i = 0; i < houseOf(m.symbol).length; i++) list.push(await mk(`${prefix}${i + 1}`, "30"));
+    for (let i = 0; i < houseOf(m.symbol, strategies).length; i++) list.push(await mk(`${prefix}${i + 1}`, "30"));
     owners.set(m.symbol, list);
   }
 
@@ -187,20 +425,19 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
   // Mock NEP-141 tokens: USDC (6 decimals), wNEAR (24), wETH (18) and wSOL (9).
   for (const ft of fts.values()) await deployContract(ft, wasm("mock_ft"), "new", {});
 
-  const markets: DevMarket[] = [];
+  const layout: Saved["markets"] = [];
   for (const def of MARKETS) {
     const tender = tenders.get(def.symbol)!;
     const T = tender.accountId;
     const ft = fts.get(def.token)!;
-    const assetToken = `nep141:${ft.accountId}`;
-    const { decimals, unit } = ASSETS[def.symbol];
+    const { unit } = ASSETS[def.symbol];
     // The real price to start from: the market mid, or the replay when offline.
     const start = await reference("Buy", USDC(100), -1, def.symbol);
     await deployContract(tender, wasm("tender"), "new", {
       config: {
         admin: T,
         payment: { Intents: { contract: I, token_id: token } },
-        asset: { Intents: { contract: I, token_id: assetToken } },
+        asset: { Intents: { contract: I, token_id: `nep141:${ft.accountId}` } },
         asset_unit: unit.toString(),
         initial_price: BigInt(Math.round(start.mid * 1e6)).toString(),
         dividend_bps: DEVNET_CONFIG.dividendBps,
@@ -227,44 +464,44 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
     await call(tender, T, "set_firm_code", { code: Buffer.from(wasm("firm")).toString("base64") }, 0n, TGAS(200));
     log(`market ${def.symbol}/USDC: tender=${T}, ${ft.accountId} (mock), ${def.symbol} ${start.mid.toFixed(3)} USD (${start.source})`);
 
-    const firms: FirmHandle[] = [];
-    const house = houseOf(def.symbol);
+    const firms: Saved["markets"][number]["firms"] = [];
+    const house = houseOf(def.symbol, strategies);
     const own = owners.get(def.symbol)!;
     for (let i = 0; i < house.length; i++) {
       const f = await createFirm({ tenderAcct: tender, provider, n: i + 1, owner: own[i], strategy: house[i], budget: USDC(20), maxPerCall: USDC(25), budgetEpochSecs: 3600 });
-      serialize(f.agentTender);
-      serialize(f.agentFirm);
-      firms.push(f);
+      firms.push({ id: f.id, account: f.account, owner: own[i].accountId, tender: f.keys.tender, firm: f.keys.firm, strategy: house[i].name });
     }
-    markets.push({ symbol: def.symbol, decimals, unit, color: def.color, tender, token: def.token, ft, assetToken, firms, start });
+    layout.push({ symbol: def.symbol, tender: T, ft: ft.accountId, start: { mid: start.mid, source: start.source }, firms });
   }
-  const near = markets[0];
-  log(`contracts: intents=${I} (mainnet code), usdc (mock), ${markets.map((m) => m.tender.accountId).join(", ")}`);
+  log(`contracts: intents=${I} (mainnet code), usdc (mock), ${layout.map((m) => m.tender).join(", ")}`);
 
-  const mint = async (accountId: string, amount: bigint, t: TokenKey = "usdc") => {
-    const ft = fts.get(t)!;
-    await call(ft, ft.accountId, "mint", { account_id: accountId, amount: amount.toString() });
+  const saved: Saved = {
+    fingerprint: fingerprint(strategies),
+    homeDir: sandbox.homeDir,
+    keys,
+    intents: I,
+    usdc: usdc.accountId,
+    inference: inferenceAcct.accountId,
+    houseClient: houseClient.accountId,
+    relayer: relayer.accountId,
+    fts: [...fts].map(([t, a]) => [t, a.accountId]),
+    markets: layout,
   };
-  const deposit = async (from: Account, amount: bigint, msg?: object, t: TokenKey = "usdc", tender = near.tender.accountId) => {
-    const ft = fts.get(t)!;
-    await call(from, ft.accountId, "ft_transfer_call", { receiver_id: I, amount: amount.toString(), msg: "" }, 1n, TGAS(100));
-    return call(from, I, "mt_transfer_call", { receiver_id: tender, token_id: `nep141:${ft.accountId}`, amount: amount.toString(), approval: null, memo: null, msg: msg ? JSON.stringify(msg) : "" }, 1n, TGAS(250));
-  };
-  // Each tender keeps its own storage deposits.
-  const storage = (payer: Account, forId: string, tenders = markets) =>
-    Promise.all(tenders.map((m) => call(payer, m.tender.accountId, "storage_deposit", { account_id: forId }, nearToYocto("0.5"))));
+  // From here on, the accounts the server uses (the setup's own accounts are idle from now on).
+  const d = assemble(nodeHandle(sandbox.homeDir, (sandbox as any).childProcess, !!dir, rpcPort), false, sandbox.rpcUrl, saved, strategies);
+  const { mint, deposit } = d;
 
   for (const t of fts.keys()) await mint(I, 0n, t);
-  await storage(root, houseClient.accountId);
-  await mint(houseClient.accountId, USDC(1_000_000));
-  for (const m of markets) {
+  await storage(d.root, d.houseClient.accountId, d.markets);
+  await mint(d.houseClient.accountId, USDC(1_000_000));
+  for (const m of d.markets) {
     const T = m.tender.accountId;
     const worth = (usd: number) => units(usd / m.start.mid, m.decimals);
     const nearMarket = m.symbol === "NEAR";
-    await mint(houseClient.accountId, nearMarket ? NEAR_(200_000) : worth(500_000), m.token);
+    await mint(d.houseClient.accountId, nearMarket ? NEAR_(200_000) : worth(500_000), m.token);
     for (const f of m.firms) {
-      await storage(root, f.owner.accountId, [m]);
-      await storage(root, f.account, [m]);
+      await storage(d.root, f.owner.accountId, [m]);
+      await storage(d.root, f.account, [m]);
     }
     for (const f of m.firms) {
       await mint(f.owner.accountId, USDC(2000));
@@ -284,56 +521,12 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
     for (const f of m.firms) await call(f.owner, T, "list_shares", { firm_id: f.id, amount: 40, price_per_share: USDC(0.4).toString() }, 1n);
     log(`${m.symbol}: ${m.firms.length} house firms funded and bonded, 40 shares each for sale`);
   }
-
-  const decimalsOf = (t: TokenKey) => (t === "usdc" ? 6 : markets.find((m) => m.token === t)!.decimals);
-  // The token mints to itself, then deposits into intents.near for `accountId` (deposit msg = receiver id).
-  const credit = async (accountId: string, amount: bigint, t: TokenKey = "usdc") => {
-    const ft = fts.get(t)!;
-    await mint(ft.accountId, amount, t);
-    await call(ft, ft.accountId, "ft_transfer_call", { receiver_id: I, amount: amount.toString(), msg: accountId }, 1n, TGAS(100));
-  };
-  const drip = async (id: string) => {
-    await Promise.all([...fts.keys()].map((t) => credit(id, units(FAUCET[t], decimalsOf(t)), t)));
-  };
-  let visitors = 0;
-  const createVisitor = async (publicKey: string) => {
-    const id = `v${Date.now().toString(36)}${(visitors++).toString(36)}.${DEFAULT_ACCOUNT_ID}`;
-    await root.createAccount({ newAccountId: id, publicKey, nearToTransfer: nearToYocto("5") }); // enough to launch a firm (3 NEAR)
-    await drip(id);
-    // Registered with every token at 0, so a withdrawal from NEAR Intents to the wallet (ft_withdraw) lands.
-    await Promise.all([...fts.keys()].map((t) => mint(id, 0n, t)));
-    await storage(root, id);
-    return id;
-  };
-  const fundRelayer = async () => {
-    const have = await relayer.getBalance();
-    if (have >= NEAR_(50)) return 0n;
-    await root.transfer({ receiverId: relayer.accountId, amount: NEAR_(200) - have });
-    return NEAR_(200) - have;
-  };
-
-  return {
-    sandbox,
-    provider,
-    rpcUrl: sandbox.rpcUrl,
-    root,
-    tender: near.tender,
-    usdc,
-    wnear: near.ft,
-    intents: I,
-    token,
-    assetToken: near.assetToken,
-    inference: inferenceAcct.accountId,
-    houseClient,
-    relayer,
-    firms: near.firms,
-    strategies,
-    markets,
-    deposit,
-    createVisitor,
-    mint,
-    credit,
-    drip,
-    fundRelayer,
-  };
+  // Saved once the setup is complete: a start that dies half way leaves nothing to resume.
+  if (dir) {
+    const file = path.join(dir, "devnet.json");
+    writeFileSync(`${file}.tmp`, JSON.stringify(saved), { mode: 0o600 });
+    renameSync(`${file}.tmp`, file);
+    log(`devnet: saved in ${dir}, the next start resumes this chain`);
+  }
+  return d;
 }

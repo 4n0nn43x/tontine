@@ -6,7 +6,7 @@
 //   npx tsx src/server.ts          (PORT=8080 HOST=127.0.0.1 by default; see README "Run the app")
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { KeyPair } from "near-api-js";
@@ -19,10 +19,11 @@ import { makeLlm } from "./llm.ts";
 import { fetchHeadlines, Guard, NEWS_EVERY_MS, RANK, type GuardState, type Headline, type Regime } from "./guard.ts";
 import { MAX_TEXT } from "./mandate.ts";
 import { factsFromFirm, firmScore, reportProse } from "./report.ts";
-import { ARMS, DecisionLog } from "./shadow.ts";
+import { ARMS, DecisionLog, type LogEntry } from "./shadow.ts";
 import { candles, INTERVALS, marketMid, reference, type AssetSymbol, type Reference } from "./prices.ts";
 import { dailyCapped, HOUSE_MANDATES, INFERENCE_COST, quietErrors, Swarm, type FirmHandle } from "./swarm.ts";
-import type { Strategy } from "./strategy.ts";
+import type { Params, Strategy } from "./strategy.ts";
+import type { Decision } from "./manager.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PORT = Number(process.env.PORT ?? 8080);
@@ -74,34 +75,83 @@ for (const m of devnet.markets) {
   mk.swarm = new Swarm(provider, T, m.firms, llm, devnet.inference, () => mk.mid(), (s) => log(`swarm ${m.symbol} ${s.trim()}`), { symbol: m.symbol, unit: m.unit });
   markets.push(mk);
 }
+// ------------------------------------------------------------------ persistence (DEVNET_DIR)
+// With a persistent devnet (devnet.ts), what the server keeps in memory is saved every 30 s and on shutdown,
+// then reloaded when the chain resumes: the indexer's events and totals, each market's order cursor, the
+// firms' params and manager decisions, the decision log, and the visitors' firms this server runs (their
+// agent keys). Bandit and rule-arm statistics and the shadow book start over; mandates are compiled again
+// from the profiles on chain.
+type Visitor = { symbol: string; id: number; account: string; owner: string; tender: string; firm: string; template: number; name: string };
+type Snapshot = {
+  at: number;
+  indexer: ReturnType<Indexer["dump"]>;
+  markets: Record<string, { nextOrder: number; params: [number, Params][]; decisions: Decision[] }>;
+  log: LogEntry[];
+  visitors: Visitor[];
+};
+const SNAPSHOT = devnet.node.persistent ? path.join(path.resolve(process.env.DEVNET_DIR!), "server.json") : null;
+const snapshot: Snapshot | null = (() => {
+  if (!devnet.resumed || !SNAPSHOT || !existsSync(SNAPSHOT)) return null;
+  try {
+    return JSON.parse(readFileSync(SNAPSHOT, "utf8"));
+  } catch (e) {
+    log(`snapshot: unreadable (${(e as Error).message}), the server state starts over on the resumed chain`);
+    return null;
+  }
+})();
+const visitors: Visitor[] = [];
+/** A visitor's firm as the swarm runs it: the template the visitor picked, under its name. */
+function visitorHandle(v: Visitor): FirmHandle {
+  const template = devnet.strategies[v.template];
+  return {
+    id: v.id,
+    account: v.account,
+    owner: account(v.owner, provider, KeyPair.fromRandom("ed25519")), // never signs: visitor firms do not bid on takeovers
+    agentTender: account(v.account, provider, v.tender as any),
+    agentFirm: account(v.account, provider, v.firm as any),
+    strategy: { ...template, name: v.name, author: "visitor", house: false, takeover: undefined },
+  };
+}
+if (snapshot) {
+  for (const m of markets) {
+    const sm = snapshot.markets[m.symbol];
+    if (!sm) continue;
+    m.nextOrder = sm.nextOrder;
+    for (const [id, p] of sm.params) m.swarm.params.set(id, p);
+    m.swarm.decisions.push(...sm.decisions);
+  }
+  for (const v of snapshot.visitors) {
+    const m = markets.find((x) => x.symbol === v.symbol);
+    if (!m || !devnet.strategies[v.template] || m.firms.some((f) => f.id === v.id)) continue;
+    m.firms.push(visitorHandle(v));
+    visitors.push(v);
+  }
+  log(`snapshot: server state of ${new Date(snapshot.at).toISOString().slice(0, 19)} restored, ${visitors.length} visitor firm(s)`);
+}
+
 const NEAR_MARKET = markets[0];
 /** The market a tender or one of its firm accounts (`wN.<tender>`) belongs to. */
 const marketOf = (contract: string) => markets.find((m) => contract === m.T || contract.endsWith(`.${m.T}`));
 const bySymbol = (s: string | null) => (s === null ? NEAR_MARKET : markets.find((m) => m.symbol === s.toUpperCase()));
 
 const indexer = new Indexer(devnet.rpcUrl, (c) => !!marketOf(c), 3000, (c) => marketOf(c)?.unit ?? 10n ** 24n);
-await indexer.start();
+if (snapshot) indexer.restore(snapshot.indexer);
+await indexer.start(snapshot?.indexer.next);
 
 // Firms that visitors launch. The server makes the two agent keys and keeps their private halves;
 // the visitor's create_firm registers the public halves on the new firm account, and the swarm of that
 // market adopts the firm once its account exists, running the house strategy the visitor picked. Devnet
 // only: on a real network the owner runs its own agent with its own keys.
-const pendingAgents = new Map<string, { tender: KeyPair; firm: KeyPair; strategy: Strategy }>(); // by tender public key
+const pendingAgents = new Map<string, { tender: KeyPair; firm: KeyPair; strategy: Strategy; template: number }>(); // by tender public key
 async function adopt(m: Market, firmId: number, firmAccount: string, owner: string) {
   for (let i = 0; i < 20; i++) {
     const r: any = await provider.query({ request_type: "view_access_key_list", account_id: firmAccount, finality: "optimistic" } as any).catch(() => null);
     const agent = (r?.keys ?? []).map((k: any) => pendingAgents.get(k.public_key)).find(Boolean);
     if (agent) {
       pendingAgents.delete(agent.tender.getPublicKey().toString());
-      const handle: FirmHandle = {
-        id: firmId,
-        account: firmAccount,
-        owner: account(owner, provider, KeyPair.fromRandom("ed25519")), // never signs: visitor firms do not bid on takeovers
-        agentTender: account(firmAccount, provider, agent.tender),
-        agentFirm: account(firmAccount, provider, agent.firm),
-        strategy: agent.strategy,
-      };
-      m.firms.push(handle); // the swarm reads the same array
+      const v: Visitor = { symbol: m.symbol, id: firmId, account: firmAccount, owner, tender: agent.tender.toString(), firm: agent.firm.toString(), template: agent.template, name: agent.strategy.name };
+      visitors.push(v);
+      m.firms.push(visitorHandle(v)); // the swarm reads the same array
       log(`adopted visitor firm #${firmId} on ${m.symbol} ${agent.strategy.name} (${agent.strategy.author})`);
       return;
     }
@@ -150,7 +200,8 @@ indexer.subscribe((e: ChainEvent) => {
 });
 
 // Watchdog: the devnet node was once OOM-killed while this process kept serving a site whose every chain read
-// failed. If the node stops answering for about 2 minutes, exit: Docker restarts the container (a fresh devnet).
+// failed. If the node stops answering for about 2 minutes, exit: Docker restarts the container (the chain
+// resumes with DEVNET_DIR, else a new one starts).
 let nodeDown = 0;
 setInterval(() => {
   provider.viewBlock({ finality: "optimistic" } as any).then(
@@ -158,10 +209,36 @@ setInterval(() => {
     (e) => {
       if (++nodeDown < 4) return;
       log(`devnet node unreachable for 2 minutes (${(e as Error).message}): exiting so the container restarts`);
+      saveSnapshot();
       process.exit(1);
     },
   );
 }, 30_000).unref();
+
+// neard's memory grows with its uptime, small caches or not (about 11 MB a minute on the VPS, 2026-11-01): past
+// NODE_MAX_MB of resident memory, restart it on the same chain (a few seconds without RPC; the loops retry)
+// before the container's limit kills it. Linux only (/proc).
+const NODE_MAX_MB = Number(process.env.NODE_MAX_MB ?? 900);
+let nodeRestarting = false;
+setInterval(async () => {
+  const pid = devnet.node.child.pid;
+  if (nodeRestarting || !pid) return;
+  let mb = 0;
+  try {
+    mb = Number(readFileSync(`/proc/${pid}/status`, "utf8").match(/VmRSS:\s+(\d+)/)?.[1] ?? 0) / 1024;
+  } catch {
+    return;
+  }
+  if (mb < NODE_MAX_MB) return;
+  nodeRestarting = true;
+  const t = Date.now();
+  log(`devnet node at ${Math.round(mb)} MB: restarting it on the same chain`);
+  await devnet.node.restart().then(
+    () => log(`devnet node back in ${((Date.now() - t) / 1000).toFixed(1)} s`),
+    (e) => log(`devnet node restart: ${(e as Error).message}`),
+  );
+  nodeRestarting = false;
+}, 60_000).unref();
 
 async function chainNow(): Promise<bigint> {
   const b: any = await provider.viewBlock({ finality: "optimistic" } as any);
@@ -272,7 +349,7 @@ void houseClientLoop();
 // Budget: the guard rates the news at most every 10 minutes per market (432 calls a day at most), mandates
 // and reports share AI_DAILY_CAP, managers have LLM_DAILY_CAP (swarm.ts). Provider errors stay in this log.
 const aiLlm = dailyCapped(quietErrors(llm, log), Number(process.env.AI_DAILY_CAP ?? 500));
-const decisionLog = new DecisionLog();
+const decisionLog = new DecisionLog(snapshot?.log ?? []);
 for (const m of markets) m.swarm.decisionLog = decisionLog;
 
 type RegimeView = Omit<GuardState, "source"> & { source: GuardState["source"] | "forced" };
@@ -341,6 +418,20 @@ void (async () => {
     }
 })();
 
+// A resumed chain: the visitors' firms' mandates, published in their profiles, are compiled again.
+if (devnet.resumed)
+  void (async () => {
+    for (const m of markets)
+      for (const f of m.firms.filter((x) => !x.strategy.house)) {
+        try {
+          const p = JSON.parse((await view(provider, m.T, "get_firm", { firm_id: f.id })).profile ?? "{}");
+          if (typeof p.mandate === "string" && p.mandate.trim()) await m.swarm.setMandate(aiLlm, f, p.mandate);
+        } catch (e) {
+          log(`mandate ${m.symbol} #${f.id}: ${(e as Error).message}`);
+        }
+      }
+  })();
+
 /** A firm's mandate as the API shows it: its text and compile, and its rules against the market now. */
 async function mandateView(m: Market, f: FirmHandle) {
   const md = m.swarm.mandates.get(f.id);
@@ -400,7 +491,7 @@ function statsOf(m: Market | null) {
 
 // The sandbox's RocksDB info log never rolls (about 140 MB an hour here) and nothing reads it: keep it
 // small so the devnet can run for weeks. RocksDB keeps writing at its offset, so check allocated blocks.
-const rocksLog = path.join(devnet.sandbox.homeDir, "data", "LOG");
+const rocksLog = path.join(devnet.node.homeDir, "data", "LOG");
 setInterval(() => {
   try {
     if (statSync(rocksLog).blocks * 512 > 32 * 2 ** 20) truncateSync(rocksLog, 0);
@@ -694,7 +785,7 @@ const server = createServer(async (req, res) => {
       const keys = { tender: KeyPair.fromRandom("ed25519"), firm: KeyPair.fromRandom("ed25519") };
       // House strategy, visitor's name; no takeover bids, which the owner would have to sign itself.
       const s: Strategy = { ...template, name: name.trim(), author: "visitor", house: false, takeover: undefined };
-      pendingAgents.set(keys.tender.getPublicKey().toString(), { ...keys, strategy: s });
+      pendingAgents.set(keys.tender.getPublicKey().toString(), { ...keys, strategy: s, template: Number(strategy) });
       return json(res, 200, { agentKeys: [keys.tender.getPublicKey().toString(), keys.firm.getPublicKey().toString()] });
     }
     if (url.pathname === "/api/faucet" && req.method === "POST") {
@@ -735,13 +826,42 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => log(`Tontine app on http://${HOST}:${PORT}`));
 
+/** The server state, written atomically (DEVNET_DIR only). */
+function saveSnapshot() {
+  if (!SNAPSHOT) return;
+  try {
+    const snap: Snapshot = {
+      at: Date.now(),
+      indexer: indexer.dump(),
+      markets: Object.fromEntries(markets.map((m) => [m.symbol, { nextOrder: m.nextOrder, params: [...m.swarm.params], decisions: m.swarm.decisions.slice(-200) }])),
+      log: decisionLog.entries,
+      visitors,
+    };
+    writeFileSync(`${SNAPSHOT}.tmp`, JSON.stringify(snap, (_, v) => (typeof v === "bigint" ? v.toString() : v)), { mode: 0o600 });
+    renameSync(`${SNAPSHOT}.tmp`, SNAPSHOT);
+  } catch (e) {
+    log(`snapshot: ${(e as Error).message}`);
+  }
+}
+if (SNAPSHOT) setInterval(saveSnapshot, 30_000).unref();
+
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     log("shutting down");
-    // While the swarm loops keep calling its RPC, neard does not exit on SIGTERM and sandbox.tearDown() never
-    // returns (seen on 2.13.4). The devnet is thrown away anyway: kill it and delete its data.
-    (devnet.sandbox as any).childProcess.kill("SIGKILL");
-    rmSync(devnet.sandbox.homeDir, { recursive: true, force: true });
+    const { child, homeDir, persistent } = devnet.node;
+    if (persistent) {
+      // Keep the chain: save, then stop neard. While the swarm loops call its RPC it may ignore SIGTERM
+      // (seen on 2.13.4): SIGKILL after 5 s, and RocksDB replays its log on the next start.
+      saveSnapshot();
+      const done = () => process.exit(0);
+      child.once("exit", done);
+      child.kill("SIGTERM");
+      setTimeout(() => (child.kill("SIGKILL"), done()), 5000).unref();
+      return;
+    }
+    // A throwaway devnet: kill it and delete its data.
+    child.kill("SIGKILL");
+    rmSync(homeDir, { recursive: true, force: true });
     process.exit(0);
   });
 }

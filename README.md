@@ -184,6 +184,8 @@ toast when your order fills or your firm wins.
 | `EPOCH_SECS` | `30` | Devnet epoch; a firm under the cash floor for 3 epochs is liquidated |
 | `MANAGER_SECS` | `180` | How often managed firms review their results |
 | `SANDBOX_RPC_PORT` | `3030` | Sandbox RPC, bound to 127.0.0.1 |
+| `DEVNET_DIR` | unset | A directory where the devnet survives restarts (see below); unset, every start is a new chain |
+| `NODE_MAX_MB` | `900` | Past this resident memory, neard is restarted on the same chain (a few seconds without RPC) |
 | `NEARAI_API_KEY` | unset | The manager of Atlas AI asks an LLM on NEAR AI Cloud (the firm pays the inference); without it, a stated rule, labelled `rule` |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | unset, `claude-opus-5-5` | Without `NEARAI_API_KEY`, the manager of Atlas AI asks Claude instead (Anthropic API) |
 | `LLM_DAILY_CAP` | `1000` | LLM decisions per UTC day for all hosted firms, every market; past it, managers use the stated rule |
@@ -192,9 +194,15 @@ toast when your order fills or your firm wins.
 | `GUARD_FORCE` | unset | Dev only: force the market regime, `storm` for every market or `NEAR:storm,ETH:alert` for some |
 | `REPLAY` | unset | `1`: price every asset from the replay instead of the live market mid |
 
-The devnet lives in the process: a restart starts a new chain (orders and demo accounts start over; the
-app drops a saved demo account that no longer exists). `make app-dev` runs the Vite dev server with hot
-reload against a running `make serve`.
+By default the devnet lives in the process: a restart starts a new chain (orders and demo accounts start
+over; the app drops a saved demo account that no longer exists). With `DEVNET_DIR` set, the chain survives
+restarts and crashes: the node's data and the keys of the accounts the server signs with stay there, and the
+server saves its own state every 30 s and on shutdown (the indexed events and totals, the firms' params and
+decisions, the decision log, the visitors' firms with their agent keys). The next start resumes in a few
+seconds; the indexer reads again the blocks after the last save, so no event is lost. A new chain starts when
+the contracts or the setup changed (no state migration) or when the saved chain does not come back up. Bandit
+statistics and shadow quotes start over; mandates are compiled again from the profiles on chain. `make
+app-dev` runs the Vite dev server with hot reload against a running `make serve`.
 
 The landing background is a pixel-art city at dusk (Canvas 2D, no WebGL) where every building is a firm.
 It **replays the real `make demo` run** with its figures; on the dashboard the same city is driven by the
@@ -276,9 +284,10 @@ server {
 `X-Forwarded-For $remote_addr` replaces whatever the client sent: with `$proxy_add_x_forwarded_for` a
 visitor could pick the address the rate limits see. Only nginx faces the internet (`ufw allow OpenSSH`,
 `ufw allow "Nginx Full"`, `ufw enable`): the app, the sandbox RPC and the sandbox network port listen on
-127.0.0.1. To update: `git pull && make app && sudo systemctl restart tontine` (the devnet starts over).
-A clean stop deletes the devnet data; after a crash, remove the leftover
-`ts/node_modules/.cache/tmp/near-sandbox-*` directories while the service is stopped (about 100 MB each).
+127.0.0.1. To update: `git pull && make app && sudo systemctl restart tontine` (the devnet starts over,
+unless `DEVNET_DIR` is set). Without `DEVNET_DIR`, a clean stop deletes the devnet data; after a crash,
+remove the leftover `ts/node_modules/.cache/tmp/near-sandbox-*` directories while the service is stopped
+(about 100 MB each).
 
 ## How it works
 
