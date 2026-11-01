@@ -62,10 +62,11 @@ for (const m of devnet.markets) {
   const mk: Market = {
     ...m,
     T,
-    // The reference mid firms quote from: the market mid (median of Binance, OKX, Coinbase and Rhea's oracle), refreshed at most every 30 s.
+    // The reference mid firms quote from: the market mid (median of Binance, OKX, Coinbase and Rhea's oracle), at
+    // most 5 s old, as fresh as the client's own minimum: with 30 s, a falling market left most quotes under it.
     ref: { ...(await reference("Buy", USDC(100), -1, m.symbol)), at: Date.now() },
     async mid() {
-      if (Date.now() - mk.ref.at > 30_000) mk.ref = { ...(await reference("Buy", USDC(100), -1, m.symbol)), at: Date.now() };
+      if (Date.now() - mk.ref.at > 5_000) mk.ref = { ...(await reference("Buy", USDC(100), -1, m.symbol)), at: Date.now() };
       return mk.ref.mid;
     },
     swarm: null as unknown as Swarm,
