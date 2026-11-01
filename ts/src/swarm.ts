@@ -231,7 +231,7 @@ export class Swarm {
     );
     await waitUntilChainTime(this.provider, a0.reveal_end);
     // Several agents race to settle (and earn the keeper reward): losing that race is fine.
-    const r = await call(this.firms[0].agentTender, this.tender, "settle", { auction_id: auctionId }).catch((e) => {
+    const r = await this.keeper("settle", { auction_id: auctionId }).catch((e) => {
       if (!String(e).includes("already settled")) throw e;
       return null;
     });
@@ -414,10 +414,27 @@ export class Swarm {
     return d;
   }
 
+  /**
+   * A call anyone may send (settle, epoch_tick), from the first firm's agent that can sign it: one out of gas,
+   * or whose keys a takeover deleted, passes to the next. The contract's own refusal is the answer, not retried.
+   */
+  async keeper(method: string, args: Record<string, unknown> = {}) {
+    let last: unknown = new Error("no firm");
+    for (const f of this.firms) {
+      try {
+        return await call(f.agentTender, this.tender, method, args);
+      } catch (e) {
+        if (String((e as Error).message).startsWith(`${method}: `)) throw e;
+        last = e;
+      }
+    }
+    throw last;
+  }
+
   /** epoch_tick, ignoring "epoch not over". */
   async tick(): Promise<boolean> {
     try {
-      await call(this.firms[0].agentTender, this.tender, "epoch_tick");
+      await this.keeper("epoch_tick");
       return true;
     } catch (e) {
       if (String(e).includes("epoch not over")) return false;

@@ -243,7 +243,7 @@ async function runNode(homeDir: string, rpcPort: number): Promise<{ child: Child
   const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "node_modules", "near-sandbox", "bin", `near-sandbox-${VERSION}`, "near-sandbox");
   const rpcUrl = `http://127.0.0.1:${rpcPort}`;
   const child = spawn(bin, ["--home", homeDir, "run", "--rpc-addr", `127.0.0.1:${rpcPort}`, "--network-addr", `127.0.0.1:${await freePort()}`], { stdio: "ignore" });
-  for (let t = Date.now(); Date.now() - t < 120_000; await new Promise((r) => setTimeout(r, 500))) {
+  for (let t = Date.now(); Date.now() - t < 300_000; await new Promise((r) => setTimeout(r, 500))) {
     if (child.exitCode !== null) break;
     if (await fetch(`${rpcUrl}/status`).then((r) => r.ok, () => false)) return { child, rpcUrl };
   }
@@ -379,6 +379,10 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
   const strategies = await loadStrategies();
   if (dir) {
     const file = path.join(dir, "devnet.json");
+    // A resume that fails (a long log replay, a node slow to answer) exits without deleting anything, and the
+    // container's restart tries again: the visitors' accounts live on this chain. The third failure in a row
+    // starts a new one.
+    const fails = path.join(dir, "resume-failures");
     try {
       if (existsSync(file)) {
         const saved: Saved = JSON.parse(readFileSync(file, "utf8"));
@@ -391,12 +395,18 @@ export async function startDevnet(log: (s: string) => void = console.log): Promi
             child.kill("SIGKILL");
             throw e;
           }
+          rmSync(fails, { force: true });
           log(`devnet: resumed the saved chain at ${rpcUrl} (${saved.homeDir})`);
           return assemble(nodeHandle(saved.homeDir, child, true, rpcPort), true, rpcUrl, saved, strategies);
         }
       }
     } catch (e) {
-      log(`devnet: the saved chain did not come back (${(e as Error).message}): a new chain`);
+      const n = (existsSync(fails) ? Number(readFileSync(fails, "utf8")) || 0 : 0) + 1;
+      if (n < 3) {
+        writeFileSync(fails, String(n));
+        throw new Error(`devnet: the saved chain did not come back (${(e as Error).message}), attempt ${n} of 3: exiting, kept for the next start`);
+      }
+      log(`devnet: the saved chain did not come back 3 times (${(e as Error).message}): a new chain`);
     }
     rmSync(dir, { recursive: true, force: true });
     mkdirSync(dir, { recursive: true });

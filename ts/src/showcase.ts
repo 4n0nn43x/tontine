@@ -26,6 +26,7 @@ import { ASSETS, reference, type AssetSymbol } from "./prices.ts";
 import { accountOf, checkRelay, orderPayload, signAs, STANDARDS, submitRelay, type Standard } from "./relay.ts";
 import { loadStrategies, type Strategy } from "./strategy.ts";
 import { Swarm, type FirmHandle } from "./swarm.ts";
+import { STORAGE, upkeep } from "./upkeep.ts";
 
 const RPC = process.env.TESTNET_RPC ?? "https://rpc.testnet.fastnear.com";
 const DIR = path.resolve(process.env.TESTNET_DIR ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "keys"));
@@ -47,9 +48,6 @@ const TENDER_NEAR = 7;
 const FIRM_NEAR = 3;
 /** What the setup needs on the master account: accounts, tenders, firms, storage deposits and gas. */
 export const SHOWCASE_NEED = 70;
-/** Tender storage (NEP-145) each house account keeps, topped up from the master under STORAGE_LOW. */
-const STORAGE = nearToYocto("0.2");
-const STORAGE_LOW = nearToYocto("0.05");
 // Base Sepolia (84532) USDC; the transfer goes to a burn address the owner lists. Signed, not broadcast: the
 // firm's address holds no Base Sepolia ETH for gas.
 const BASE_SEPOLIA = 84532;
@@ -281,29 +279,34 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
       strategy: houseOf(s).find((x) => x.name === f.strategy)!,
     }));
 
-  /** Keep each house account's tender storage above STORAGE_LOW: every order and bid is stored. */
+  /** The house accounts' gas, tender storage and bonds, topped up from the master (upkeep.ts). */
   async function topUp(s: AssetSymbol) {
     const T = tenderOf(s);
-    for (const a of [id("client"), ...st.markets[s].firms.flatMap((f) => [f.owner, f.account])]) {
-      if (BigInt(await view(provider, T, "storage_balance_of", { account_id: a })) < STORAGE_LOW) await call(root, T, "storage_deposit", { account_id: a }, STORAGE);
-    }
+    const firms = st.markets[s].firms;
+    const accounts = [id("client"), ...firms.flatMap((f) => [f.owner, f.account])];
+    const credit = async (o: Account, amount: bigint) => {
+      await mint(U, o.accountId, amount);
+      await deposit(o, U, T, amount);
+    };
+    const done = await upkeep(provider, root, { tender: T, signers: accounts, stored: accounts, owners: firms.map((f) => acct(f.owner)), minBond: DEVNET_CONFIG.minBond, credit });
+    if (done.length) log(`upkeep ${s}: ${done.join(", ")}`);
   }
 
   /**
-   * Orders an auction left open (an RPC refusal in the middle of it) are settled once their reveal phase is
-   * over, by anyone (here a firm's agent): filled or refunded. Their saved status follows.
+   * Orders an auction left open (an RPC refusal or a restart in the middle of it) are settled once their reveal
+   * phase is over, by anyone (here a firm's agent): filled or refunded. Read from the chain, so an order posted
+   * just before a restart is found too; their saved status follows.
    */
   async function settleStale(s: AssetSymbol) {
     const T = tenderOf(s);
-    const open = [...st.orders.filter((o) => o.symbol === s), ...(s === "NEAR" ? st.wallets.map((w) => ({ ...w, id: w.orderId })) : [])].filter((o) => o.status === "Open");
+    const saved = [...st.orders.filter((o) => o.symbol === s), ...(s === "NEAR" ? st.wallets.map((w) => ({ ...w, id: w.orderId })) : [])];
+    const from = Math.max(0, Math.max(0, ...saved.map((o) => o.id)) - 40);
+    const open = (await view<any[]>(provider, T, "get_orders", { from, limit: 80 })).filter((o) => o.status === "Open");
     if (!open.length) return;
     const now = BigInt(((await provider.viewBlock({ finality: "final" } as any)) as any).header.timestamp_nanosec);
     for (const o of open) {
-      const order = await view(provider, T, "get_order", { order_id: o.id });
-      if (order.status === "Open") {
-        const a = await view(provider, T, "get_auction", { auction_id: order.auction });
-        if (!a.settled && BigInt(a.reveal_end) < now) await call(swarms.get(s)!.firms[0].agentTender, T, "settle", { auction_id: order.auction }).catch(() => null);
-      }
+      const a = await view(provider, T, "get_auction", { auction_id: o.auction });
+      if (!a.settled && BigInt(a.reveal_end) < now) await swarms.get(s)!.keeper("settle", { auction_id: o.auction }).catch(() => null);
       const after = await view(provider, T, "get_order", { order_id: o.id });
       for (const x of [...st.orders.filter((y) => y.symbol === s && y.id === o.id), ...(s === "NEAR" ? st.wallets.filter((w) => w.orderId === o.id) : [])]) {
         x.status = after.status;
@@ -314,8 +317,9 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
   }
 
   async function order(s: AssetSymbol) {
-    await settleStale(s).catch((e) => log(`${s} settle: ${(e as Error).message}`));
+    // Bonds first: settling an auction whose bids were never revealed slashes their owners.
     await topUp(s);
+    await settleStale(s).catch((e) => log(`${s} settle: ${(e as Error).message}`));
     const n = st.orders.filter((o) => o.symbol === s).length;
     const buy = n % 2 === 0;
     const side = buy ? "Buy" : "Sell";
@@ -326,9 +330,13 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
       PostOrder: { side, amount_in: amountIn.toString(), min_out: q.out.toString(), reference_out: q.out.toString(), commit_secs: 20, reveal_secs: 15 },
     });
     const oid = posted.events.find((e) => e.event === "order_posted")?.data[0].order_id as number;
-    const r = await swarms.get(s)!.runOrder(oid);
-    st.orders.unshift({ symbol: s, id: oid, side, amountIn: amountIn.toString(), out: r.order.status === "Filled" ? String(r.order.out) : null, status: r.order.status, postTx: posted.txHash, settleTx: r.auction.txHash, at: Date.now() });
+    // Saved as soon as it is posted: an auction cut short is settled by settleStale.
+    const rec: ShowcaseOrder = { symbol: s, id: oid, side, amountIn: amountIn.toString(), out: null, status: "Open", postTx: posted.txHash, settleTx: "", at: Date.now() };
+    st.orders.unshift(rec);
     st.orders = st.orders.slice(0, 30);
+    save();
+    const r = await swarms.get(s)!.runOrder(oid);
+    Object.assign(rec, { out: r.order.status === "Filled" ? String(r.order.out) : null, status: r.order.status, settleTx: r.auction.txHash });
     save();
   }
 
@@ -445,8 +453,12 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
     void (async () => {
       for (;;) {
         await sleep(MANAGER_SECS * 1000);
-        for (const m of MARKETS)
-          for (const f of handles(m.symbol).filter((x) => x.strategy.managed)) await swarms.get(m.symbol)!.manage(f).catch((e) => log(`manager ${f.strategy.name}: ${(e as Error).message}`));
+        try {
+          for (const m of MARKETS)
+            for (const f of handles(m.symbol).filter((x) => x.strategy?.managed)) await swarms.get(m.symbol)!.manage(f).catch((e) => log(`manager ${f.strategy.name}: ${(e as Error).message}`));
+        } catch (e) {
+          log(`managers: ${(e as Error).message}`);
+        }
       }
     })();
     let turn = 0;
@@ -463,8 +475,12 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
           lastTick = Date.now();
         }
         await order(MARKETS[turn++ % MARKETS.length].symbol);
+        v.status = "running";
+        v.message = `a house order every ${ORDER_MIN} minutes, on each market in turn`;
       } catch (e) {
         log(`order: ${(e as Error).message}`);
+        v.status = "error";
+        v.message = `last order failed: ${(e as Error).message.slice(0, 200)}`;
       }
       await sleep(ORDER_MIN * 60_000);
     }

@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { KeyPair } from "near-api-js";
+import { decodeSignedTransaction, KeyPair, type Account } from "near-api-js";
 import { account, call, sleep, view, TGAS, USDC } from "./chain.ts";
 import { DEVNET_CONFIG, FAUCET, startDevnet, units, type DevMarket, type Devnet } from "./devnet.ts";
 import { Indexer, type ChainEvent, type Stats } from "./indexer.ts";
@@ -25,6 +25,7 @@ import { dailyCapped, HOUSE_MANDATES, INFERENCE_COST, quietErrors, Swarm, type F
 import type { Params, Strategy } from "./strategy.ts";
 import type { Decision } from "./manager.ts";
 import { startShowcase } from "./showcase.ts";
+import { upkeep } from "./upkeep.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PORT = Number(process.env.PORT ?? 8080);
@@ -203,18 +204,35 @@ indexer.subscribe((e: ChainEvent) => {
 // Watchdog: the devnet node was once OOM-killed while this process kept serving a site whose every chain read
 // failed. If the node stops answering for about 2 minutes, exit: Docker restarts the container (the chain
 // resumes with DEVNET_DIR, else a new one starts).
+// A node that answers but makes no block (stuck) counts as down too.
 let nodeDown = 0;
+let lastHeight = -1;
 setInterval(() => {
   provider.viewBlock({ finality: "optimistic" } as any).then(
-    () => (nodeDown = 0),
+    (b: any) => {
+      nodeDown = b.header.height > lastHeight || nodeRestarting ? 0 : nodeDown + 1;
+      lastHeight = b.header.height;
+      if (nodeDown >= 4) down("making no block");
+    },
     (e) => {
-      if (++nodeDown < 4) return;
-      log(`devnet node unreachable for 2 minutes (${(e as Error).message}): exiting so the container restarts`);
-      saveSnapshot();
-      process.exit(1);
+      if (++nodeDown >= 4) down(`unreachable: ${(e as Error).message}`);
     },
   );
 }, 30_000).unref();
+function down(why: string) {
+  log(`devnet node ${why} for 2 minutes: exiting so the container restarts`);
+  saveSnapshot();
+  process.exit(1);
+}
+
+// The salts of sealed bids live in this process: a bid committed before a stop cannot be revealed after it, and
+// its owner's bond is slashed. Before stopping the process or the node, no new auction starts and the running
+// ones finish (an order's auction lasts about 15 s). Orders posted meanwhile are refunded, unbid.
+let quiet = false;
+async function quiesce(maxMs = 30_000) {
+  quiet = true;
+  for (const t = Date.now(); Date.now() - t < maxMs && markets.some((m) => m.running.size); ) await sleep(500);
+}
 
 // neard's memory grows with its uptime, small caches or not (about 11 MB a minute on the VPS, 2026-11-01): past
 // NODE_MAX_MB of resident memory, restart it on the same chain (a few seconds without RPC; the loops retry)
@@ -232,12 +250,14 @@ setInterval(async () => {
   }
   if (mb < NODE_MAX_MB) return;
   nodeRestarting = true;
-  const t = Date.now();
   log(`devnet node at ${Math.round(mb)} MB: restarting it on the same chain`);
+  await quiesce();
+  const t = Date.now();
   await devnet.node.restart().then(
     () => log(`devnet node back in ${((Date.now() - t) / 1000).toFixed(1)} s`),
     (e) => log(`devnet node restart: ${(e as Error).message}`),
   );
+  quiet = false;
   nodeRestarting = false;
 }, 60_000).unref();
 
@@ -259,6 +279,7 @@ async function ordersLoop(m: Market) {
         if (o.status !== "Open" || m.running.has(o.id)) continue;
         const a = await view(provider, m.T, "get_auction", { auction_id: o.auction });
         if (BigInt(a.commit_end) > now) {
+          if (quiet) continue; // stopping or restarting the node: no new auction, so no bid left unrevealed
           m.running.add(o.id);
           // Auctions run concurrently; each account signs one transaction at a time (devnet.serialize).
           m.swarm
@@ -266,7 +287,7 @@ async function ordersLoop(m: Market) {
             .catch((e) => log(`${m.symbol} order ${o.id} failed: ${(e as Error).message}`))
             .finally(() => m.running.delete(o.id));
         } else if (BigInt(a.reveal_end) < now && !a.settled) {
-          await call(m.firms[0].agentTender, m.T, "settle", { auction_id: o.auction }).catch(() => {});
+          await m.swarm.keeper("settle", { auction_id: o.auction }).catch(() => {});
         }
       }
     } catch (e) {
@@ -316,7 +337,7 @@ async function houseClientLoop() {
     const m = markets[houseIndex % markets.length];
     try {
       const recent: any[] = await view(provider, m.T, "get_orders", { from: Math.max(0, m.nextOrder - 10), limit: 10 });
-      if (!recent.some((o) => o.status === "Open")) {
+      if (!quiet && !recent.some((o) => o.status === "Open")) {
         const buy = Math.floor(houseIndex / markets.length) % 2 === 0;
         const side = buy ? "Buy" : "Sell";
         // Buys of 10 to 59 USDC; sells of 3 to 24 USD of the asset.
@@ -341,12 +362,34 @@ async function houseClientLoop() {
   }
 }
 
+// The devnet lasts weeks (DEVNET_DIR): every UPKEEP_SECS, root tops up the gas, tender storage and bonds of the
+// house client, firms and owners (upkeep.ts), or the market stops within a day.
+const UPKEEP_SECS = Number(process.env.UPKEEP_SECS ?? 300);
+async function upkeepLoop() {
+  for (;;) {
+    for (const m of markets) {
+      const house = m.firms.filter((f) => f.strategy.house);
+      const accounts = [devnet.houseClient.accountId, ...house.flatMap((f) => [f.account, f.owner.accountId])];
+      const credit = async (o: Account, amount: bigint) => {
+        await devnet.mint(o.accountId, amount);
+        await devnet.deposit(o, amount, undefined, "usdc", m.T);
+      };
+      await upkeep(provider, devnet.root, { tender: m.T, signers: accounts, stored: accounts, owners: house.map((f) => f.owner), minBond: DEVNET_CONFIG.minBond, credit }).then(
+        (done) => done.length && log(`upkeep ${m.symbol}: ${done.join(", ")}`),
+        (e) => log(`upkeep ${m.symbol}: ${(e as Error).message}`),
+      );
+    }
+    await sleep(UPKEEP_SECS * 1000);
+  }
+}
+
 for (const m of markets) {
   void ordersLoop(m);
   void epochLoop(m);
 }
 void managerLoop();
 void houseClientLoop();
+void upkeepLoop();
 
 // ------------------------------------------------------------------ AI: regime guard, mandates, shadow quotes, due diligence
 
@@ -536,6 +579,21 @@ setInterval(() => {
 
 const RPC_METHODS = new Set(["query", "block", "chunk", "tx", "EXPERIMENTAL_tx_status", "status", "gas_price", "send_tx", "broadcast_tx_commit", "broadcast_tx_async", "EXPERIMENTAL_receipt"]);
 const limits = new Map<string, { n: number; reset: number }>();
+// Transactions through /rpc: function calls to this devnet's contracts only (intents.near, the tokens, the
+// tenders and their firm accounts), all the app and the SDK send. A deploy, a transfer or a call to anything
+// else is refused before the node runs it.
+const TX_METHODS = new Set(["send_tx", "broadcast_tx_commit", "broadcast_tx_async"]);
+const ours = (r: string) => r === devnet.intents || r === devnet.usdc.accountId || markets.some((m) => r === m.T || r.endsWith(`.${m.T}`) || r === m.ft.accountId);
+function txAllowed(body: any): boolean {
+  const b64 = body.method === "send_tx" ? body.params?.signed_tx_base64 : Array.isArray(body.params) ? body.params[0] : null;
+  if (typeof b64 !== "string") return false;
+  try {
+    const t: any = decodeSignedTransaction(Buffer.from(b64, "base64")).transaction;
+    return ours(t.receiverId) && t.actions.length > 0 && t.actions.every((a: any) => a.functionCall);
+  } catch {
+    return false;
+  }
+}
 
 function allow(ip: string, bucket: string, max: number, windowMs: number) {
   const key = `${bucket}:${ip}`;
@@ -602,14 +660,21 @@ setInterval(
 const EVM_FAUCET_USDC = 100;
 
 const candleCache = new Map<string, { at: number; body: unknown }>();
+// Live streams: SSE_MAX in all, SSE_PER_IP per address; a client that stops reading (more than 1 MB queued)
+// is dropped instead of buffering every event in this process.
+const SSE_MAX = 500;
+const SSE_PER_IP = 8;
 const sseClients = new Set<ServerResponse>();
-indexer.subscribe((e: ChainEvent) => {
-  const line = `data: ${JSON.stringify(e)}\n\n`;
-  for (const res of sseClients) res.write(line);
-});
-setInterval(() => {
-  for (const res of sseClients) res.write(": ping\n\n");
-}, 20000);
+const sse = (line: string) => {
+  for (const res of sseClients) {
+    if (res.writableLength > 2 ** 20) {
+      sseClients.delete(res);
+      res.destroy();
+    } else res.write(line);
+  }
+};
+indexer.subscribe((e: ChainEvent) => sse(`data: ${JSON.stringify(e)}\n\n`));
+setInterval(() => sse(": ping\n\n"), 20000);
 
 function thesis() {
   const read = (p: string) => (existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null);
@@ -670,6 +735,7 @@ const server = createServer(async (req, res) => {
       if (!allow(ip, "rpc", 600, 60_000)) return json(res, 429, { error: "slow down" });
       const body = await readBody(req);
       if (!RPC_METHODS.has(body?.method)) return json(res, 403, { jsonrpc: "2.0", id: body?.id ?? null, error: { message: "method not allowed" } });
+      if (TX_METHODS.has(body.method) && !txAllowed(body)) return json(res, 403, { jsonrpc: "2.0", id: body.id ?? null, error: { message: "only function calls to this devnet's contracts" } });
       const r = await fetch(devnet.rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       res.writeHead(r.status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       return res.end(await r.text());
@@ -777,7 +843,9 @@ const server = createServer(async (req, res) => {
       if (!allow(ip, "candles", 60, 60_000)) return json(res, 429, { error: "slow down" });
       const interval = url.searchParams.get("interval") ?? "5m";
       if (!INTERVALS[interval]) return json(res, 400, { error: `interval: ${Object.keys(INTERVALS).join(", ")}` });
-      const limit = Math.min(500, Math.max(10, Number(url.searchParams.get("limit") ?? 300) || 300));
+      // Three sizes (the app asks for 24 and 300): the cache stays at 3 entries per market and interval.
+      const asked = Number(url.searchParams.get("limit")) || 300;
+      const limit = asked <= 24 ? 24 : asked <= 300 ? 300 : 500;
       const key = `${m.symbol}:${interval}:${limit}`;
       const hit = candleCache.get(key);
       if (!hit || Date.now() - hit.at > 30_000) candleCache.set(key, { at: Date.now(), body: await candles(interval, limit, m.symbol as AssetSymbol) });
@@ -793,11 +861,13 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { out: q.out.toString(), mid: q.mid, source: q.source, sources: q.sources });
     }
     if (url.pathname === "/api/events") {
-      const limit = Math.min(500, Number(url.searchParams.get("limit") ?? 100));
+      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 100));
       return json(res, 200, indexer.events.slice(-limit));
     }
     if (url.pathname === "/api/thesis") return json(res, 200, thesis());
     if (url.pathname === "/api/stream") {
+      if (sseClients.size >= SSE_MAX || [...sseClients].filter((r) => (r as any).ip === ip).length >= SSE_PER_IP) return json(res, 429, { error: "too many live streams" });
+      (res as any).ip = ip;
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
       res.write("retry: 3000\n\n");
       sseClients.add(res);
@@ -895,13 +965,18 @@ function saveSnapshot() {
 }
 if (SNAPSHOT) setInterval(saveSnapshot, 30_000).unref();
 
+// A rejected promise nobody awaited (a loop's stray call) is logged: it must not stop the site.
+process.on("unhandledRejection", (e) => log(`unhandled: ${(e as Error)?.message ?? e}`));
+
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
-  process.on(sig, () => {
+  process.once(sig, async () => {
     log("shutting down");
     const { child, homeDir, persistent } = devnet.node;
     if (persistent) {
-      // Keep the chain: save, then stop neard. While the swarm loops call its RPC it may ignore SIGTERM
-      // (seen on 2.13.4): SIGKILL after 5 s, and RocksDB replays its log on the next start.
+      // Keep the chain: let the running auctions reveal and settle (compose's stop_grace_period covers it),
+      // save, then stop neard. While the swarm loops call its RPC it may ignore SIGTERM (seen on 2.13.4):
+      // SIGKILL after 5 s, and RocksDB replays its log on the next start.
+      await quiesce();
       saveSnapshot();
       const done = () => process.exit(0);
       child.once("exit", done);
