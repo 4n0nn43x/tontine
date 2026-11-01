@@ -1,4 +1,6 @@
-//! Sandbox-only stand-in for USDC (6 decimals). Anyone can mint: never deploy on mainnet.
+//! Test stand-in for USDC and the wrapped assets (sandbox, devnet, testnet). Only the token account itself
+//! mints (the faucets sign as it): an open mint let anyone register accounts until the token account ran out
+//! of storage NEAR. Never deploy on mainnet.
 
 use near_contract_standards::fungible_token::metadata::{FungibleTokenMetadata, FungibleTokenMetadataProvider, FT_METADATA_SPEC};
 use near_contract_standards::fungible_token::{FungibleToken, FungibleTokenCore, FungibleTokenResolver};
@@ -19,8 +21,9 @@ impl Contract {
         Self { token: FungibleToken::new(b"t".to_vec()) }
     }
 
-    /// Faucet: registers `account_id` if needed and mints `amount` to it.
+    /// Faucet: registers `account_id` if needed and mints `amount` to it. The token account only.
     pub fn mint(&mut self, account_id: AccountId, amount: U128) {
+        assert_eq!(env::predecessor_account_id(), env::current_account_id(), "only the token account mints");
         if self.token.accounts.get(&account_id).is_none() {
             self.token.internal_register_account(&account_id);
         }
