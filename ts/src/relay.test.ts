@@ -68,6 +68,13 @@ test("the relay accepts one PostOrder transfer to a tender and refuses anything 
   bad((q) => (q.verifying_contract = "intents.near"), /verifying_contract/);
   bad((q) => (q.deadline = new Date(now + 3_600_000).toISOString()), /deadline/);
   bad((q) => (q.intents[0].min_gas = "300000000000000"), /min_gas/);
+  // What intents.near would turn into a plain transfer (a non-string msg) or the tender's serde would refuse
+  // (8.0, a duplicate key, an extra key, a u128 overflow): refused before any gas or storage.
+  bad((q) => (q.intents[0].msg = [q.intents[0].msg]), /PostOrder/);
+  bad((q) => (q.intents[0].msg = q.intents[0].msg.replace('"commit_secs":8', '"commit_secs":8.0')), /exactly/);
+  bad((q) => (q.intents[0].msg = q.intents[0].msg.replace('"side":"Buy"', '"side":"Sell","side":"Buy"')), /exactly/);
+  bad((q) => (q.intents[0].msg = JSON.stringify({ PostOrder: { ...order, extra: 1 } })), /exactly/);
+  bad((q) => (q.intents[0].msg = JSON.stringify({ PostOrder: { ...order, min_out: "9".repeat(39) } })), /min_out/);
   assert.throws(() => checkRelay({ standard: "nep413", payload: "{}", signature: "x" }, t, now), /erc191/);
 });
 

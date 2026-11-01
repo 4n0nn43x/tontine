@@ -221,7 +221,7 @@ export function checkRelay(signed: any, t: RelayTargets, now = Date.now()): Rela
   if (i.min_gas !== undefined && (typeof i.min_gas !== "string" || !/^[0-9]{1,15}$/.test(i.min_gas) || BigInt(i.min_gas) > TGAS(100))) fail("min_gas: at most 100 TGas");
   let msg: any;
   try {
-    msg = JSON.parse(i.msg);
+    msg = typeof i.msg === "string" ? JSON.parse(i.msg) : null;
   } catch {
     fail("msg: a tender PostOrder message");
   }
@@ -230,8 +230,14 @@ export function checkRelay(signed: any, t: RelayTargets, now = Date.now()): Rela
   if (o.side !== "Buy" && o.side !== "Sell") fail("side: Buy or Sell");
   if (token !== tokens[o.side === "Buy" ? 0 : 1]) fail("tokens: the token the order sells (USDC for a buy, the asset for a sell)");
   if (o.amount_in !== amount) fail("amount_in: the amount transferred");
-  if (typeof o.min_out !== "string" || !/^[1-9][0-9]{0,38}$/.test(o.min_out)) fail("min_out: a positive integer string");
+  const u128 = (v: unknown) => typeof v === "string" && /^[1-9][0-9]{0,38}$/.test(v) && BigInt(v) < 2n ** 128n;
+  if (!u128(o.min_out)) fail("min_out: a positive integer string");
+  if (o.reference_out !== undefined && o.reference_out !== null && !u128(o.reference_out)) fail("reference_out: a positive integer string or null");
   if (![o.commit_secs, o.reveal_secs].every((s) => Number.isInteger(s) && s >= 1 && s <= 600)) fail("commit_secs, reveal_secs: 1 to 600");
+  // The msg must be exactly this order, written the one way the tender parses it: no duplicate or extra key,
+  // no 8.0 for 8. What the tender would refuse costs the relayer storage and gas for nothing.
+  const canonical = { side: o.side, amount_in: o.amount_in, min_out: o.min_out, reference_out: o.reference_out, commit_secs: o.commit_secs, reveal_secs: o.reveal_secs };
+  if (i.msg !== JSON.stringify({ PostOrder: canonical })) fail("msg: exactly {\"PostOrder\":{side, amount_in, min_out, reference_out, commit_secs, reveal_secs}}, in that order");
   // As the tender counts it: amount_in of a buy, min_out of a sell, both in USDC.
   const min = t.minOrder?.[i.receiver_id] ?? 0n;
   if (BigInt(o.side === "Buy" ? amount : o.min_out) < min) fail(`order below the minimum size of ${Number(min) / 1e6} USDC (amount_in of a buy, min_out of a sell)`);
