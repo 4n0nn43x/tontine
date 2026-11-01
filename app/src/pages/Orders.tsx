@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Badge, Card, Countdown, Empty, EventFeed, FirmChip } from "../components/ui";
-import { getConfig, type ChainEvent, type OrderState } from "../lib/api";
-import { ago, bpOver, bpText, describe, gotText, paidText, priceOf, short, usdc } from "../lib/format";
-import { useAppState, useChainNow, useConfig, useEvents, useFirmName, useWallet } from "../lib/hooks";
+import { Badge, Card, Countdown, Empty, EventFeed, FirmChip, MarketTabs } from "../components/ui";
+import { type ChainEvent, type OrderState } from "../lib/api";
+import { ago, bpOver, bpText, describe, gotText, paidText, priceOf, short, usd, usdc, type Asset } from "../lib/format";
+import { inMarket, inTender, useAppState, useChainNow, useConfig, useEvents, useFirmName, useMarket, useWallet } from "../lib/hooks";
 import { view } from "../lib/near";
 
 function clientLabel(client: string, house: string | undefined, me: string | undefined) {
@@ -13,7 +13,8 @@ function clientLabel(client: string, house: string | undefined, me: string | und
 }
 
 export function Orders() {
-  const { data: state } = useAppState();
+  const { symbol, asset, select } = useMarket();
+  const { data: state } = useAppState(symbol);
   const wallet = useWallet();
   const config = useConfig();
   const name = useFirmName(state);
@@ -22,17 +23,17 @@ export function Orders() {
       <div className="page-head">
         <div>
           <h1>Orders</h1>
-          <p className="sub">Each order is a sealed-bid auction between the firms. The best quote wins and delivers the second best, and never less than the client's minimum, set at what NEAR Intents 1Click would give. No quote above it: the client is refunded.</p>
+          <p className="sub">Each order is a sealed-bid auction between the firms. The best quote wins and delivers the second best, never less than the client's minimum, set just under the market price. No quote above it: the client is refunded.</p>
         </div>
-        <Link className="btn primary" to="/app/trade">
-          <i className="fa-solid fa-arrow-right-arrow-left" aria-hidden="true" /> Trade NEAR
+        <Link className="btn primary" to={inMarket("/app/trade", symbol)}>
+          <i className="fa-solid fa-arrow-right-arrow-left" aria-hidden="true" /> Trade {symbol}
         </Link>
       </div>
-      <Card title={state ? `Latest ${state.orders.length} of ${state.totalOrders} orders` : undefined}>
+      <Card title={state ? `Latest ${state.orders.length} of ${state.totalOrders} ${symbol} orders` : undefined} action={<MarketTabs value={symbol} onChange={select} />}>
         {!state ? (
           <Empty>Loading…</Empty>
         ) : !state.orders.length ? (
-          <Empty>No order yet.</Empty>
+          <Empty>No {symbol} order yet.</Empty>
         ) : (
           <div className="table-wrap">
             <table className="table">
@@ -46,26 +47,26 @@ export function Orders() {
                   <th>Status</th>
                   <th>Winner</th>
                   <th className="num">Got</th>
-                  <th className="num">Vs 1Click</th>
+                  <th className="num">Vs market</th>
                 </tr>
               </thead>
               <tbody>
                 {state.orders.map((o) => (
                   <tr key={o.id}>
                     <td>
-                      <Link to={`/app/orders/${o.id}`}>#{o.id}</Link>
+                      <Link to={inMarket(`/app/orders/${o.id}`, symbol)}>#{o.id}</Link>
                     </td>
                     <td>
-                      <Link to={`/app/orders/${o.id}`}>{o.side === "Buy" ? "Buy NEAR" : "Sell NEAR"}</Link>
+                      <Link to={inMarket(`/app/orders/${o.id}`, symbol)}>{`${o.side} ${symbol}`}</Link>
                     </td>
-                    <td className="num">{paidText(o.side, o.amount_in)}</td>
-                    <td className="num">{gotText(o.side, o.min_out)}</td>
+                    <td className="num">{paidText(o.side, o.amount_in, asset)}</td>
+                    <td className="num">{gotText(o.side, o.min_out, asset)}</td>
                     <td>{clientLabel(o.client, config?.houseClient, wallet?.accountId)}</td>
                     <td>
                       <Badge status={o.status} />
                     </td>
-                    <td>{o.firm !== null ? <FirmChip id={o.firm} name={name(o.firm)} index={o.firm} /> : "–"}</td>
-                    <td className="num">{o.out ? gotText(o.side, o.out) : "–"}</td>
+                    <td>{o.firm !== null ? <FirmChip id={o.firm} name={name(o.firm)} index={o.firm} market={symbol} /> : "–"}</td>
+                    <td className="num">{o.out ? gotText(o.side, o.out, asset) : "–"}</td>
                     <td className="num">{bpText(bpOver(o.out, o.reference_out))}</td>
                   </tr>
                 ))}
@@ -78,40 +79,41 @@ export function Orders() {
   );
 }
 
-/** The order, from the cached state while it is recent, else read from the chain. */
-function useOrder(id: number): OrderState | null {
-  const { data: state } = useAppState();
+/** The order, from the cached state while it is recent, else read from its market's tender. */
+function useOrder(id: number, symbol: string, tender: string | undefined): OrderState | null {
+  const { data: state } = useAppState(symbol);
   const fromState = state?.orders.find((o) => o.id === id) ?? null;
   const [fetched, setFetched] = useState<OrderState | null>(null);
   useEffect(() => {
-    if (fromState || !Number.isFinite(id)) return;
+    if (fromState || !Number.isFinite(id) || !tender) return;
     let alive = true;
     (async () => {
-      const c = await getConfig();
-      const order = await view(c.tender, "get_order", { order_id: id });
-      const auctionState = await view(c.tender, "get_auction", { auction_id: order.auction });
+      const order = await view(tender, "get_order", { order_id: id });
+      const auctionState = await view(tender, "get_auction", { auction_id: order.auction });
       if (alive) setFetched({ ...order, auctionState });
     })().catch(() => {});
     return () => {
       alive = false;
     };
-  }, [id, !!fromState]);
+  }, [id, !!fromState, tender]);
   return fromState ?? fetched;
 }
 
 export function OrderDetail() {
   const id = Number(useParams().id);
-  const { data: state } = useAppState();
+  const { symbol, asset, market } = useMarket();
+  const { data: state } = useAppState(symbol);
   const name = useFirmName(state);
   const now = useChainNow(state);
   const events = useEvents(500);
   const config = useConfig();
   const wallet = useWallet();
-  const o = useOrder(id);
-  if (!o) return <div className="page-app"><Empty>Loading order #{id}…</Empty></div>;
+  const o = useOrder(id, symbol, market?.tender);
+  if (!o) return <div className="page-app"><Empty>Loading {symbol} order #{id}…</Empty></div>;
 
   const a = o.auctionState;
-  const own = events.filter((e) => e.data?.order_id === id || (e.data?.auction_id === o.auction && e.event !== "liquidation_started"));
+  // Order and auction ids repeat across markets: only this market's tender's events.
+  const own = events.filter((e) => inTender(e, market?.tender) && (e.data?.order_id === id || (e.data?.auction_id === o.auction && e.event !== "liquidation_started")));
   const txs = new Set(own.map((e) => e.txHash));
   // The deposit and the keeper reward travel in the same transactions as the order's own events.
   const mine = events.filter((e) => txs.has(e.txHash));
@@ -120,7 +122,10 @@ export function OrderDetail() {
   // Best quote first; the sort is stable, so equal quotes keep commit order, as the contract breaks ties.
   const v = (b: { revealed: string | null }) => BigInt(b.revealed ?? -1);
   const bids = [...a.bids].sort((x, y) => (v(y) > v(x) ? 1 : v(y) < v(x) ? -1 : 0));
-  const second = o.out && a.winner !== null ? bids.find((b) => b.firm_id !== a.winner && b.revealed === o.out) : undefined;
+  // The winner delivers the auction's price, the second best quote; the client receives it less Tontine's surplus share.
+  const second = a.price && a.winner !== null ? bids.find((b) => b.firm_id !== a.winner && b.revealed === a.price) : undefined;
+  const surplus = o.out && a.price ? BigInt(a.price) - BigInt(o.out) : null;
+  const surplusBps = Number(market?.tenderConfig?.surplus_bps ?? 0);
   const dividendBps = BigInt(config?.tenderConfig?.dividend_bps ?? 0);
   const edge = filled ? BigInt(filled.edge) : null;
   const minBidders = Math.max(1, Number(config?.tenderConfig?.min_bidders ?? 1));
@@ -131,13 +136,13 @@ export function OrderDetail() {
       <div className="page-head">
         <div>
           <p className="crumbs">
-            <Link to="/app/orders">Orders</Link> / #{o.id}
+            <Link to={inMarket("/app/orders", symbol)}>Orders</Link> / {symbol} #{o.id}
           </p>
           <h1>
             Order #{o.id} <Badge status={o.status} />
           </h1>
           <p className="sub">
-            {side === "Buy" ? `Buy NEAR with ${paidText(side, o.amount_in)}` : `Sell ${paidText(side, o.amount_in)} for USDC`}, at least {gotText(side, o.min_out)}. Client: {clientLabel(o.client, config?.houseClient, wallet?.accountId)}.
+            {side === "Buy" ? `Buy ${symbol} with ${paidText(side, o.amount_in, asset)}` : `Sell ${paidText(side, o.amount_in, asset)} for USDC`}, at least {gotText(side, o.min_out, asset)}. Client: {clientLabel(o.client, config?.houseClient, wallet?.accountId)}.
           </p>
         </div>
       </div>
@@ -146,13 +151,13 @@ export function OrderDetail() {
         <Card title="Auction">
           <dl className="facts">
             <dt>Escrowed by the client</dt>
-            <dd>{paidText(side, o.amount_in)}</dd>
+            <dd>{paidText(side, o.amount_in, asset)}</dd>
             <dt>Minimum (reserve)</dt>
-            <dd>{gotText(side, o.min_out)}</dd>
-            <dt>1Click reference</dt>
-            <dd>{o.reference_out ? `${gotText(side, o.reference_out)}, what NEAR Intents 1Click quoted when the order was posted` : "none given"}</dd>
+            <dd>{gotText(side, o.min_out, asset)}</dd>
+            <dt>Market reference</dt>
+            <dd>{o.reference_out ? `${gotText(side, o.reference_out, asset)}, the market mid less 25 bp when the order was posted` : "none given"}</dd>
             <dt>Band anchor</dt>
-            <dd>{(Number(o.price) / 1e6).toFixed(4)} USD per NEAR, tender's last clearing price when posted</dd>
+            <dd>{usd(Number(o.price) / 1e6)} USD per {symbol}, tender's last clearing price when posted</dd>
             <dt>Commit phase</dt>
             <dd>{now < BigInt(a.commit_end) ? <>ends in <Countdown until={BigInt(a.commit_end)} now={now} /></> : "closed"}</dd>
             <dt>Reveal phase</dt>
@@ -164,7 +169,7 @@ export function OrderDetail() {
                 <th>Firm</th>
                 <th>Quote</th>
                 <th className="num">Delivers</th>
-                <th className="num">Vs 1Click</th>
+                <th className="num">Vs market</th>
               </tr>
             </thead>
             <tbody>
@@ -172,7 +177,7 @@ export function OrderDetail() {
                 bids.map((b) => (
                   <tr key={b.firm_id} className={a.winner === b.firm_id ? "winner" : ""}>
                     <td>
-                      <FirmChip id={b.firm_id} name={name(b.firm_id)} index={b.firm_id} />
+                      <FirmChip id={b.firm_id} name={name(b.firm_id)} index={b.firm_id} market={symbol} />
                     </td>
                     <td>
                       {b.revealed !== null
@@ -187,7 +192,7 @@ export function OrderDetail() {
                             : "never revealed"
                           : "sealed"}
                     </td>
-                    <td className="num">{b.revealed !== null ? gotText(side, b.revealed) : <span className="sealed">{b.hash.slice(0, 10)}…</span>}</td>
+                    <td className="num">{b.revealed !== null ? gotText(side, b.revealed, asset) : <span className="sealed">{b.hash.slice(0, 10)}…</span>}</td>
                     <td className="num">{b.revealed !== null ? bpText(bpOver(b.revealed, o.reference_out)) : "–"}</td>
                   </tr>
                 ))
@@ -205,22 +210,28 @@ export function OrderDetail() {
             <Empty>{now < BigInt(a.commit_end) ? "Firms are sealing their quotes." : now < BigInt(a.reveal_end) ? "Firms are revealing their quotes." : "The auction is over: the next settle fills or refunds it."}</Empty>
           ) : o.status === "Refunded" ? (
             <Empty>
-              No fill: fewer than {minBidders} quote{minBidders === 1 ? "" : "s"} at or above the minimum were revealed. The client got its {paidText(side, o.amount_in)} back.
+              No fill: fewer than {minBidders} quote{minBidders === 1 ? "" : "s"} at or above the minimum were revealed. The client got its {paidText(side, o.amount_in, asset)} back.
             </Empty>
           ) : (
             <dl className="facts">
               <dt>Filled by</dt>
-              <dd>{o.firm !== null ? <FirmChip id={o.firm} name={name(o.firm)} index={o.firm} /> : "–"}</dd>
-              <dt>Client received</dt>
+              <dd>{o.firm !== null ? <FirmChip id={o.firm} name={name(o.firm)} index={o.firm} market={symbol} /> : "–"}</dd>
+              <dt>Firm delivered</dt>
               <dd>
-                {gotText(side, o.out)} {second ? "(the second best quote)" : a.bids.filter((b) => b.revealed !== null).length === 1 ? "(alone: the minimum)" : ""}
+                {a.price ? gotText(side, a.price, asset) : "–"} {second ? "(the second best quote)" : a.bids.filter((b) => b.revealed !== null).length === 1 ? "(alone: the minimum)" : ""}
               </dd>
-              <dt>Vs 1Click</dt>
+              <dt>Client received</dt>
+              <dd>{gotText(side, o.out, asset)}</dd>
+              <dt>Vs market</dt>
               <dd className="good">{bpText(bpOver(o.out, o.reference_out))}</dd>
               <dt>Price</dt>
-              <dd>{priceOf(side, o.amount_in, o.out!).toFixed(4)} USD per NEAR</dd>
+              <dd>
+                {usd(priceOf(side, o.amount_in, o.out!, asset.decimals))} USD per {symbol}
+              </dd>
+              <dt>Surplus share</dt>
+              <dd>{surplus !== null ? `${gotText(side, surplus, asset)} to Tontine, ${surplusBps / 100}% of the gain over the minimum` : "–"}</dd>
               <dt>Tontine fee</dt>
-              <dd>{filled ? `${paidText(side, filled.fee)}, taken from what the firm receives` : "–"}</dd>
+              <dd>{filled ? `${paidText(side, filled.fee, asset)}, taken from what the firm receives` : "–"}</dd>
               <dt>Firm's edge</dt>
               <dd>{edge !== null ? `${usdc(edge, 4)} USDC: what it received minus what it delivered, at the previous clearing price` : "not in the recent events"}</dd>
               <dt>To its shareholders</dt>
@@ -231,7 +242,7 @@ export function OrderDetail() {
       </div>
 
       <Card title="Transactions">
-        <TxTable events={mine} name={name} side={side} />
+        <TxTable events={mine} name={name} side={side} asset={asset} />
       </Card>
 
       <Card title="Events, in words">
@@ -242,7 +253,7 @@ export function OrderDetail() {
 }
 
 /** Explorer-style: every event of the order with its block, transaction and signer. */
-function TxTable({ events, name, side }: { events: ChainEvent[]; name: (id: number) => string; side: "Buy" | "Sell" }) {
+function TxTable({ events, name, side, asset }: { events: ChainEvent[]; name: (id: number) => string; side: "Buy" | "Sell"; asset: Asset }) {
   if (!events.length) return <Empty>No event of this order in the recent history.</Empty>;
   return (
     <div className="table-wrap">
@@ -263,7 +274,7 @@ function TxTable({ events, name, side }: { events: ChainEvent[]; name: (id: numb
               <td>
                 <code>{e.event}</code>
               </td>
-              <td>{describe(e, name, () => side)?.text ?? e.event.replace(/_/g, " ")}</td>
+              <td>{describe(e, name, () => side, asset)?.text ?? e.event.replace(/_/g, " ")}</td>
               <td className="num">{e.height}</td>
               <td>
                 <code className="hash" title={e.txHash}>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Skel } from "../components/Game";
 import { Card, Empty, Kpi } from "../components/ui";
 import { getThesis } from "../lib/api";
 
@@ -10,7 +11,7 @@ export function Thesis() {
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => void getThesis().then(setT, (e) => setErr((e as Error).message)), []);
   if (err) return <div className="page-app"><Empty>Thesis data unavailable: {err}</Empty></div>;
-  if (!t?.result) return <div className="page-app"><Empty>Loading the thesis…</Empty></div>;
+  if (!t?.result) return <div className="page-app" aria-busy="true"><span className="sr">Loading the thesis</span><Skel w="40%" h={40} /><Skel h={320} /></div>;
   const r = t.result;
   const p = t.predictions;
   const blocks: { from: string; to: string; bp: number }[] = r.blocks ?? [];

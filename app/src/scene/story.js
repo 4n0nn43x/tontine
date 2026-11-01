@@ -24,7 +24,7 @@ export const EXTRA_SLOTS = [
 export const STORY = [
   { at: 0, do: "reset" },
 
-  // Order #0: a client buys NEAR with 40 USDC, at least the 1Click quote. The best quote fills at the second best.
+  // Order #0: a client buys NEAR with 40 USDC, at least the market reference. The best quote fills at the second best.
   { at: 1.5, do: "order", id: 0, side: "Buy", amount: "40.00 USDC", min: "7.4621 NEAR" },
   { at: 3.4, do: "commit", firm: "Undercut & Co" },
   { at: 3.75, do: "commit", firm: "Cost Plus Ltd" },
@@ -32,7 +32,7 @@ export const STORY = [
   { at: 6.2, do: "reveal", firm: "Atlas AI", price: "7.4726 NEAR" },
   { at: 6.5, do: "reveal", firm: "Undercut & Co", price: "7.4778 NEAR" },
   { at: 6.8, do: "reveal", firm: "Cost Plus Ltd", price: "7.4763 NEAR" },
-  { at: 8.6, do: "win", firm: "Undercut & Co", price: "7.4763 NEAR", note: "+19.0 bp vs 1Click 7.4621" },
+  { at: 8.6, do: "win", firm: "Undercut & Co", price: "7.4763 NEAR", note: "+19.0 bp vs market 7.4621" },
   { at: 10.0, do: "fill", firm: "Undercut & Co", price: "7.4763 NEAR", edge: "0.0160", dividends: "0.0048" },
   { at: 12.6, do: "orderEnd" },
 

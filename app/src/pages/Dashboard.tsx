@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { LineChart, type Series } from "../components/Chart";
 import { SceneView, type SceneApi } from "../components/SceneView";
-import { Badge, Card, Countdown, Empty, EventFeed, FirmChip, Kpi } from "../components/ui";
-import { nameOf, type AppState, type ChainEvent, type OrderState } from "../lib/api";
-import { bpText, gotText, near, paidText, usdc } from "../lib/format";
-import { useAppState, useChainNow, useConfig, useEvents, useFirmName, useStats } from "../lib/hooks";
-import { cityFirms, cityMarket, liveDriver } from "../lib/live";
+import { Count, fixed, Leaderboard, Skel, useLeaderboard } from "../components/Game";
+import { Badge, Card, Countdown, Empty, EventFeed, Kpi, MarketTabs } from "../components/ui";
+import { RegimeChip } from "../components/Ai";
+import { worstRegime } from "../lib/ai";
+import { regimeOf, SYMBOLS, type AppState, type ChainEvent, type MarketSymbol, type OrderState } from "../lib/api";
+import { ASSETS, bpText, gotText, paidText, usd, usdc, type Asset } from "../lib/format";
+import { firmNameIn, inMarket, inTender, useChainNow, useConfig, useEvents, useFirmNames, useMarket, useStates, useStats } from "../lib/hooks";
+import { cityFirms, cityLink, cityMarket, liveDriver } from "../lib/live";
 
 export const PHASES = ["Order", "Sealed", "Revealed", "Filled", "Slashed", "Liquidating", "Acquired"];
 
@@ -22,75 +25,98 @@ export function PhaseStrip({ phase }: { phase: number }) {
   );
 }
 
-/** What 1Click without a key costs on top of the mid: the server backs the mid out of its quotes the same way (ts/src/prices.ts). */
-const ONECLICK_COST_BPS = 25n;
+/** How far under the market mid an order's reference sits: the server backs it out the same way (ts/src/prices.ts CLIENT_TOLERANCE_BPS). */
+const TOLERANCE_BPS = 25n;
 
-/** The 1Click mid behind an order's reference, and the clearing price of each fill, in USD per NEAR. */
-function priceSeries(events: ChainEvent[], state: AppState | null): Series[] {
+/** The market mid behind each order's reference, and the clearing price of each fill, in USD per unit of the asset. */
+function priceSeries(events: ChainEvent[], state: AppState | null, a: Asset): Series[] {
   const mid: Series["points"] = [];
   const fills: Series["points"] = [];
+  const unit = 10 ** a.decimals;
   for (const e of events) {
     const d = e.data ?? {};
     if (e.event === "order_posted" && d.reference_out) {
-      const gross = Number((BigInt(d.reference_out) * 10_000n) / (10_000n - ONECLICK_COST_BPS));
+      const gross = Number((BigInt(d.reference_out) * 10_000n) / (10_000n - TOLERANCE_BPS));
       const inUnits = Number(d.amount_in);
-      mid.push({ time: e.time / 1000, value: d.side === "Buy" ? inUnits / 1e6 / (gross / 1e24) : gross / 1e6 / (inUnits / 1e24) });
+      mid.push({ time: e.time / 1000, value: d.side === "Buy" ? inUnits / 1e6 / (gross / unit) : gross / 1e6 / (inUnits / unit) });
     }
     if (e.event === "order_filled") fills.push({ time: e.time / 1000, value: Number(d.price) / 1e6 });
   }
   if (state?.reference) mid.push({ time: state.reference.at / 1000, value: state.reference.mid });
+  const precision = (state?.reference.mid ?? 0) >= 10 ? 2 : 4;
   return [
-    { name: "1Click mid", color: "#d7bcff", points: mid },
-    { name: "Fill price", color: "#8ef0b3", points: fills, dots: true },
+    { name: "Market mid", color: "#d7bcff", points: mid, precision },
+    { name: "Fill price", color: "#8ef0b3", points: fills, dots: true, precision },
   ];
 }
 
 export function Dashboard() {
-  const { data: state } = useAppState();
+  // The price chart and the leaderboard show one market; the KPIs, the city and the feed show them all.
+  const { symbol, asset, market, select } = useMarket();
+  const states = useStates();
+  const state = states[symbol];
   const { data: stats } = useStats();
   const config = useConfig();
-  const firmName = useFirmName(state);
+  const firmName = useFirmNames();
   const scene = useRef<SceneApi | null>(null);
   const driver = useRef<((e: any) => void) | null>(null);
   const [phase, setPhase] = useState(-1);
   const events = useEvents(500, (e) => driver.current?.(e));
-  const now = useChainNow(state);
-  // The city is built once from the first firm list; later firms are founded in it (setFirms), not rebuilt.
-  const firmNames = useMemo(() => state?.firms.map((f) => nameOf(f)) ?? null, [state === null]);
-  const latest = useRef(state);
-  latest.current = state;
+  const now = useChainNow(states.NEAR);
+  // The city is built once every market has answered; later firms are founded in it (setFirms), not rebuilt.
+  const ready = SYMBOLS.every((s) => states[s]);
+  const firmNames = useMemo(() => (ready ? cityFirms(states).map((f) => f.name) : null), [ready]);
+  const latest = useRef({ states, config });
+  latest.current = { states, config };
   useEffect(() => {
-    if (state) scene.current?.setFirms(cityFirms(state), cityMarket(state));
-  }, [state]);
+    if (ready) scene.current?.setFirms(cityFirms(states), cityMarket(states.NEAR));
+  }, [states.NEAR, states.ETH, states.SOL]);
+  // The worst market regime is the city's weather.
+  const weather = worstRegime(states);
+  useEffect(() => scene.current?.setWeather(weather), [weather]);
   const navigate = useNavigate();
   const [pointer, setPointer] = useState(false);
+  const own = useMemo(() => events.filter((e) => inTender(e, market?.tender)), [events, market?.tender]);
   // Recompute the chart only when an order event arrives or the reference moves, so a zoom survives the polls.
-  const lastOrderEvent = events.reduce((k, e) => (e.event === "order_filled" || e.event === "order_posted" ? e.id : k), 0);
-  const series = useMemo(() => priceSeries(events, state), [lastOrderEvent, state?.reference.at]);
+  const lastOrderEvent = own.reduce((k, e) => (e.event === "order_filled" || e.event === "order_posted" ? e.id : k), 0);
+  const series = useMemo(() => priceSeries(own, state, asset), [lastOrderEvent, state?.reference.at, symbol]);
 
-  const open = state?.orders.filter((o) => o.status === "Open") ?? [];
+  const board = useLeaderboard(state, own);
+  const open = SYMBOLS.flatMap((s) => (states[s]?.orders ?? []).filter((o) => o.status === "Open").map((o) => ({ o, s })));
   const avgBp = stats && stats.fills ? stats.improvementBps / stats.fills : null;
   const share = (config?.tenderConfig?.dividend_bps ?? 0) / 100;
+  const revenue = stats ? Number(stats.revenue ?? 0) : 0;
 
   return (
     <div className="page-app">
       <div className="page-head">
         <div>
           <h1>Live market</h1>
-          <p className="sub">Every figure on this page is read from the chain: the tender contract, the firm contracts and the events they emit.</p>
+          <p className="sub">Every figure on this page is read from the chain: the NEAR, ETH and SOL tenders, the firm contracts and the events they emit.</p>
+          <p className="regimes" aria-label="Market regimes">
+            {SYMBOLS.map((s) => (
+              <RegimeChip key={s} symbol={s} regime={regimeOf(states[s])} />
+            ))}
+          </p>
         </div>
-        <Link className="btn primary" to="/app/trade">
-          <i className="fa-solid fa-arrow-right-arrow-left" aria-hidden="true" /> Trade NEAR
+        <Link className="btn primary" to={inMarket("/app/trade", symbol)}>
+          <i className="fa-solid fa-arrow-right-arrow-left" aria-hidden="true" /> Trade
         </Link>
       </div>
 
       <div className="kpis">
-        <Kpi icon="fa-right-left" label="Orders filled" value={stats ? stats.fills : "…"} hint={stats ? `${stats.orders} posted, ${stats.refunded} refunded` : ""} />
-        <Kpi icon="fa-coins" label="Volume" value={stats ? usdc(stats.volume) : "…"} unit="USDC" hint="notional of the fills" />
-        <Kpi icon="fa-arrow-trend-up" label="Vs 1Click" value={stats ? bpText(avgBp) : "…"} hint="average per fill, over the NEAR Intents quote" />
-        <Kpi icon="fa-hand-holding-dollar" label="Dividends" value={stats ? usdc(stats.dividends) : "…"} unit="USDC" hint={share ? `${share}% of each fill's edge` : "a share of each fill's edge"} />
-        <Kpi icon="fa-scissors" label="Bonds slashed" value={stats ? usdc(stats.slashed) : "…"} unit="USDC" hint="quotes sealed, never revealed" />
-        <Kpi icon="fa-handshake" label="Takeovers" value={stats ? stats.takeovers : "…"} hint={stats ? `${stats.liquidations} liquidation${stats.liquidations === 1 ? "" : "s"}` : ""} />
+        <Kpi icon="fa-right-left" label="Orders filled" value={stats ? <Count value={stats.fills} format={fixed(0)} /> : <Skel w="50%" h={26} />} hint={stats ? `${stats.orders} posted, ${stats.refunded} refunded` : ""} />
+        <Kpi
+          icon="fa-coins"
+          label="Volume"
+          value={stats ? <Count value={Number(stats.volume) / 1e6} format={fixed(2)} /> : <Skel w="70%" h={26} />}
+          unit="USDC"
+          hint={stats ? `Tontine earned ${usdc(revenue, revenue < 1e6 ? 4 : 2)} USDC` : ""}
+        />
+        <Kpi icon="fa-arrow-trend-up" label="Vs market" value={stats ? avgBp === null ? bpText(null) : <Count value={avgBp} format={bpText} /> : <Skel w="60%" h={26} />} hint="average per fill, over the market reference" />
+        <Kpi icon="fa-hand-holding-dollar" label="Dividends" value={stats ? <Count value={Number(stats.dividends) / 1e6} format={fixed(2)} /> : <Skel w="50%" h={26} />} unit="USDC" hint={share ? `${share}% of each fill's edge` : "a share of each fill's edge"} />
+        <Kpi icon="fa-scissors" label="Bonds slashed" value={stats ? <Count value={Number(stats.slashed) / 1e6} format={fixed(2)} /> : <Skel w="50%" h={26} />} unit="USDC" hint="quotes sealed, never revealed" />
+        <Kpi icon="fa-handshake" label="Takeovers" value={stats ? <Count value={stats.takeovers} format={fixed(0)} /> : <Skel w="30%" h={26} />} hint={stats ? `${stats.liquidations} liquidation${stats.liquidations === 1 ? "" : "s"}` : ""} />
       </div>
 
       <div className="grid-main">
@@ -114,7 +140,7 @@ export function Dashboard() {
             className={`arena-hit ${pointer ? "pointer" : ""}`}
             onClick={(e) => {
               const hit = scene.current?.pick(e.clientX, e.clientY);
-              if (hit) navigate(`/app/firms/${hit.id}`);
+              if (hit) navigate(cityLink(hit.id));
             }}
             onMouseMove={(e) => setPointer(!!scene.current?.pick(e.clientX, e.clientY))}
           >
@@ -125,15 +151,16 @@ export function Dashboard() {
               onReady={(api) => {
                 scene.current = api;
                 api.setExplore(true);
-                // Names come from the latest state: firms founded after the city was built keep theirs.
-                driver.current = liveDriver(api, (id) => nameOf(latest.current?.firms.find((x) => x.id === id), id));
-                if (latest.current) api.setFirms(cityFirms(latest.current), cityMarket(latest.current));
+                // Names come from the latest states: firms founded after the city was built keep theirs.
+                driver.current = liveDriver(api, (id, contract) => firmNameIn(latest.current.states, latest.current.config)(id, contract));
+                api.setFirms(cityFirms(latest.current.states), cityMarket(latest.current.states.NEAR));
+                api.setWeather(worstRegime(latest.current.states));
               }}
               onPhase={setPhase}
               fallback={<Empty>The city view needs a canvas. The figures and the feed below are live anyway.</Empty>}
             />
           </div>
-          <p className="caption">Each tower is a firm: it grows with its fills and value, goes dark when for sale, moves next to its buyer, falls when wound up. Click one to open it.</p>
+          <p className="caption">Each tower is a firm of the NEAR, ETH or SOL market: it grows with its fills and value, goes dark when for sale, moves next to its buyer, falls when wound up. Click one to open it.</p>
         </Card>
 
         <Card title="Live feed" className="feed-card">
@@ -142,35 +169,46 @@ export function Dashboard() {
       </div>
 
       <Card
-        title="NEAR price, USD"
+        title={`${symbol} price, USD`}
         action={
-          state ? (
-            <span className="card-note">
-              1Click mid {state.reference.mid.toFixed(4)} ({state.reference.source === "1click" ? "live quote" : "replayed prices"}) · last clearing price {(Number(state.lastPrice) / 1e6).toFixed(4)}
-            </span>
-          ) : null
+          <div className="arena-actions">
+            {state && (
+              <span className="card-note">
+                Market mid {usd(state.reference.mid)} ({state.reference.source === "market" ? "live" : "replayed prices"}) · last clearing price {usd(Number(state.lastPrice) / 1e6)}
+              </span>
+            )}
+            <MarketTabs value={symbol} onChange={select} />
+          </div>
         }
       >
         <LineChart series={series} empty="No order in the recent events yet." />
-        <p className="caption">The line is the NEAR Intents 1Click mid behind each order's reference quote. The dots are the prices orders filled at on tender, which also anchor the firms' price bands.</p>
+        <p className="caption">The line is the market mid behind each order's reference. The dots are the prices orders filled at on tender, which also anchor the firms' price bands.</p>
       </Card>
 
       <Card title="Auctions in progress" action={<Link to="/app/orders">All orders</Link>}>
         {open.length ? <OpenOrders orders={open} now={now} /> : <Empty>No auction right now. The house client posts an order every minute or so, or trade yourself.</Empty>}
       </Card>
 
-      <Card title="Firms" action={<Link to="/app/firms">Details</Link>}>
-        <FirmsTable state={state} />
+      <Card
+        title={
+          <>
+            <i className="fa-solid fa-trophy" aria-hidden="true" /> Leaderboard · {symbol}
+          </>
+        }
+        action={<Link to={inMarket("/app/firms", symbol)}>All firms</Link>}
+      >
+        <Leaderboard rows={board} market={symbol} />
       </Card>
     </div>
   );
 }
 
-function OpenOrders({ orders, now }: { orders: OrderState[]; now: bigint }) {
+function OpenOrders({ orders, now }: { orders: { o: OrderState; s: MarketSymbol }[]; now: bigint }) {
   return (
     <div className="active-orders">
-      {orders.map((o) => {
+      {orders.map(({ o, s }) => {
         const a = o.auctionState;
+        const asset = ASSETS[s];
         const commitEnd = BigInt(a.commit_end);
         const revealEnd = BigInt(a.reveal_end);
         const revealed = a.bids.filter((b) => b.revealed !== null).length;
@@ -187,61 +225,18 @@ function OpenOrders({ orders, now }: { orders: OrderState[]; now: bigint }) {
             <>Settling…</>
           );
         return (
-          <Link key={o.id} className="order-row" to={`/app/orders/${o.id}`}>
+          <Link key={`${s}${o.id}`} className="order-row" to={inMarket(`/app/orders/${o.id}`, s)}>
             <span className="order-id">#{o.id}</span>
-            <span className="order-what">{o.side === "Buy" ? `Buy NEAR with ${paidText(o.side, o.amount_in)}` : `Sell ${paidText(o.side, o.amount_in)}`}</span>
-            <span className="order-amount">at least {gotText(o.side, o.min_out)}</span>
+            <span className="order-what">
+              <span className="mk-tag">{s}</span>
+              {o.side === "Buy" ? `Buy ${s} with ${paidText(o.side, o.amount_in, asset)}` : `Sell ${paidText(o.side, o.amount_in, asset)}`}
+            </span>
+            <span className="order-amount">at least {gotText(o.side, o.min_out, asset)}</span>
             <span className="order-phase">{phase}</span>
             <Badge status={o.status} />
           </Link>
         );
       })}
-    </div>
-  );
-}
-
-export function FirmsTable({ state }: { state: AppState | null }) {
-  if (!state) return <Empty>Loading the firms…</Empty>;
-  return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Firm</th>
-            <th>Status</th>
-            <th className="num">Cash</th>
-            <th className="num">NEAR</th>
-            <th className="num">NAV</th>
-            <th className="num">Fills</th>
-            <th className="num">Volume</th>
-            <th className="num">Edge</th>
-            <th className="num">Dividends</th>
-            <th className="num">Owner bond</th>
-            <th className="num">Holders</th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.firms.map((f, i) => (
-            <tr key={f.id}>
-              <td>
-                <FirmChip id={f.id} name={nameOf(f)} index={i} />
-              </td>
-              <td>
-                <Badge status={f.status} />
-              </td>
-              <td className="num">{usdc(f.treasury)}</td>
-              <td className="num">{near(f.inventory)}</td>
-              <td className="num">{usdc(f.nav)}</td>
-              <td className="num">{f.fills}</td>
-              <td className="num">{usdc(f.volume)}</td>
-              <td className="num">{usdc(f.edge, 4)}</td>
-              <td className="num">{usdc(f.dividends, 4)}</td>
-              <td className="num">{usdc(f.ownerBond)}</td>
-              <td className="num">{f.holdings.length}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

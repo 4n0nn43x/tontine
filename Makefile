@@ -2,7 +2,7 @@
 WASM_TARGET := contracts/target/wasm32-unknown-unknown/release
 export TMPDIR := $(CURDIR)/ts/node_modules/.cache/tmp
 
-.PHONY: build build-repro test demo sim verify-wasm deps thesis app app-dev serve
+.PHONY: build build-repro test demo sim bench verify-wasm deps thesis app app-dev serve
 
 deps:
 	cd ts && npm ci
@@ -41,6 +41,12 @@ SEED ?= 1
 sim:
 	@test -d ts/node_modules || $(MAKE) deps
 	cd ts && SEED=$(SEED) npx tsx src/sim.ts
+
+# Atlas AI's manager against fixed params, the rule and a UCB1 bandit (and the LLM with a key), over weekly
+# windows and seeds; writes bench/result.json.
+bench:
+	@test -d ts/node_modules || $(MAKE) deps
+	cd ts && SEED=$(SEED) npx tsx src/bench.ts
 
 # The website (Vite + React), built into app/dist.
 app:

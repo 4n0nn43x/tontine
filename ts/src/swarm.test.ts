@@ -83,3 +83,163 @@ test("P5 and P6 read the buyback balance from 2026-11-01 to 2026-11-13; a fall a
   assert.deepEqual([sold.P5.status, sold.P6.status], ["FALSE", "FALSE"]);
   assert.match(evaluateBuybacks(p, bal((i) => 1e6 + i * 10_000), "2026-11-13T09:00:00Z").P6.status, /read on or after/);
 });
+
+import { applyOverlay, compileMandate } from "./mandate.ts";
+import { dailyCapped, HOUSE_MANDATES, regimeRules, Swarm, type FirmHandle } from "./swarm.ts";
+import { marketHouse } from "./devnet.ts";
+import type { Llm } from "./llm.ts";
+
+test("every house firm has a default mandate the pattern parser reads in full", async () => {
+  const names = [...(await loadStrategies()), ...marketHouse("ETH"), ...marketHouse("SOL")].map((s) => s.name);
+  assert.deepEqual(names.filter((n) => !HOUSE_MANDATES[n]), []);
+  for (const [name, text] of Object.entries(HOUSE_MANDATES)) {
+    const m = await compileMandate(null, text);
+    assert.equal(m.source, "pattern", name);
+    assert.deepEqual(m.dropped, [], name);
+    assert.equal(m.rules.length, text.split(/\.(?!\d)/).filter((c) => c.trim()).length, `${name}: one rule per sentence`);
+  }
+});
+
+test("the house regime response, unless the mandate has its own", async () => {
+  const p = { spreadBps: 12, targetAssetShare: 0.3, skewBps: 10 };
+  assert.deepEqual(regimeRules([], p).map((r) => [r.when, r.then]), [
+    [{ kind: "regime", atLeast: "alert" }, { spreadMinBps: 18 }],
+    [{ kind: "regime", atLeast: "storm" }, { pause: true }],
+  ]);
+  const stormOnly = (await compileMandate(null, HOUSE_MANDATES["Sniper Holdings"])).rules;
+  assert.deepEqual(regimeRules(stormOnly, p).map((r) => r.then), [{ spreadMinBps: 18 }], "a storm rule leaves the alert default");
+  const both = (await compileMandate(null, HOUSE_MANDATES["Atlas AI"])).rules;
+  assert.deepEqual(regimeRules(both, p), [], "an alert rule covers the storm too");
+  assert.equal(regimeRules([], { ...p, spreadBps: 250 })[0].then.spreadMinBps, 300, "capped at 300 bp");
+});
+
+test("the swarm's overlay: house defaults pause in a storm, an owner's mandate keeps quoting wider", async () => {
+  const handle = (id: number, name: string, house: boolean): FirmHandle => ({ id, account: `w${id}`, owner: {} as any, agentTender: {} as any, agentFirm: {} as any, strategy: { name, author: "t", house, managed: "rule", params } });
+  const [undercut, atlas, visitor] = [handle(0, "Undercut & Co", true), handle(1, "Atlas AI", true), handle(2, "Mine", false)];
+  const s = new Swarm({} as any, "t", [undercut, atlas, visitor], {} as Llm, "", async () => 4);
+  for (const f of [undercut, atlas]) s.mandates.set(f.id, await compileMandate(null, HOUSE_MANDATES[f.strategy.name]));
+  const now = (f: FirmHandle) => s.mandateNow(f, me, 4);
+  assert.deepEqual(now(undercut).overlay, { pause: false }, "calm: nothing holds");
+  s.regime = "alert";
+  assert.equal(applyOverlay(params, now(undercut).overlay).spreadBps, 15, "alert: 10 bp widened 1.5 times");
+  assert.equal(applyOverlay(params, now(atlas).overlay).spreadBps, 20, "Atlas: its own 20 bp on alert");
+  s.regime = "storm";
+  const u = now(undercut);
+  assert.equal(u.overlay.pause, true);
+  assert.equal(u.rules[u.active.at(-1)!].note, "House default: stop quoting in a storm");
+  assert.deepEqual(now(atlas).overlay, { pause: false, spreadMinBps: 35 }, "Atlas keeps quoting at 35 bp");
+  assert.deepEqual(now(visitor).overlay, { pause: false }, "no house default for a visitor's firm");
+  // A price move: 5% under the last hour's high pauses Undercut (its mandate: 4%).
+  s.regime = "calm";
+  s.series = [{ t: 0, mid: 4 }, { t: 30 * 60_000, mid: 3.8 }];
+  assert.equal(now(undercut).overlay.pause, true);
+});
+
+test("dailyCapped: not live past its cap, live again the next day", async () => {
+  let day = "2026-11-01";
+  const inner: Llm = { live: true, complete: async () => ({ text: "", chatId: "", model: "", signature: null, source: "near-ai-cloud" }) };
+  const llm = dailyCapped(inner, 2, () => day);
+  for (let i = 0; i < 2; i++) {
+    assert.equal(llm.live, true);
+    await llm.complete("s", "u");
+  }
+  assert.equal(llm.live, false);
+  assert.equal(llm.capped, true);
+  day = "2026-11-02";
+  assert.equal(llm.live, true);
+  assert.equal(llm.capped, false);
+  assert.equal(dailyCapped({ ...inner, live: false }, 0).capped, false, "not live without the cap: not capped");
+});
+
+import { LLM_CAPS, llmToday, quietErrors } from "./swarm.ts";
+import { DecisionLog } from "./shadow.ts";
+
+/** A tender with one solvent firm: what manage() reads. */
+const managedChain: any = {
+  callFunction: async ({ method }: { method: string }) =>
+    ({
+      get_firm: { fills: 0, edge: "0", status: "Solvent", policy: { max_asset_bps: 8000, band_bps: 1000, paused: false }, debts: [] },
+      balance_of: "1000000000",
+      asset_balance_of: "0",
+      get_last_price: "4000000",
+      get_config: { asset_unit: (10n ** 24n).toString(), treasury_floor: "40000000" },
+    })[method],
+};
+const answer = JSON.stringify({ spreadBps: 12, targetAssetShare: 0.3, skewBps: 0, reason: "ok" });
+const countingLlm = () => {
+  const l = { calls: 0, live: true, complete: async () => (l.calls++, { text: answer, chatId: "c", model: "m", signature: null, source: "near-ai-cloud" as const }) };
+  return l;
+};
+const firmOf = (id: number, house: boolean): FirmHandle => ({ id, account: `w${id}`, owner: {} as any, agentTender: {} as any, agentFirm: {} as any, strategy: { name: `F${id}`, author: "t", house, managed: true, params } });
+
+test("manager LLM cap: one count for every swarm, and a visitor share that leaves the house firms theirs", async () => {
+  const llm = countingLlm();
+  const [house, visitor] = [firmOf(0, true), firmOf(1, false)];
+  const near = new Swarm(managedChain, "t", [house, visitor], llm, "", async () => 4, () => {});
+  const eth = new Swarm(managedChain, "t2", [house], llm, "", async () => 4, () => {});
+  Object.assign(llmToday, { day: new Date().toISOString().slice(0, 10), house: LLM_CAPS.house - 1, visitor: LLM_CAPS.visitor - 1 });
+  assert.equal((await near.manage(house)).source, "near-ai-cloud");
+  assert.equal((await eth.manage(house)).source, "rule", "another market's swarm sees the same count");
+  assert.equal((await near.manage(visitor)).source, "near-ai-cloud", "visitors have their own share");
+  assert.equal((await near.manage(visitor)).source, "rule");
+  assert.equal(llm.calls, 2);
+  assert.ok(LLM_CAPS.house > 0 && LLM_CAPS.visitor > 0);
+  llmToday.day = "2000-01-01";
+  assert.equal((await eth.manage(house)).source, "near-ai-cloud", "a new day resets both");
+});
+
+test("swarm.decisions keeps the last 500", async () => {
+  const s = new Swarm(managedChain, "t", [], { live: false } as Llm, "", async () => 4, () => {});
+  const f = { ...firmOf(0, true), strategy: { ...firmOf(0, true).strategy, managed: "rule" as const } };
+  for (let i = 0; i < 510; i++) await s.manage(f);
+  assert.equal(s.decisions.length, 500);
+  assert.equal(s.decisionLog.entries.at(-1)!.seq, 509, "the decision log has them all");
+});
+
+test("mandates: concurrent posts of one text compile once; one compiled under the cap compiles again once it resets", async () => {
+  let calls = 0;
+  let release = () => {};
+  const inner: Llm = {
+    live: true,
+    complete: async () => {
+      calls++;
+      await new Promise<void>((r) => (release = r));
+      return { text: '{"rules": [{"when": {"kind": "regime", "atLeast": "storm"}, "then": {"pause": true}, "note": "storm"}]}', chatId: "c", model: "m", signature: null, source: "near-ai-cloud" };
+    },
+  };
+  const s = new Swarm({} as any, "t", [], inner, "", async () => 4, () => {});
+  s.decisionLog = new DecisionLog();
+  const f = firmOf(3, false);
+  const text = "Pause in a storm.";
+  const posts = Array.from({ length: 5 }, () => s.setMandate(inner, f, text));
+  await new Promise((r) => setTimeout(r, 0));
+  release();
+  const mds = await Promise.all(posts);
+  assert.equal(calls, 1);
+  assert.ok(mds.every((m) => m === mds[0] && m.source === "llm"));
+  assert.equal(s.decisionLog.entries.length, 1, "logged once");
+  assert.equal(await s.setMandate(inner, f, ` ${text} `), mds[0], "the same text: no new compile");
+  // Over the daily cap, the pattern parser compiles it; the next post once the cap resets uses the LLM.
+  let day = "2026-11-01";
+  const capped = dailyCapped(inner, 0, () => day);
+  const f2 = firmOf(4, false);
+  const p1 = await s.setMandate(capped, f2, text);
+  assert.equal(p1.source, "pattern");
+  assert.equal(await s.setMandate(capped, f2, text), p1, "still capped: kept");
+  const tomorrow = dailyCapped(inner, 1, () => day);
+  day = "2026-11-02";
+  const again = s.setMandate(tomorrow, f2, text);
+  await new Promise((r) => setTimeout(r, 0));
+  release();
+  assert.equal((await again).source, "llm");
+  assert.equal(await s.setMandate(tomorrow, f2, text), await again, "compiled with the LLM: kept");
+});
+
+test("quietErrors: the provider's error body goes to the server log, the caller sees LLM unavailable", async () => {
+  const logged: string[] = [];
+  const llm = quietErrors({ live: true, complete: () => Promise.reject(new Error('NEAR AI Cloud 401: {"error":"bad key sk-123"}')) }, (s) => logged.push(s));
+  await assert.rejects(llm.complete("s", "u"), (e: Error) => e.message === "LLM unavailable");
+  assert.match(logged[0], /sk-123/);
+  const md = await compileMandate(llm, "Pause in a storm.");
+  assert.deepEqual([md.source, md.dropped], ["pattern", ["llm: LLM unavailable"]]);
+});

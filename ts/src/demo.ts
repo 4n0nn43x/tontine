@@ -8,7 +8,10 @@ import { createAccount, createFirm, deployContract, wasm } from "./deploy.ts";
 import { loadStrategies } from "./strategy.ts";
 import { makeLlm } from "./llm.ts";
 import { Swarm, bidHash, type FirmHandle } from "./swarm.ts";
-import { ONECLICK_COST_BPS, outAt, replayPrices, toBase } from "./prices.ts";
+import { CLIENT_TOLERANCE_BPS, outAt, replayPrices, toBase } from "./prices.ts";
+import { marketHouse } from "./devnet.ts";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { checkRelay, evmAccount, orderPayload, Payouts, signErc191, submitRelay } from "./relay.ts";
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -32,6 +35,8 @@ const ASSET = `nep141:wnear.${DEFAULT_ACCOUNT_ID}`;
 const NEAR = (n: number) => BigInt(Math.round(n * 1e6)) * 10n ** 18n;
 const fmtNear = (v: bigint | string) => (Number(BigInt(v)) / 1e24).toFixed(4);
 const FLOOR = USDC(40);
+/** Tontine's share of a fill's gain over the client's minimum. */
+const SURPLUS_BPS = 3000;
 // Replayed NEAR price: 2026-10-08 08:10 UTC, 5.347 USD (Binance 5-minute close).
 const AT = 10776;
 
@@ -80,6 +85,7 @@ async function main() {
         liquidation_reveal_secs: 3,
         order_fee_bps: 2,
         no_reveal_slash_bps: 100,
+        surplus_bps: SURPLUS_BPS,
       },
     });
     console.log(`tender=${T}  intents=${I} (mainnet code)  usdc, wnear (mocks, sandbox only)`);
@@ -141,13 +147,13 @@ async function main() {
 
     const swarm = new Swarm(provider, T, firms, makeLlm(), inference.acct.accountId, mid, (s) => console.log(s));
     const fill = (from: Account, side: "Buy" | "Sell", amountIn: bigint) => {
-      // The client's minimum is what NEAR Intents 1Click would give (replayed here: mid less its measured cost).
-      const ref = outAt(side, amountIn, prices[at], ONECLICK_COST_BPS);
+      // The client's minimum is the market reference (replayed here): the mid less the client tolerance.
+      const ref = outAt(side, amountIn, prices[at], CLIENT_TOLERANCE_BPS);
       return deposit(from, side === "Buy" ? "usdc" : "wnear", amountIn, { PostOrder: { side, amount_in: amountIn.toString(), min_out: ref.toString(), reference_out: ref.toString(), commit_secs: 3, reveal_secs: 3 } });
     };
     const orderId = (r: any) => r.events.find((e: any) => e.event === "order_posted")?.data[0].order_id as number;
 
-    section("1. a client buys NEAR: deposit and order in one NEAR Intents transfer, never worse than 1Click");
+    section("1. a client buys NEAR: deposit and order in one NEAR Intents transfer, never worse than the market");
     const p1 = await fill(client.acct, "Buy", USDC(40));
     const o1 = orderId(p1);
     check("order posted, the 40 USDC escrowed by the deposit", o1 !== undefined && (await view(provider, T, "get_order", { order_id: o1 })).status === "Open", `tx ${p1.txHash}`);
@@ -155,21 +161,31 @@ async function main() {
     section("2. sealed bids between the firms, the best fills at the second best, atomically");
     let shill: string | null = null;
     const assetBefore = BigInt(await view(provider, T, "asset_balance_of", { account_id: client.acct.accountId }));
+    const adminAssetBefore = BigInt(await view(provider, T, "asset_balance_of", { account_id: T })); // tender is its own admin here
     const r1 = await swarm.runOrder(o1, async () => {
       const ord = await view(provider, T, "get_order", { order_id: o1 });
       shill = await rejects(call(o1Shell.agentTender, T, "commit_bid", { auction_id: ord.auction, firm_id: o1Shell.id, hash: bidHash(ord.auction, o1Shell.id, 1n, "x") }), "one bid per owner");
     });
     check("anti-shill: a second firm of the same owner cannot bid", shill !== null && !String(shill).startsWith("unexpected"), shill ?? "");
     const revealed = r1.auction.bids.map((b: any) => b.revealed).filter(Boolean).map(BigInt).sort((a: bigint, b: bigint) => (a < b ? 1 : -1));
+    // The firm delivers the auction's price; the client receives the stored `out`, that less the surplus share.
+    const delivered1 = BigInt(r1.auction.price);
     const out1 = BigInt(r1.order.out);
-    check("the best quote wins and delivers the second best", revealed.length >= 2 && out1 === revealed[1], `${fmtNear(out1)} NEAR, bids ${revealed.map(fmtNear).join(" > ")}`);
+    check("the best quote wins and delivers the second best", revealed.length >= 2 && delivered1 === revealed[1], `${fmtNear(delivered1)} NEAR, bids ${revealed.map(fmtNear).join(" > ")}`);
     const ref1 = BigInt(r1.order.reference_out);
     check(
-      "the client got at least what NEAR Intents 1Click would give",
+      "the client got at least the market reference",
       out1 >= ref1,
-      `+${((Number(out1 - ref1) / Number(ref1)) * 1e4).toFixed(1)} bp over the 1Click reference ${fmtNear(ref1)} NEAR`,
+      `+${((Number(out1 - ref1) / Number(ref1)) * 1e4).toFixed(1)} bp over the market reference ${fmtNear(ref1)} NEAR`,
     );
     const filled1 = r1.auction.events.find((e: any) => e.event === "order_filled")?.data[0];
+    const surplus1 = ((delivered1 - BigInt(r1.order.min_out)) * BigInt(SURPLUS_BPS)) / 10_000n;
+    const adminGain = BigInt(await view(provider, T, "asset_balance_of", { account_id: T })) - adminAssetBefore;
+    check(
+      "Tontine took its 30% share of the gain over the client's minimum, in NEAR",
+      surplus1 > 0n && BigInt(filled1?.surplus_fee ?? -1) === surplus1 && adminGain === surplus1 && out1 === delivered1 - surplus1,
+      `${fmtNear(surplus1)} NEAR to Tontine, the client keeps ${fmtNear(out1)} NEAR`,
+    );
     check(
       "settlement is atomic: the client's NEAR and the firm's USDC move in the settle transaction",
       BigInt(await view(provider, T, "asset_balance_of", { account_id: client.acct.accountId })) - assetBefore === out1 && filled1?.order_id === o1,
@@ -194,7 +210,7 @@ async function main() {
 
     section("4. a client sells NEAR for USDC");
     const r4 = await swarm.runOrder(orderId(await fill(client.acct, "Sell", NEAR(2))));
-    check("sell order filled at least at the 1Click reference", r4.order.status === "Filled" && BigInt(r4.order.out) >= BigInt(r4.order.reference_out), `${fmt(r4.order.out)} USDC for 2 NEAR`);
+    check("sell order filled at least at the market reference",r4.order.status === "Filled" && BigInt(r4.order.out) >= BigInt(r4.order.reference_out), `${fmt(r4.order.out)} USDC for 2 NEAR`);
 
     section("5. Atlas AI's manager retunes its quotes from its results");
     const atlas = firms.find((f) => f.strategy.managed === true)!;
@@ -315,6 +331,123 @@ async function main() {
       "tender created its account with the firm contract and two function call keys only",
       openState.owner === client.acct.accountId && openPerms.length === 2 && openPerms.every((p: any) => p !== "FullAccess" && p.FunctionCall),
       `${openPerms.length} function call keys`,
+    );
+
+    section("11. a second market: ETH/USDC on its own tender, same contract, same rules");
+    // One tender per pair: the asset is wETH (18 decimals) inside intents.near, prices in USDC per ETH.
+    const ETH_UNIT = 10n ** 18n;
+    const ethMid = replayPrices("ETH").prices[at];
+    const [weth, tenderEth, ...ethOwners] = await Promise.all(["weth", "tender-eth", "oeth1", "oeth2"].map((n) => mk(n, n === "tender-eth" ? "60" : "20")));
+    const TE = tenderEth.acct.accountId;
+    const WETH = `nep141:${weth.acct.accountId}`;
+    await deployContract(weth.acct, wasm("mock_ft"), "new", {});
+    await deployContract(tenderEth.acct, wasm("tender"), "new", {
+      config: {
+        admin: TE,
+        payment: { Intents: { contract: I, token_id: STABLE } },
+        asset: { Intents: { contract: I, token_id: WETH } },
+        asset_unit: ETH_UNIT.toString(),
+        initial_price: toBase(ethMid).toString(),
+        dividend_bps: 3000,
+        liquidation_fee_bps: 200,
+        min_bond: USDC(5).toString(),
+        slash: USDC(1).toString(),
+        treasury_floor: FLOOR.toString(),
+        epochs_before_liquidation: 2,
+        epoch_secs: EPOCH_SECS,
+        liquidation_commit_secs: 3,
+        liquidation_reveal_secs: 3,
+        order_fee_bps: 2,
+        no_reveal_slash_bps: 100,
+        surplus_bps: SURPLUS_BPS,
+      },
+    });
+    const toTender = async (from: Account, ft: string, tender: string, amount: bigint, msg: object | "" = "") => {
+      await call(from, ft, "ft_transfer_call", { receiver_id: I, amount: amount.toString(), msg: "" }, 1n, TGAS(100));
+      return call(from, I, "mt_transfer_call", { receiver_id: tender, token_id: `nep141:${ft}`, amount: amount.toString(), approval: null, memo: null, msg: msg === "" ? "" : JSON.stringify(msg) }, 1n, TGAS(250));
+    };
+    await call(weth.acct, weth.acct.accountId, "mint", { account_id: I, amount: "0" });
+    const ethHouse = marketHouse("ETH").slice(0, 2);
+    const ethFirms: FirmHandle[] = [];
+    for (let i = 0; i < ethHouse.length; i++) {
+      ethFirms.push(await createFirm({ tenderAcct: tenderEth.acct, provider, n: i + 1, owner: ethOwners[i].acct, strategy: ethHouse[i], budget: 0n, maxPerCall: 0n, budgetEpochSecs: 3600 }));
+    }
+    const ethWorth = (usd: number) => (BigInt(Math.round((usd / ethMid) * 1e6)) * ETH_UNIT) / 1_000_000n;
+    await Promise.all([client.acct, ...ethOwners.map((o) => o.acct)].map((a) => call(a, TE, "storage_deposit", {}, nearToYocto("0.5"))));
+    await Promise.all(ethFirms.map((f) => call(f.owner, TE, "storage_deposit", { account_id: f.account }, nearToYocto("0.5"))));
+    for (const f of ethFirms) {
+      await mint("usdc", f.owner.accountId, USDC(400));
+      await call(weth.acct, weth.acct.accountId, "mint", { account_id: f.owner.accountId, amount: ethWorth(200).toString() });
+      await toTender(f.owner, usdc.acct.accountId, TE, USDC(10));
+      await call(f.owner, TE, "deposit_bond", { amount: USDC(10).toString() }, 1n);
+      await toTender(f.owner, usdc.acct.accountId, TE, USDC(300), { Credit: f.account });
+      await toTender(f.owner, weth.acct.accountId, TE, ethWorth(150), { Credit: f.account });
+    }
+    const ethSwarm = new Swarm(provider, TE, ethFirms, makeLlm(), inference.acct.accountId, async () => ethMid, (s) => console.log(s), { symbol: "ETH", unit: ETH_UNIT });
+    const ethRef = outAt("Buy", USDC(40), ethMid, CLIENT_TOLERANCE_BPS, ETH_UNIT);
+    const pe = await toTender(client.acct, usdc.acct.accountId, TE, USDC(40), { PostOrder: { side: "Buy", amount_in: USDC(40).toString(), min_out: ethRef.toString(), reference_out: ethRef.toString(), commit_secs: 3, reveal_secs: 3 } });
+    const re = await ethSwarm.runOrder(orderId(pe));
+    const ethGot = BigInt(await view(provider, TE, "asset_balance_of", { account_id: client.acct.accountId }));
+    check(
+      "an ETH/USDC order filled on the ETH tender, at least the market reference",
+      re.order.status === "Filled" && ethGot === BigInt(re.order.out) && ethGot >= ethRef,
+      `${(Number(ethGot) / 1e18).toFixed(6)} ETH for 40 USDC at ${ethMid} USD, ${ethFirms.map((f) => f.strategy.name).join(" and ")} bid, tx ${re.auction.txHash}`,
+    );
+
+    section("12. a Base (EVM) user trades without a NEAR account: an ERC-191 intent, a relay, a payout");
+    // NEAR Intents' implicit account of a secp256k1 key is its lower-case 0x address; it signs with personal_sign.
+    const sk = secp256k1.utils.randomSecretKey();
+    const evm = evmAccount(sk);
+    // On mainnet the USDC arrives from Base through NEAR Intents (1Click or the bridge); here a deposit with msg = the 0x account.
+    await mint("usdc", usdc.acct.accountId, USDC(40));
+    await call(usdc.acct, usdc.acct.accountId, "ft_transfer_call", { receiver_id: I, amount: USDC(40).toString(), msg: evm }, 1n, TGAS(100));
+    check("a fresh EVM key's 0x account holds USDC in NEAR Intents (simulated Base deposit)", (await mtBal(evm)) === USDC(40), `${evm}, 40 USDC`);
+    const evmRef = outAt("Buy", USDC(40), prices[at], CLIENT_TOLERANCE_BPS);
+    const payload = orderPayload({
+      signer: evm,
+      intents: I,
+      tender: T,
+      token: STABLE,
+      amount: USDC(40),
+      order: { side: "Buy", amount_in: USDC(40).toString(), min_out: evmRef.toString(), reference_out: evmRef.toString(), commit_secs: 3, reveal_secs: 3 },
+      salt: await view(provider, I, "current_salt"),
+      deadlineMs: Date.now() + 5 * 60_000,
+    });
+    const signed = signErc191(payload, sk);
+    const targets = { intents: I, tenders: { [T]: [STABLE, ASSET] as [string, string] } };
+    const relayer = (await mk("relayer", "20")).acct;
+    const relayed = await submitRelay(relayer, provider, I, signed, checkRelay(signed, targets));
+    const evmOrder = await view(provider, T, "get_order", { order_id: relayed.orderId });
+    check(
+      "the relayer paid the gas and the 0x account's storage; tender saw the 0x account as the client",
+      relayed.storagePaid && evmOrder.client === evm && evmOrder.status === "Open" && (await mtBal(evm)) === 0n,
+      `execute_intents tx ${relayed.txHash}, order #${relayed.orderId}`,
+    );
+    const misdirected = JSON.parse(payload);
+    misdirected.intents[0].receiver_id = client.acct.accountId;
+    let misrouted = "";
+    try {
+      checkRelay(signErc191(JSON.stringify(misdirected), sk), targets);
+    } catch (e) {
+      misrouted = (e as Error).message;
+    }
+    const replay = await rejects(submitRelay(relayer, provider, I, signed, checkRelay(signed, targets)), "nonce");
+    check("the relay refuses a transfer to an account that is not a tender, and intents.near a replayed intent", misrouted.includes("receiver_id") && replay !== null && !replay.startsWith("unexpected"), `${misrouted}; ${replay}`);
+    const re12 = await swarm.runOrder(relayed.orderId);
+    check("the 0x account's order filled, at least the market reference", re12.order.status === "Filled" && BigInt(re12.order.out) >= evmRef, `${fmtNear(re12.order.out)} NEAR for 40 USDC`);
+    // The server's keeper does this on every order_filled and order_refunded event (ts/src/server.ts).
+    const keeper = new Payouts(
+      (t, c) => call(relayer, t, "withdraw_to_intents", { account_id: c }, 0n, TGAS(100)),
+      async (t, c) => (await view(provider, t, "firm_id_of", { account_id: c })) !== null,
+    );
+    keeper.push(T, evm);
+    keeper.push(T, firms[0].account); // a firm account: skipped
+    for (let i = 0; i < 100 && keeper.pending; i++) await sleep(100);
+    const evmNear = BigInt(await view(provider, I, "mt_balance_of", { account_id: evm, token_id: ASSET }));
+    check(
+      "the keeper paid the fill back to the 0x account in NEAR Intents (withdraw_to_intents)",
+      evmNear === BigInt(re12.order.out) && BigInt(await view(provider, T, "asset_balance_of", { account_id: evm })) === 0n,
+      `${fmtNear(evmNear)} wNEAR on ${evm} in intents.near, 0 left in tender`,
     );
 
     section("P&L per firm (on-chain)");

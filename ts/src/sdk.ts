@@ -74,7 +74,7 @@ export async function runFirm(o: RunOptions): Promise<never> {
     agentFirm: account(o.account, provider, o.keys.firm as KeyPairString),
     strategy,
   };
-  // The reference mid: a NEAR Intents 1Click quote (live), cached 30 s.
+  // The reference mid: the market mid (median of Binance, OKX, Coinbase), cached 30 s.
   let mid = { v: (await reference("Buy", 100_000_000n)).mid, at: Date.now() };
   const midNow = async () => {
     if (Date.now() - mid.at > 30_000) mid = { v: (await reference("Buy", 100_000_000n)).mid, at: Date.now() };

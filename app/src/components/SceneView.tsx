@@ -9,9 +9,11 @@ export type SceneApi = {
   setPaused(paused: boolean): void;
   dispose(): void;
   /** Live city only (scene/city.js). */
-  setFirms(list: { id: number; name: string; nav: number; fills: number; status: string; takeovers: number }[], market?: { price?: number }): void;
-  pick(clientX: number, clientY: number): { id: number; name: string } | null;
+  setFirms(list: { id: number | string; name: string; nav: number; fills: number; status: string; takeovers: number }[], market?: { price?: number }): void;
+  pick(clientX: number, clientY: number): { id: number | string; name: string } | null;
   setParallax(v: number): void;
+  /** Live city only: the market regime as weather. */
+  setWeather(level: "calm" | "alert" | "storm"): void;
 };
 
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;

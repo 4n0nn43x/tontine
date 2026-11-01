@@ -72,7 +72,7 @@ const PANELS = {
         ["Undercut & Co", "7.4778"],
         ["Cost Plus Ltd", "7.4763"],
         ["Atlas AI", "7.4726"],
-        ["1Click minimum", "7.4621"],
+        ["Market minimum", "7.4621"],
       ].map(([n, v], i) => (
         <g key={n} transform={`translate(24 ${34 + i * 52})`}>
           <rect width="352" height="40" rx="9" className="node" />
@@ -95,7 +95,7 @@ const PANELS = {
         ["7.4778", 235, "wins"],
         ["7.4763", 219, "delivered"],
         ["7.4726", 179, ""],
-        ["7.4621", 63, "1Click"],
+        ["7.4621", 63, "Market"],
       ].map(([v, w, tag], i) => (
         <g key={v as string} transform={`translate(28 ${40 + i * 48})`}>
           <rect width={w as number} height="26" rx="6" className={i === 0 ? "bar win" : i === 1 ? "bar second" : "bar"} />
@@ -111,7 +111,7 @@ const PANELS = {
       ))}
       <path d="M247 30 V236" className="wire dash" />
       <text x="140" y="250" className="t-dim" style={mono}>
-        2nd best · +19.0 bp vs 1Click
+        2nd best · +19.0 bp vs market
       </text>
     </svg>
   ),
@@ -147,7 +147,7 @@ const CARDS: Card[] = [
         <em>Escrow</em> on chain
       </>
     ),
-    text: "A client posts a NEAR/USDC order through NEAR Intents. What it pays sits in the tender contract, with a minimum set at what NEAR Intents 1Click would give.",
+    text: "A client posts a NEAR/USDC order through NEAR Intents. What it pays sits in the tender contract, with a minimum set just under the market price (the median of Binance, OKX and Coinbase).",
     points: ["Two transactions, both on the mainnet Intents path.", "Refunded in full if no quote beats the minimum.", "No account with the firms, no invoice."],
     panel: PANELS.escrow,
     wide: "left",

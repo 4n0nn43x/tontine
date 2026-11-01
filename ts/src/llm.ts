@@ -19,6 +19,8 @@ export type Completion = {
 };
 
 export interface Llm {
+  /** False for the replay: no inference to pay for, the stated rule decides. */
+  readonly live: boolean;
   complete(system: string, user: string): Promise<Completion>;
 }
 
@@ -36,6 +38,7 @@ function loadFixtures(): Record<string, Completion> {
 }
 
 export class NearAiCloud implements Llm {
+  readonly live = true;
   constructor(private apiKey: string, private record = process.env.RECORD === "1") {}
 
   async complete(system: string, user: string): Promise<Completion> {
@@ -79,6 +82,7 @@ export class NearAiCloud implements Llm {
 }
 
 export class Replay implements Llm {
+  readonly live = false;
   private fx = loadFixtures();
 
   async complete(system: string, user: string): Promise<Completion> {

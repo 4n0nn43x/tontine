@@ -1,0 +1,2533 @@
+{
+  "method": "Atlas AI under each manager arm, every other firm unchanged (rule firms on their rule). Same seed and window: same orders, so arms are paired. Per run: P&L against holding the starting inventory at the last mid (dividends count), fills, edge, largest fall of that P&L (hourly samples), win rate = fills / auctions bid in. Per window: mean over seeds. Mean over windows with a percentile bootstrap 90% interval (2000 resamples of windows, seed 1). pnlVsFixed: the paired difference with the fixed arm. The llm arm pays no inference here (500 USDC base units a decision in the swarm).",
+  "firm": "Atlas AI",
+  "days": 7,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "clients": 20,
+  "extraFirms": 6,
+  "ordersPerHour": 12,
+  "arms": [
+    "fixed",
+    "rule",
+    "bandit"
+  ],
+  "skipped": [
+    "llm: no NEARAI_API_KEY or ANTHROPIC_API_KEY (or REPLAY=1)"
+  ],
+  "windows": [
+    {
+      "offset": 1152,
+      "from": "2026-07-24",
+      "days": 7,
+      "nearStart": 1.811,
+      "nearEnd": 1.664
+    },
+    {
+      "offset": 3168,
+      "from": "2026-07-31",
+      "days": 7,
+      "nearStart": 1.665,
+      "nearEnd": 1.593
+    },
+    {
+      "offset": 5184,
+      "from": "2026-08-07",
+      "days": 7,
+      "nearStart": 1.593,
+      "nearEnd": 1.619
+    },
+    {
+      "offset": 7200,
+      "from": "2026-08-14",
+      "days": 7,
+      "nearStart": 1.62,
+      "nearEnd": 1.974
+    },
+    {
+      "offset": 9216,
+      "from": "2026-08-21",
+      "days": 7,
+      "nearStart": 1.975,
+      "nearEnd": 1.808
+    },
+    {
+      "offset": 11232,
+      "from": "2026-08-28",
+      "days": 7,
+      "nearStart": 1.813,
+      "nearEnd": 2.114
+    },
+    {
+      "offset": 13248,
+      "from": "2026-09-04",
+      "days": 7,
+      "nearStart": 2.118,
+      "nearEnd": 2.42
+    },
+    {
+      "offset": 15264,
+      "from": "2026-09-11",
+      "days": 7,
+      "nearStart": 2.433,
+      "nearEnd": 3.719
+    },
+    {
+      "offset": 17280,
+      "from": "2026-09-18",
+      "days": 7,
+      "nearStart": 3.694,
+      "nearEnd": 4.985
+    },
+    {
+      "offset": 19296,
+      "from": "2026-09-25",
+      "days": 7,
+      "nearStart": 4.973,
+      "nearEnd": 4.651
+    },
+    {
+      "offset": 21312,
+      "from": "2026-10-02",
+      "days": 7,
+      "nearStart": 4.64,
+      "nearEnd": 4.8
+    },
+    {
+      "offset": 23328,
+      "from": "2026-10-09",
+      "days": 7,
+      "nearStart": 4.813,
+      "nearEnd": 5.03
+    },
+    {
+      "offset": 25344,
+      "from": "2026-10-16",
+      "days": 7,
+      "nearStart": 5.037,
+      "nearEnd": 4.778
+    },
+    {
+      "offset": 27360,
+      "from": "2026-10-23",
+      "days": 7,
+      "nearStart": 4.784,
+      "nearEnd": 4.313
+    }
+  ],
+  "summary": {
+    "fixed": {
+      "pnl": {
+        "mean": 12.0837473,
+        "lo": 9.625311085714285,
+        "hi": 14.530186199999997
+      },
+      "fills": {
+        "mean": 210.59999999999997,
+        "lo": 199.0142857142857,
+        "hi": 222.7
+      },
+      "edge": {
+        "mean": 14.787809871428573,
+        "lo": 11.580883614285716,
+        "hi": 18.247351057142858
+      },
+      "maxDrawdown": {
+        "mean": 9.859652214285715,
+        "lo": 6.527803185714286,
+        "hi": 13.652489757142858
+      },
+      "winRate": {
+        "mean": 0.12621396565872794,
+        "lo": 0.12036039287786056,
+        "hi": 0.1326448424918025
+      },
+      "pnlVsFixed": {
+        "mean": 0,
+        "lo": 0,
+        "hi": 0
+      }
+    },
+    "rule": {
+      "pnl": {
+        "mean": 17.815683485714285,
+        "lo": 15.157295685714288,
+        "hi": 20.69373104285714
+      },
+      "fills": {
+        "mean": 467.1142857142857,
+        "lo": 458.3428571428571,
+        "hi": 476.1142857142857
+      },
+      "edge": {
+        "mean": 29.44371005714286,
+        "lo": 24.49737115714286,
+        "hi": 34.49237637142857
+      },
+      "maxDrawdown": {
+        "mean": 8.927373714285713,
+        "lo": 6.151150899999999,
+        "hi": 11.957930128571428
+      },
+      "winRate": {
+        "mean": 0.2770363769358527,
+        "lo": 0.2661399418770695,
+        "hi": 0.28790580989481235
+      },
+      "pnlVsFixed": {
+        "mean": 5.731936185714288,
+        "lo": 4.0962235142857155,
+        "hi": 7.6374653142857145
+      }
+    },
+    "bandit": {
+      "pnl": {
+        "mean": 13.788549957142854,
+        "lo": 10.515618742857141,
+        "hi": 17.106096214285714
+      },
+      "fills": {
+        "mean": 421.1142857142857,
+        "lo": 406.7571428571428,
+        "hi": 434.3142857142857
+      },
+      "edge": {
+        "mean": 22.73657175714286,
+        "lo": 19.5134715,
+        "hi": 25.769831428571432
+      },
+      "maxDrawdown": {
+        "mean": 9.962509157142858,
+        "lo": 6.6104571,
+        "hi": 13.621632542857144
+      },
+      "winRate": {
+        "mean": 0.2715104710492829,
+        "lo": 0.26496812795250235,
+        "hi": 0.2784309471506508
+      },
+      "pnlVsFixed": {
+        "mean": 1.7048026571428576,
+        "lo": -0.9475030857142848,
+        "hi": 3.906767071428572
+      }
+    }
+  },
+  "runs": [
+    {
+      "window": 0,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 4.083618,
+      "fills": 175,
+      "edge": 10.777569,
+      "maxDrawdown": 6.169063,
+      "winRate": 0.1,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 16.518592,
+      "fills": 545,
+      "edge": 20.651626,
+      "maxDrawdown": 2.961178999999998,
+      "winRate": 0.3174140943506115,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 11.366176,
+      "fills": 358,
+      "edge": 9.117016,
+      "maxDrawdown": 2.4533999999999994,
+      "winRate": 0.2346002621231979,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 0.610452,
+      "fills": 96,
+      "edge": 2.630771,
+      "maxDrawdown": 3.998544,
+      "winRate": 0.05539526832083093,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 11.06721,
+      "fills": 448,
+      "edge": 13.031858,
+      "maxDrawdown": 3.0652470000000003,
+      "winRate": 0.2618351841028638,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 4.411672,
+      "fills": 361,
+      "edge": 10.430307,
+      "maxDrawdown": 2.7971459999999997,
+      "winRate": 0.2339598185353208,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 6.336695,
+      "fills": 92,
+      "edge": 3.593618,
+      "maxDrawdown": 1.753294,
+      "winRate": 0.0620782726045884,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 16.593731,
+      "fills": 526,
+      "edge": 16.318462,
+      "maxDrawdown": 3.3267930000000003,
+      "winRate": 0.3384813384813385,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 6.305278,
+      "fills": 304,
+      "edge": 6.622317,
+      "maxDrawdown": 3.3136690000000004,
+      "winRate": 0.21933621933621933,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 2.950594,
+      "fills": 100,
+      "edge": 3.70368,
+      "maxDrawdown": 3.093384,
+      "winRate": 0.06402048655569782,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 3.545018,
+      "fills": 395,
+      "edge": 10.475471,
+      "maxDrawdown": 1.6840069999999998,
+      "winRate": 0.25191326530612246,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 8.180672,
+      "fills": 374,
+      "edge": 12.714359,
+      "maxDrawdown": 3.160272,
+      "winRate": 0.2613556953179595,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 18.573055,
+      "fills": 395,
+      "edge": 15.211797,
+      "maxDrawdown": 1.1757500000000007,
+      "winRate": 0.28895391367959034,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 25.418448,
+      "fills": 434,
+      "edge": 22.508911,
+      "maxDrawdown": 1.2110030000000016,
+      "winRate": 0.3248502994011976,
+      "llmDecisions": 0
+    },
+    {
+      "window": 0,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 20.150576,
+      "fills": 506,
+      "edge": 22.910866,
+      "maxDrawdown": 1.5997910000000006,
+      "winRate": 0.39717425431711145,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 7.998253,
+      "fills": 211,
+      "edge": 9.598692,
+      "maxDrawdown": 2.3290170000000003,
+      "winRate": 0.12168396770472895,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 12.953552,
+      "fills": 514,
+      "edge": 22.127009,
+      "maxDrawdown": 2.3239219999999996,
+      "winRate": 0.31208257437765635,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 9.253198,
+      "fills": 297,
+      "edge": 9.807977,
+      "maxDrawdown": 1.1780530000000002,
+      "winRate": 0.1981320880587058,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 3.783742,
+      "fills": 90,
+      "edge": 1.897902,
+      "maxDrawdown": 1.3437480000000002,
+      "winRate": 0.05235602094240838,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 10.855401,
+      "fills": 480,
+      "edge": 19.180543,
+      "maxDrawdown": 1.3717309999999996,
+      "winRate": 0.27697634160415463,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 10.868414,
+      "fills": 425,
+      "edge": 20.639367,
+      "maxDrawdown": 1.8127589999999998,
+      "winRate": 0.27437056165267915,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 4.041214,
+      "fills": 88,
+      "edge": 0.944384,
+      "maxDrawdown": 1.2103499999999996,
+      "winRate": 0.05644644002565747,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 13.452313,
+      "fills": 449,
+      "edge": 15.655621,
+      "maxDrawdown": 0.6877289999999991,
+      "winRate": 0.293848167539267,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 9.084987,
+      "fills": 368,
+      "edge": 11.786507,
+      "maxDrawdown": 1.578125,
+      "winRate": 0.26117814052519517,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 6.938016,
+      "fills": 105,
+      "edge": 1.46891,
+      "maxDrawdown": 1.0072110000000007,
+      "winRate": 0.06675143038779402,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 15.365412,
+      "fills": 485,
+      "edge": 17.322823,
+      "maxDrawdown": 0.9610659999999989,
+      "winRate": 0.3161668839634941,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 7.386618,
+      "fills": 341,
+      "edge": 8.647633,
+      "maxDrawdown": 1.8964700000000008,
+      "winRate": 0.24444444444444444,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 22.046881,
+      "fills": 452,
+      "edge": 23.3233,
+      "maxDrawdown": 1.084420999999999,
+      "winRate": 0.335063009636768,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 18.938733,
+      "fills": 467,
+      "edge": 23.718271,
+      "maxDrawdown": 1.072966000000001,
+      "winRate": 0.3513920240782543,
+      "llmDecisions": 0
+    },
+    {
+      "window": 1,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 13.251966,
+      "fills": 447,
+      "edge": 17.746202,
+      "maxDrawdown": 0.9900269999999995,
+      "winRate": 0.34096109839816935,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 7.131125,
+      "fills": 202,
+      "edge": 9.316506,
+      "maxDrawdown": 2.839613,
+      "winRate": 0.12205438066465257,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 12.182931,
+      "fills": 504,
+      "edge": 17.922679,
+      "maxDrawdown": 3.431635,
+      "winRate": 0.2931937172774869,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 10.36402,
+      "fills": 363,
+      "edge": 17.019653,
+      "maxDrawdown": 2.1462809999999983,
+      "winRate": 0.23449612403100775,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 6.21324,
+      "fills": 98,
+      "edge": 2.938236,
+      "maxDrawdown": 2.5738179999999997,
+      "winRate": 0.058682634730538925,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 17.925202,
+      "fills": 537,
+      "edge": 19.732291,
+      "maxDrawdown": 2.366061,
+      "winRate": 0.31625441696113077,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 10.834137,
+      "fills": 321,
+      "edge": 7.56259,
+      "maxDrawdown": 1.9913880000000006,
+      "winRate": 0.2030360531309298,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 5.267102,
+      "fills": 109,
+      "edge": 2.797478,
+      "maxDrawdown": 1.7178149999999999,
+      "winRate": 0.07180500658761528,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 12.774017,
+      "fills": 461,
+      "edge": 15.576799,
+      "maxDrawdown": 1.372083,
+      "winRate": 0.31085637221847606,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 12.10516,
+      "fills": 315,
+      "edge": 12.673378,
+      "maxDrawdown": 1.9989639999999995,
+      "winRate": 0.21905424200278165,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 4.655582,
+      "fills": 91,
+      "edge": 0.572898,
+      "maxDrawdown": 1.142989,
+      "winRate": 0.058823529411764705,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 12.414539,
+      "fills": 494,
+      "edge": 15.527193,
+      "maxDrawdown": 1.348343999999999,
+      "winRate": 0.31974110032362457,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 9.091958,
+      "fills": 366,
+      "edge": 11.594771,
+      "maxDrawdown": 1.76648,
+      "winRate": 0.251892635925671,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 17.318066,
+      "fills": 403,
+      "edge": 14.426232,
+      "maxDrawdown": 1.693448,
+      "winRate": 0.3005219985085757,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 16.770727,
+      "fills": 389,
+      "edge": 14.77099,
+      "maxDrawdown": 1.825087,
+      "winRate": 0.2990007686395081,
+      "llmDecisions": 0
+    },
+    {
+      "window": 2,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 15.809545,
+      "fills": 443,
+      "edge": 20.791953,
+      "maxDrawdown": 1.393484,
+      "winRate": 0.34367726920093095,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 16.419695,
+      "fills": 120,
+      "edge": 5.679751,
+      "maxDrawdown": 1.4118749999999998,
+      "winRate": 0.06900517538815411,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 24.206874,
+      "fills": 523,
+      "edge": 21.853287,
+      "maxDrawdown": 2.0695999999999994,
+      "winRate": 0.3118664281454979,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 22.418996,
+      "fills": 411,
+      "edge": 13.2502,
+      "maxDrawdown": 2.4830059999999996,
+      "winRate": 0.26329276105060856,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 9.605839,
+      "fills": 83,
+      "edge": 3.243657,
+      "maxDrawdown": 1.832649,
+      "winRate": 0.048032407407407406,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 18.315869,
+      "fills": 552,
+      "edge": 18.832182,
+      "maxDrawdown": 2.37054,
+      "winRate": 0.3187066974595843,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 24.084626,
+      "fills": 388,
+      "edge": 21.241506,
+      "maxDrawdown": 1.2832349999999977,
+      "winRate": 0.24744897959183673,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 4.790126,
+      "fills": 86,
+      "edge": 1.335504,
+      "maxDrawdown": 2.016578,
+      "winRate": 0.05669083717864205,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": -0.548691,
+      "fills": 528,
+      "edge": 15.829288,
+      "maxDrawdown": 7.099482,
+      "winRate": 0.35294117647058826,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 7.842096,
+      "fills": 337,
+      "edge": 10.681317,
+      "maxDrawdown": 1.7268299999999988,
+      "winRate": 0.24054246966452533,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 4.938574,
+      "fills": 114,
+      "edge": 6.033393,
+      "maxDrawdown": 5.105454,
+      "winRate": 0.07312379730596537,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 4.055585,
+      "fills": 423,
+      "edge": 15.125984,
+      "maxDrawdown": 4.420854,
+      "winRate": 0.27610966057441255,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 10.566469,
+      "fills": 322,
+      "edge": 7.060904,
+      "maxDrawdown": 1.684875,
+      "winRate": 0.23115577889447236,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 15.098777,
+      "fills": 484,
+      "edge": 19.306971,
+      "maxDrawdown": 4.521777000000002,
+      "winRate": 0.3593170007423905,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 15.57638,
+      "fills": 442,
+      "edge": 23.776917,
+      "maxDrawdown": 3.7418020000000016,
+      "winRate": 0.3271650629163583,
+      "llmDecisions": 0
+    },
+    {
+      "window": 3,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 21.652798,
+      "fills": 520,
+      "edge": 21.813081,
+      "maxDrawdown": 1.5235559999999992,
+      "winRate": 0.39938556067588327,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 10.776307,
+      "fills": 174,
+      "edge": 6.499127,
+      "maxDrawdown": 5.480753,
+      "winRate": 0.0981941309255079,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 15.622115,
+      "fills": 462,
+      "edge": 26.333738,
+      "maxDrawdown": 5.896218000000001,
+      "winRate": 0.2678260869565217,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 7.078652,
+      "fills": 394,
+      "edge": 19.048748,
+      "maxDrawdown": 4.872624,
+      "winRate": 0.24686716791979949,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": -0.414556,
+      "fills": 101,
+      "edge": 5.7424,
+      "maxDrawdown": 8.533612,
+      "winRate": 0.058584686774941996,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 8.48018,
+      "fills": 476,
+      "edge": 22.231876,
+      "maxDrawdown": 5.227762,
+      "winRate": 0.27045454545454545,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 10.927811,
+      "fills": 456,
+      "edge": 23.718252,
+      "maxDrawdown": 2.4347320000000003,
+      "winRate": 0.29212043561819345,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 12.048663,
+      "fills": 114,
+      "edge": 0.565649,
+      "maxDrawdown": 2.6380620000000015,
+      "winRate": 0.07298335467349552,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 12.938047,
+      "fills": 466,
+      "edge": 22.105115,
+      "maxDrawdown": 6.769549,
+      "winRate": 0.2977635782747604,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 9.788889,
+      "fills": 346,
+      "edge": 12.733619,
+      "maxDrawdown": 8.197617999999999,
+      "winRate": 0.23878536922015184,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 11.241143,
+      "fills": 126,
+      "edge": 8.821708,
+      "maxDrawdown": 3.9604820000000003,
+      "winRate": 0.0782608695652174,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 6.483712,
+      "fills": 360,
+      "edge": 1.592612,
+      "maxDrawdown": 5.186748000000001,
+      "winRate": 0.22929936305732485,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 19.017419,
+      "fills": 379,
+      "edge": 23.627469,
+      "maxDrawdown": 1.9639380000000024,
+      "winRate": 0.25852660300136426,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 15.379274,
+      "fills": 463,
+      "edge": 26.346502,
+      "maxDrawdown": 4.767631,
+      "winRate": 0.33648255813953487,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 28.16604,
+      "fills": 452,
+      "edge": 29.308935,
+      "maxDrawdown": 2.217596,
+      "winRate": 0.3390847711927982,
+      "llmDecisions": 0
+    },
+    {
+      "window": 4,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 22.874556,
+      "fills": 565,
+      "edge": 31.431471,
+      "maxDrawdown": 4.024034,
+      "winRate": 0.4299847792998478,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 21.959672,
+      "fills": 213,
+      "edge": 23.188784,
+      "maxDrawdown": 3.4755429999999996,
+      "winRate": 0.12199312714776632,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 18.922982,
+      "fills": 450,
+      "edge": 23.251542,
+      "maxDrawdown": 2.8284499999999997,
+      "winRate": 0.25891829689298046,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 21.483734,
+      "fills": 396,
+      "edge": 22.938868,
+      "maxDrawdown": 3.266725000000001,
+      "winRate": 0.2465753424657534,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 6.329053,
+      "fills": 148,
+      "edge": 5.543347,
+      "maxDrawdown": 7.5541540000000005,
+      "winRate": 0.08428246013667426,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 11.223275,
+      "fills": 538,
+      "edge": 31.153103,
+      "maxDrawdown": 6.252505000000001,
+      "winRate": 0.3135198135198135,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 5.357758,
+      "fills": 402,
+      "edge": 15.301697,
+      "maxDrawdown": 3.618155,
+      "winRate": 0.25637755102040816,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 7.619631,
+      "fills": 92,
+      "edge": 3.172897,
+      "maxDrawdown": 2.972193999999999,
+      "winRate": 0.059012187299550996,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 8.124787,
+      "fills": 466,
+      "edge": 30.464777,
+      "maxDrawdown": 5.2585,
+      "winRate": 0.3071852340145023,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 11.087042,
+      "fills": 357,
+      "edge": 12.561026,
+      "maxDrawdown": 5.857174999999998,
+      "winRate": 0.2512315270935961,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 5.210457,
+      "fills": 107,
+      "edge": 4.786225,
+      "maxDrawdown": 2.906808,
+      "winRate": 0.06604938271604938,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 12.885328,
+      "fills": 416,
+      "edge": 19.338741,
+      "maxDrawdown": 4.841813999999999,
+      "winRate": 0.26463104325699743,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 7.222372,
+      "fills": 371,
+      "edge": 18.727933,
+      "maxDrawdown": 2.8324320000000003,
+      "winRate": 0.24882629107981222,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 16.750847,
+      "fills": 496,
+      "edge": 22.753431,
+      "maxDrawdown": 3.037084,
+      "winRate": 0.3522727272727273,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 12.218201,
+      "fills": 432,
+      "edge": 26.102402,
+      "maxDrawdown": 3.593921,
+      "winRate": 0.3253012048192771,
+      "llmDecisions": 0
+    },
+    {
+      "window": 5,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 22.841874,
+      "fills": 550,
+      "edge": 24.097019,
+      "maxDrawdown": 4.492156,
+      "winRate": 0.42340261739799845,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 47.174341,
+      "fills": 396,
+      "edge": 38.501869,
+      "maxDrawdown": 5.656306999999998,
+      "winRate": 0.235854675402025,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 19.668468,
+      "fills": 470,
+      "edge": 24.390277,
+      "maxDrawdown": 4.318262000000001,
+      "winRate": 0.26067665002773155,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 32.415091,
+      "fills": 440,
+      "edge": 14.920517,
+      "maxDrawdown": 4.936168,
+      "winRate": 0.269773145309626,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 15.639617,
+      "fills": 155,
+      "edge": 9.894289,
+      "maxDrawdown": 2.7799300000000002,
+      "winRate": 0.08451472191930207,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 19.30894,
+      "fills": 432,
+      "edge": 21.396277,
+      "maxDrawdown": 4.750282000000002,
+      "winRate": 0.23986674069961134,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 19.85418,
+      "fills": 403,
+      "edge": 23.390542,
+      "maxDrawdown": 4.740549,
+      "winRate": 0.23973825104104698,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 7.947853,
+      "fills": 134,
+      "edge": 4.285152,
+      "maxDrawdown": 7.031921,
+      "winRate": 0.08121212121212121,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 26.908694,
+      "fills": 438,
+      "edge": 45.354139,
+      "maxDrawdown": 4.691834,
+      "winRate": 0.2772151898734177,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 9.248202,
+      "fills": 358,
+      "edge": 21.190019,
+      "maxDrawdown": 9.632688,
+      "winRate": 0.24353741496598638,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 19.476427,
+      "fills": 163,
+      "edge": 8.799594,
+      "maxDrawdown": 3.775468,
+      "winRate": 0.09737156511350059,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 16.930468,
+      "fills": 473,
+      "edge": 17.497307,
+      "maxDrawdown": 6.588513000000001,
+      "winRate": 0.2856280193236715,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 36.071037,
+      "fills": 357,
+      "edge": 23.536645,
+      "maxDrawdown": 5.061146000000001,
+      "winRate": 0.2328767123287671,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 6.430397,
+      "fills": 458,
+      "edge": 21.196003,
+      "maxDrawdown": 11.125043999999999,
+      "winRate": 0.31029810298102983,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 20.625169,
+      "fills": 426,
+      "edge": 28.52567,
+      "maxDrawdown": 5.589947,
+      "winRate": 0.30581478822684854,
+      "llmDecisions": 0
+    },
+    {
+      "window": 6,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 31.843377,
+      "fills": 671,
+      "edge": 41.510443,
+      "maxDrawdown": 5.645514,
+      "winRate": 0.48871085214857973,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 14.321552,
+      "fills": 202,
+      "edge": 18.893223,
+      "maxDrawdown": 14.168761,
+      "winRate": 0.10972297664312873,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 15.432504,
+      "fills": 408,
+      "edge": 10.220166,
+      "maxDrawdown": 10.615787,
+      "winRate": 0.22641509433962265,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 17.827957,
+      "fills": 453,
+      "edge": 27.676726,
+      "maxDrawdown": 10.039852,
+      "winRate": 0.2737160120845921,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 4.899258,
+      "fills": 183,
+      "edge": 10.437398,
+      "maxDrawdown": 12.652078,
+      "winRate": 0.10263600673022995,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 19.560806,
+      "fills": 570,
+      "edge": 28.590997,
+      "maxDrawdown": 7.011899,
+      "winRate": 0.32571428571428573,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": -2.126079,
+      "fills": 389,
+      "edge": 6.601519,
+      "maxDrawdown": 16.833095999999998,
+      "winRate": 0.23982737361282366,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": -23.010496,
+      "fills": 105,
+      "edge": 7.218957,
+      "maxDrawdown": 26.821436,
+      "winRate": 0.0635593220338983,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": -8.108131,
+      "fills": 367,
+      "edge": 24.553542,
+      "maxDrawdown": 19.937196,
+      "winRate": 0.23213156230234028,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": -18.183983,
+      "fills": 393,
+      "edge": 16.740395,
+      "maxDrawdown": 21.599113999999997,
+      "winRate": 0.2651821862348178,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 8.547618,
+      "fills": 121,
+      "edge": 3.609532,
+      "maxDrawdown": 15.679089999999999,
+      "winRate": 0.0710093896713615,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": -0.341095,
+      "fills": 363,
+      "edge": 8.266715,
+      "maxDrawdown": 13.203823,
+      "winRate": 0.21671641791044777,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 17.472122,
+      "fills": 383,
+      "edge": 18.900595,
+      "maxDrawdown": 11.637640999999999,
+      "winRate": 0.2461439588688946,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 19.547681,
+      "fills": 474,
+      "edge": 37.533128,
+      "maxDrawdown": 11.566472999999998,
+      "winRate": 0.31769436997319034,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 18.556561,
+      "fills": 496,
+      "edge": 38.27668,
+      "maxDrawdown": 12.123097000000001,
+      "winRate": 0.34206896551724136,
+      "llmDecisions": 0
+    },
+    {
+      "window": 7,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 20.320384,
+      "fills": 577,
+      "edge": 51.937136,
+      "maxDrawdown": 12.632755,
+      "winRate": 0.4184191443074692,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 37.552095,
+      "fills": 423,
+      "edge": 72.630749,
+      "maxDrawdown": 23.600108,
+      "winRate": 0.2353923205342237,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 28.778058,
+      "fills": 490,
+      "edge": 47.479163,
+      "maxDrawdown": 26.223578000000003,
+      "winRate": 0.26908292147171886,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 6.868372,
+      "fills": 515,
+      "edge": 27.226613,
+      "maxDrawdown": 14.360997,
+      "winRate": 0.29941860465116277,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": -17.466758,
+      "fills": 169,
+      "edge": 12.080775,
+      "maxDrawdown": 28.657271,
+      "winRate": 0.08697889861039629,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": -11.700014,
+      "fills": 427,
+      "edge": 48.459747,
+      "maxDrawdown": 27.53968,
+      "winRate": 0.2294465341214401,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": -16.025244,
+      "fills": 450,
+      "edge": 5.234665,
+      "maxDrawdown": 20.8174,
+      "winRate": 0.267538644470868,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": -21.139164,
+      "fills": 186,
+      "edge": 29.536398,
+      "maxDrawdown": 33.928858,
+      "winRate": 0.10253583241455347,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 24.290232,
+      "fills": 414,
+      "edge": 20.105701,
+      "maxDrawdown": 17.999413,
+      "winRate": 0.233502538071066,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": -8.359977,
+      "fills": 390,
+      "edge": 22.475526,
+      "maxDrawdown": 20.492103,
+      "winRate": 0.243142144638404,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": -29.95985,
+      "fills": 122,
+      "edge": -4.027109,
+      "maxDrawdown": 43.008026,
+      "winRate": 0.06377417668583377,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": -6.526522,
+      "fills": 395,
+      "edge": 19.616131,
+      "maxDrawdown": 33.285305,
+      "winRate": 0.20713162034609334,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 5.454049,
+      "fills": 421,
+      "edge": 42.066781,
+      "maxDrawdown": 32.147675,
+      "winRate": 0.24377533294730747,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 52.155706,
+      "fills": 378,
+      "edge": 52.016433,
+      "maxDrawdown": 24.989362,
+      "winRate": 0.21963974433468914,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 32.392986,
+      "fills": 461,
+      "edge": 60.58563,
+      "maxDrawdown": 17.692433999999995,
+      "winRate": 0.278886872353297,
+      "llmDecisions": 0
+    },
+    {
+      "window": 8,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 14.354255,
+      "fills": 545,
+      "edge": 33.509098,
+      "maxDrawdown": 27.941623000000003,
+      "winRate": 0.3566753926701571,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 23.443758,
+      "fills": 195,
+      "edge": 23.392187,
+      "maxDrawdown": 9.610974,
+      "winRate": 0.09969325153374232,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 41.191278,
+      "fills": 563,
+      "edge": 69.318233,
+      "maxDrawdown": 14.390307,
+      "winRate": 0.3096809680968097,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 40.593942,
+      "fills": 519,
+      "edge": 60.719298,
+      "maxDrawdown": 17.133414000000002,
+      "winRate": 0.3071005917159763,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 4.47666,
+      "fills": 207,
+      "edge": 1.326708,
+      "maxDrawdown": 11.056499,
+      "winRate": 0.1054508405501783,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 13.740424,
+      "fills": 421,
+      "edge": 36.098206,
+      "maxDrawdown": 10.056979,
+      "winRate": 0.2166752444673186,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 0.521725,
+      "fills": 468,
+      "edge": 27.165786,
+      "maxDrawdown": 29.172442,
+      "winRate": 0.28398058252427183,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 2.284978,
+      "fills": 195,
+      "edge": 19.995191,
+      "maxDrawdown": 19.533273,
+      "winRate": 0.10388918486947256,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 33.778752,
+      "fills": 445,
+      "edge": 51.2645,
+      "maxDrawdown": 8.648776000000002,
+      "winRate": 0.24383561643835616,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 22.947514,
+      "fills": 389,
+      "edge": 18.182994,
+      "maxDrawdown": 12.435809,
+      "winRate": 0.23223880597014926,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 0.889836,
+      "fills": 153,
+      "edge": 20.39435,
+      "maxDrawdown": 15.922366,
+      "winRate": 0.07719475277497477,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 22.797674,
+      "fills": 467,
+      "edge": 36.252549,
+      "maxDrawdown": 9.245154,
+      "winRate": 0.24209434940383617,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": -2.333415,
+      "fills": 383,
+      "edge": 12.51179,
+      "maxDrawdown": 20.041695,
+      "winRate": 0.22164351851851852,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 22.843999,
+      "fills": 377,
+      "edge": 60.788739,
+      "maxDrawdown": 22.582601,
+      "winRate": 0.21002785515320335,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 26.172798,
+      "fills": 459,
+      "edge": 58.447699,
+      "maxDrawdown": 26.729799,
+      "winRate": 0.2510940919037199,
+      "llmDecisions": 0
+    },
+    {
+      "window": 9,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 17.21977,
+      "fills": 526,
+      "edge": 28.209871,
+      "maxDrawdown": 27.922992,
+      "winRate": 0.3228974831184776,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 32.087286,
+      "fills": 275,
+      "edge": 28.121301,
+      "maxDrawdown": 9.863829,
+      "winRate": 0.14367816091954022,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 20.916694,
+      "fills": 519,
+      "edge": 32.466604,
+      "maxDrawdown": 11.71894,
+      "winRate": 0.27301420305102575,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 21.287989,
+      "fills": 477,
+      "edge": 25.142668,
+      "maxDrawdown": 15.522988,
+      "winRate": 0.2738231917336395,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 4.497067,
+      "fills": 135,
+      "edge": 1.556682,
+      "maxDrawdown": 11.837905000000003,
+      "winRate": 0.06894790602655772,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 12.009399,
+      "fills": 482,
+      "edge": 45.990915,
+      "maxDrawdown": 9.306671999999999,
+      "winRate": 0.25,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 3.038152,
+      "fills": 372,
+      "edge": 4.947511,
+      "maxDrawdown": 15.360572,
+      "winRate": 0.21565217391304348,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 11.830884,
+      "fills": 190,
+      "edge": 24.848673,
+      "maxDrawdown": 10.055183000000001,
+      "winRate": 0.10117145899893504,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 6.953535,
+      "fills": 389,
+      "edge": 34.154075,
+      "maxDrawdown": 10.660519,
+      "winRate": 0.21350164654226125,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 14.246915,
+      "fills": 404,
+      "edge": 31.360262,
+      "maxDrawdown": 12.802063999999998,
+      "winRate": 0.24090638044126417,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 7.221434,
+      "fills": 116,
+      "edge": -10.39452,
+      "maxDrawdown": 11.426818,
+      "winRate": 0.05826217980914113,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 22.044605,
+      "fills": 459,
+      "edge": 28.706498,
+      "maxDrawdown": 10.658653,
+      "winRate": 0.2338257768721345,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": -3.368099,
+      "fills": 348,
+      "edge": -1.837251,
+      "maxDrawdown": 19.438625,
+      "winRate": 0.19806488332384747,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 34.832621,
+      "fills": 269,
+      "edge": 24.281439,
+      "maxDrawdown": 7.5211320000000015,
+      "winRate": 0.14853672004417448,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 64.0129,
+      "fills": 517,
+      "edge": 67.851837,
+      "maxDrawdown": 5.343230999999999,
+      "winRate": 0.2870627429205997,
+      "llmDecisions": 0
+    },
+    {
+      "window": 10,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 19.88879,
+      "fills": 531,
+      "edge": 64.270856,
+      "maxDrawdown": 16.072786999999998,
+      "winRate": 0.3233861144945189,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 35.587985,
+      "fills": 222,
+      "edge": 25.876049,
+      "maxDrawdown": 7.136438999999999,
+      "winRate": 0.11833688699360341,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 23.306988,
+      "fills": 380,
+      "edge": 16.035165,
+      "maxDrawdown": 10.825448,
+      "winRate": 0.20441097364174288,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 45.158809,
+      "fills": 467,
+      "edge": 24.30779,
+      "maxDrawdown": 9.179378,
+      "winRate": 0.2756788665879575,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 21.651647,
+      "fills": 165,
+      "edge": 17.105937,
+      "maxDrawdown": 13.297004,
+      "winRate": 0.0847457627118644,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 30.23726,
+      "fills": 438,
+      "edge": 28.417284,
+      "maxDrawdown": 8.065797999999997,
+      "winRate": 0.22860125260960334,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 21.483085,
+      "fills": 437,
+      "edge": 25.272236,
+      "maxDrawdown": 14.046988999999998,
+      "winRate": 0.2579693034238489,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 29.917233,
+      "fills": 232,
+      "edge": 16.708742,
+      "maxDrawdown": 20.315482999999997,
+      "winRate": 0.12931995540691194,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 36.941342,
+      "fills": 512,
+      "edge": 51.464439,
+      "maxDrawdown": 11.828071999999999,
+      "winRate": 0.2871564778463264,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": -12.779154,
+      "fills": 458,
+      "edge": 6.980776,
+      "maxDrawdown": 31.593526000000004,
+      "winRate": 0.2762364294330519,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": -24.581366,
+      "fills": 107,
+      "edge": 1.509681,
+      "maxDrawdown": 36.434522,
+      "winRate": 0.054563997960224375,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": -22.13365,
+      "fills": 450,
+      "edge": 4.319428,
+      "maxDrawdown": 33.849422,
+      "winRate": 0.22982635342185903,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": -16.268837,
+      "fills": 337,
+      "edge": 16.888726,
+      "maxDrawdown": 33.653068,
+      "winRate": 0.1919134396355353,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 27.660974,
+      "fills": 410,
+      "edge": 45.960634,
+      "maxDrawdown": 18.206495,
+      "winRate": 0.22828507795100222,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 39.865164,
+      "fills": 489,
+      "edge": 53.358922,
+      "maxDrawdown": 24.696673,
+      "winRate": 0.2844677137870855,
+      "llmDecisions": 0
+    },
+    {
+      "window": 11,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": -6.130304,
+      "fills": 437,
+      "edge": 55.926902,
+      "maxDrawdown": 27.216735999999997,
+      "winRate": 0.2699197035206918,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 29.578448,
+      "fills": 226,
+      "edge": 11.285632,
+      "maxDrawdown": 15.273257000000001,
+      "winRate": 0.1178925404277517,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 44.380537,
+      "fills": 584,
+      "edge": 45.102324,
+      "maxDrawdown": 13.848005999999998,
+      "winRate": 0.31263383297644537,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 51.052036,
+      "fills": 504,
+      "edge": 54.491189,
+      "maxDrawdown": 8.012187,
+      "winRate": 0.2876712328767123,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 19.599157,
+      "fills": 212,
+      "edge": 14.09549,
+      "maxDrawdown": 6.979246,
+      "winRate": 0.10745058286872783,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 15.334389,
+      "fills": 545,
+      "edge": 43.272846,
+      "maxDrawdown": 9.995722,
+      "winRate": 0.28223718280683585,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 19.96545,
+      "fills": 452,
+      "edge": 30.577843,
+      "maxDrawdown": 12.77185,
+      "winRate": 0.26187717265353416,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 22.361312,
+      "fills": 167,
+      "edge": 8.25932,
+      "maxDrawdown": 4.800332,
+      "winRate": 0.08850026497085321,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 25.162793,
+      "fills": 432,
+      "edge": 28.141998,
+      "maxDrawdown": 12.523734999999999,
+      "winRate": 0.23288409703504043,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 19.117889,
+      "fills": 379,
+      "edge": 22.847071,
+      "maxDrawdown": 5.674762,
+      "winRate": 0.22708208508088676,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": -11.804787,
+      "fills": 156,
+      "edge": -0.781409,
+      "maxDrawdown": 18.154949,
+      "winRate": 0.07967313585291114,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 5.608281,
+      "fills": 423,
+      "edge": 26.327278,
+      "maxDrawdown": 14.08971,
+      "winRate": 0.2203125,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 4.551541,
+      "fills": 361,
+      "edge": 18.144244,
+      "maxDrawdown": 15.271044,
+      "winRate": 0.20581527936145952,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 49.966393,
+      "fills": 353,
+      "edge": 40.356405,
+      "maxDrawdown": 6.7311890000000005,
+      "winRate": 0.19258046917621385,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 51.630698,
+      "fills": 478,
+      "edge": 56.15307,
+      "maxDrawdown": 7.744392999999999,
+      "winRate": 0.27020915771622384,
+      "llmDecisions": 0
+    },
+    {
+      "window": 12,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 43.506711,
+      "fills": 564,
+      "edge": 44.508372,
+      "maxDrawdown": 6.335813,
+      "winRate": 0.3361144219308701,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 1,
+      "arm": "fixed",
+      "pnl": 16.305956,
+      "fills": 222,
+      "edge": 14.027979,
+      "maxDrawdown": 6.476793000000001,
+      "winRate": 0.11431513903192585,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 1,
+      "arm": "rule",
+      "pnl": 25.07678,
+      "fills": 535,
+      "edge": 41.146423,
+      "maxDrawdown": 7.328905,
+      "winRate": 0.27981171548117156,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 1,
+      "arm": "bandit",
+      "pnl": 24.722891,
+      "fills": 424,
+      "edge": 28.138941,
+      "maxDrawdown": 4.855532,
+      "winRate": 0.24537037037037038,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 2,
+      "arm": "fixed",
+      "pnl": 13.139223,
+      "fills": 185,
+      "edge": 14.419443,
+      "maxDrawdown": 8.497617,
+      "winRate": 0.09706190975865688,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 2,
+      "arm": "rule",
+      "pnl": 7.806095,
+      "fills": 518,
+      "edge": 50.327015,
+      "maxDrawdown": 9.981302,
+      "winRate": 0.2773019271948608,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 2,
+      "arm": "bandit",
+      "pnl": 9.6422,
+      "fills": 366,
+      "edge": 30.277808,
+      "maxDrawdown": 15.273546999999999,
+      "winRate": 0.21708185053380782,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 3,
+      "arm": "fixed",
+      "pnl": 24.87438,
+      "fills": 187,
+      "edge": 17.377703,
+      "maxDrawdown": 8.948155,
+      "winRate": 0.10080862533692722,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 3,
+      "arm": "rule",
+      "pnl": 16.729668,
+      "fills": 457,
+      "edge": 34.137154,
+      "maxDrawdown": 10.967416,
+      "winRate": 0.24425440940673437,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 3,
+      "arm": "bandit",
+      "pnl": 32.678967,
+      "fills": 441,
+      "edge": 32.594727,
+      "maxDrawdown": 10.508404,
+      "winRate": 0.2615658362989324,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 4,
+      "arm": "fixed",
+      "pnl": 14.042344,
+      "fills": 134,
+      "edge": 8.392774,
+      "maxDrawdown": 12.565643999999999,
+      "winRate": 0.06791687785098834,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 4,
+      "arm": "rule",
+      "pnl": 23.011147,
+      "fills": 480,
+      "edge": 41.336335,
+      "maxDrawdown": 8.008538000000001,
+      "winRate": 0.24628014366341713,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 4,
+      "arm": "bandit",
+      "pnl": 14.948684,
+      "fills": 329,
+      "edge": 15.875512,
+      "maxDrawdown": 7.746567000000001,
+      "winRate": 0.1870380898237635,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 5,
+      "arm": "fixed",
+      "pnl": 15.337475,
+      "fills": 355,
+      "edge": 37.413851,
+      "maxDrawdown": 18.160695999999998,
+      "winRate": 0.20555877243775333,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 5,
+      "arm": "rule",
+      "pnl": 31.298659,
+      "fills": 512,
+      "edge": 45.829719,
+      "maxDrawdown": 16.048746,
+      "winRate": 0.2962962962962963,
+      "llmDecisions": 0
+    },
+    {
+      "window": 13,
+      "seed": 5,
+      "arm": "bandit",
+      "pnl": 29.762034,
+      "fills": 577,
+      "edge": 58.838875,
+      "maxDrawdown": 10.477128999999998,
+      "winRate": 0.3640378548895899,
+      "llmDecisions": 0
+    }
+  ]
+}

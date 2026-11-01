@@ -15,8 +15,10 @@ const data = {
 test("link previews describe the page from the chain state", () => {
   const o = pageMeta("/app/orders/7", data);
   assert.equal(o.title, "Order #7: Buy NEAR with 40.00 USDC");
-  assert.match(o.description, /^Filled by Cost Plus Ltd out of 3 sealed bids: the client got 7\.476 NEAR, the second best quote\. That is 21\.4 bp better than NEAR Intents 1Click\.$/);
+  assert.match(o.description, /^Filled by Cost Plus Ltd out of 3 sealed bids at the second best quote: the client got 7\.476 NEAR\. That is 21\.4 bp better than the market reference\.$/);
   assert.equal(pageMeta("/app/firms/1/", data).title, "Cost Plus Ltd");
+  const eth = { ...data, asset: { symbol: "ETH", decimals: 18 }, state: { ...data.state, orders: [{ ...data.state.orders[0], side: "Sell", amount_in: (5n * 10n ** 16n).toString() }] } };
+  assert.equal(pageMeta("/app/orders/7", eth).title, "Order #7: Sell 0.0500 ETH for USDC", "amounts in the market's asset");
   assert.match(pageMeta("/thesis", data).description, /5\.4x.*verdict on 2026-11-14\./);
   assert.equal(pageMeta("/app/orders/99", data).title, "Order #99", "an order out of the cache still gets a title");
   assert.equal(pageMeta("/nowhere", data).title, "Tontine | The Firm Layer Of The Agent Economy");

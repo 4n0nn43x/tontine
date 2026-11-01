@@ -1,0 +1,236 @@
+/* The AI layer: regime chips, due diligence, mandate, shadow scoreboard (components/Ai.tsx). */
+
+.regimes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+
+.regime {
+  --c: var(--dusk);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--c) 40%, transparent);
+  border-radius: 999px;
+  color: var(--c);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.regime.alert {
+  --c: var(--warn);
+}
+
+.regime.storm {
+  --c: var(--bad);
+}
+
+.ai-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.ai-card .card-head {
+  margin-bottom: 12px;
+}
+
+.src-chip {
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--soft);
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.src-chip.llm {
+  border-color: rgba(142, 240, 179, 0.35);
+  color: var(--good);
+}
+
+.dd {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.dd-grade {
+  --g: var(--soft);
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border: 1px solid color-mix(in srgb, var(--g) 45%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--g) 10%, transparent);
+  color: var(--g);
+  font-family: var(--font-display);
+  font-size: 40px;
+  line-height: 1;
+}
+
+.dd-grade.g-A,
+.dd-grade.g-B {
+  --g: var(--good);
+}
+
+.dd-grade.g-C {
+  --g: var(--accent);
+}
+
+.dd-grade.g-D {
+  --g: var(--warn);
+}
+
+.dd-grade.g-E {
+  --g: var(--bad);
+}
+
+.dd-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.dd-score {
+  color: var(--soft);
+  font-size: 13px;
+}
+
+.dd-score b {
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.dd-parts {
+  display: grid;
+  grid-template-columns: max-content minmax(40px, 90px);
+  align-items: center;
+  gap: 4px 12px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--soft);
+}
+
+.dd-parts li {
+  display: contents;
+}
+
+.dd-parts .bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-2);
+  overflow: hidden;
+}
+
+.dd-parts .bar i {
+  display: block;
+  height: 100%;
+  background: var(--good);
+}
+
+.dd-text {
+  margin: 14px 0 0;
+  color: var(--soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mandate-text {
+  margin: 0;
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--line-2);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.mandate-edit textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  resize: vertical;
+}
+
+.mandate-edit .inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mandate-edit .fine {
+  flex: 1;
+}
+
+.rule-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rule-chips li {
+  padding: 3px 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--soft);
+  font-size: 11.5px;
+}
+
+.rule-chips li.house {
+  border-style: dashed;
+}
+
+.rule-chips li.on {
+  border-color: rgba(246, 200, 122, 0.6);
+  background: rgba(246, 200, 122, 0.12);
+  color: var(--warn);
+}
+
+.table.vs tr.best td {
+  color: var(--good);
+}
+
+.verdict {
+  margin: 12px 0 0;
+  color: var(--soft);
+  font-size: 13px;
+}
+
+.signed-chip {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid rgba(142, 240, 179, 0.35);
+  border-radius: 999px;
+  color: var(--good);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.ach-weathered {
+  --c: #9fb4ff;
+}

@@ -27,7 +27,7 @@ export type FirmCtx = {
 
 /** The market as a firm sees it when quoting. */
 export type Market = {
-  /** Reference mid, USDC per NEAR (NEAR Intents 1Click, or the replay). */
+  /** Reference mid, USDC per unit of the asset (the market mid, or the replay). */
   mid: number;
   /** Last clearing price on tender, stable base units per asset unit: the anchor of the owner's band. */
   last: bigint;
@@ -72,8 +72,9 @@ export interface Strategy {
   /** Starting params. */
   params: Params;
   /** A manager retunes the params from the firm's results (manager.ts): true for the AI manager (an LLM
-   * when NEARAI_API_KEY is set, else the rule), "rule" for the stated rule only. */
-  managed?: boolean | "rule";
+   * when NEARAI_API_KEY is set, else the rule), "rule" for the stated rule only, "bandit" for a UCB1 bandit
+   * on the spread (banditDecide). */
+  managed?: boolean | "rule" | "bandit";
   /** Optional: replace the default quote (output for an order, or null to pass). */
   quote?(order: OrderView, me: FirmCtx, market: Market, params: Params): bigint | null;
   /** Optional: sealed price to buy a firm in liquidation (forward auction), paid from the treasury. */

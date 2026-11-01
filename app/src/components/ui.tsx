@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import type { ChainEvent, Side } from "../lib/api";
-import { ago, describe, firmColor } from "../lib/format";
-import { announceTx, useAppState } from "../lib/hooks";
+import { marketOf, SYMBOLS, type ChainEvent, type Side } from "../lib/api";
+import { ago, ASSETS, describe, firmColor } from "../lib/format";
+import { announceTx, inMarket, useConfig, useStates } from "../lib/hooks";
 
 export function Card({ title, action, children, className = "" }: { title?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
@@ -47,9 +47,9 @@ export function Badge({ status, children }: { status?: string; children?: ReactN
   return <span className={`badge ${STATUS_TONE[status ?? ""] ?? ""}`}>{children ?? status}</span>;
 }
 
-export function FirmChip({ id, name, index = 0 }: { id: number; name: string; index?: number }) {
+export function FirmChip({ id, name, index = 0, market }: { id: number; name: string; index?: number; market?: string }) {
   return (
-    <Link className="firm-chip" to={`/app/firms/${id}`}>
+    <Link className="firm-chip" to={inMarket(`/app/firms/${id}`, market)}>
       <span className="dot" style={{ background: firmColor(name, index) }} />
       {name}
     </Link>
@@ -154,24 +154,50 @@ export function TxButton({ run, children, className = "btn", disabled, onDone }:
   );
 }
 
-export function EventFeed({ events, firm, limit = 30, compact = false }: { events: ChainEvent[]; firm: (id: number) => string; limit?: number; compact?: boolean }) {
-  const { data: state } = useAppState();
-  // An auction's amounts are in the token its order delivers: NEAR for a buy, USDC for a sell.
-  const sides = new Map<number, Side>(state?.orders.map((o) => [o.auction, o.side]));
-  for (const e of events) if (e.event === "order_posted") sides.set(e.data.auction_id, e.data.side);
+/** NEAR, ETH, SOL (and "All" with `all`) as small pill tabs, each with its market's colour. */
+export function MarketTabs<K extends string>({ value, onChange, all = false }: { value: K; onChange: (s: K) => void; all?: boolean }) {
+  const opts = (all ? ["ALL", ...SYMBOLS] : SYMBOLS) as K[];
+  return (
+    <div className="intervals markets" role="radiogroup" aria-label="Market">
+      {opts.map((s) => (
+        <button key={s} type="button" role="radio" aria-checked={value === s} className={value === s ? "on" : ""} onClick={() => onChange(s)}>
+          {s === "ALL" ? "All" : (
+            <>
+              <span className="mk-dot" style={{ background: ASSETS[s].color }} aria-hidden="true" />
+              {s}
+            </>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The events of every market, in words: names, amounts and links resolved on the tender that emitted each one. */
+export function EventFeed({ events, firm, limit = 30, compact = false }: { events: ChainEvent[]; firm: (id: number, contract: string) => string; limit?: number; compact?: boolean }) {
+  const config = useConfig();
+  const states = useStates();
+  // An auction's amounts are in the token its order delivers: the asset for a buy, USDC for a sell.
+  const sides = new Map<string, Side>();
+  for (const m of config?.markets ?? []) for (const o of states[m.symbol]?.orders ?? []) sides.set(`${m.tender}:${o.auction}`, o.side);
+  for (const e of events) if (e.event === "order_posted") sides.set(`${e.contract}:${e.data.auction_id}`, e.data.side);
   const rows = events
-    .map((e) => ({ e, d: describe(e, firm, (a) => sides.get(a)) }))
+    .map((e) => {
+      const m = marketOf(config, e.contract);
+      const d = describe(e, (id) => firm(id, e.contract), (a) => sides.get(`${e.contract}:${a}`), ASSETS[m?.symbol ?? "NEAR"]);
+      return { e, d, symbol: m?.symbol };
+    })
     .filter((x) => x.d)
     .slice(-limit)
     .reverse();
   if (!rows.length) return <Empty>Waiting for the next on-chain event…</Empty>;
   return (
     <ol className={`feed ${compact ? "compact" : ""}`}>
-      {rows.map(({ e, d }) => (
+      {rows.map(({ e, d, symbol }) => (
         <li key={e.id} className={d!.tone}>
           <i className={`fa-solid ${d!.icon}`} aria-hidden="true" />
           <span className="feed-text">
-            {d!.orderId !== undefined ? <Link to={`/app/orders/${d!.orderId}`}>{d!.text}</Link> : d!.text}
+            {d!.orderId !== undefined ? <Link to={inMarket(`/app/orders/${d!.orderId}`, symbol)}>{d!.text}</Link> : d!.text}
           </span>
           <time dateTime={new Date(e.time).toISOString()}>{ago(e.time)}</time>
         </li>

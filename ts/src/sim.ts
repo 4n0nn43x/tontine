@@ -5,15 +5,16 @@
 //   SEED=1 CLIENTS=20 EXTRA_FIRMS=6 DAYS=7 ORDERS_PER_HOUR=12 npx tsx src/sim.ts [--json]
 import { pathToFileURL } from "node:url";
 import { clear, edge as edgeOf, BPS } from "./rules.ts";
-import { NEAR_UNIT, ONECLICK_COST_BPS, outAt, replayPrices, toBase } from "./prices.ts";
+import { CLIENT_TOLERANCE_BPS, NEAR_UNIT, outAt, replayPrices, toBase } from "./prices.ts";
 import { loadStrategies, safeQuote, type FirmCtx, type OrderView, type Params, type Strategy } from "./strategy.ts";
-import { bound, rule, type Results } from "./manager.ts";
+import { decide, newBandit, type BanditState, type Results } from "./manager.ts";
+import { makeLlm, type Llm } from "./llm.ts";
 
 const USDC = (n: number) => BigInt(Math.round(n * 1e6));
 const NEAR = (n: number) => BigInt(Math.round(n * 1e6)) * 10n ** 18n;
 
 /** Deterministic PRNG (mulberry32). */
-function rng(seed: number) {
+export function rng(seed: number) {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -24,16 +25,30 @@ function rng(seed: number) {
   };
 }
 
-type Firm = FirmCtx & { name: string; strategy: Strategy; params: Params; dividends: bigint; below: number; volume: bigint; results: Results; managed: boolean; start: { stable: bigint; asset: bigint } };
+/** Who retunes a firm's params each hour. "llm" is makeLlm(): the rule decides when no key is set. */
+export type Manager = "fixed" | "rule" | "bandit" | "llm";
 
-/** `managed: false` freezes the AI-managed firm's params (the ablation); rule-managed firms still adapt. */
-export type SimOptions = { seed: number; clients: number; extraFirms: number; days: number; ordersPerHour: number; managed?: boolean };
+type Firm = FirmCtx & {
+  name: string; strategy: Strategy; params: Params; dividends: bigint; below: number; volume: bigint; results: Results; manager: Manager; bandit: BanditState;
+  start: { stable: bigint; asset: bigint }; quoted: number; llmDecisions: number; peak: number; drawdown: number;
+};
+
+/**
+ * `managed: false` freezes the AI-managed firm's params (the ablation); rule-managed firms still adapt.
+ * `managerFor` picks a firm's manager by name (undefined: from its strategy, the AI one on the rule).
+ * `series` replaces the replayed 5-minute closes; `offset` starts the window at that bar (default: the last `days`).
+ */
+export type SimOptions = {
+  seed: number; clients: number; extraFirms: number; days: number; ordersPerHour: number; managed?: boolean;
+  managerFor?: (firm: string) => Manager | undefined; offset?: number; series?: { start_ms: number; prices: number[] };
+};
 
 export async function simulate(o: SimOptions) {
   const rand = rng(o.seed);
-  const fx = replayPrices().prices;
-  const bars = Math.min(fx.length, o.days * 288);
-  const from = fx.length - bars;
+  const series = o.series ?? replayPrices();
+  const fx = series.prices;
+  const bars = Math.min(fx.length - (o.offset ?? 0), o.days * 288);
+  const from = o.offset ?? fx.length - bars;
   const floor = USDC(40);
   const feeBps = 2;
   const maxMove = 300n;
@@ -52,13 +67,15 @@ export async function simulate(o: SimOptions) {
     const gambler = s.name === "Gambler Inc";
     const stable = gambler ? USDC(60) : USDC(400);
     const asset = gambler ? NEAR(2) : NEAR(60);
-    const managed = !!s.managed && !(s.managed === true && o.managed === false);
+    const manager = o.managerFor?.(s.name) ?? (!s.managed || (s.managed === true && o.managed === false) ? "fixed" : s.managed === "bandit" ? "bandit" : "rule");
     return {
       id, account: `w${id + 1}`, name: s.name, strategy: s, params: { ...s.params }, stable, asset, fills: 0, edge: 0n, status: "Solvent",
       policy: { max_asset_bps: gambler ? 10000 : 8000, band_bps: 1000, paused: false },
-      dividends: 0n, below: 0, volume: 0n, results: { quoted: 0, filled: 0, edge: 0n, assetShare: 0 }, managed, start: { stable, asset },
+      dividends: 0n, below: 0, volume: 0n, results: { quoted: 0, filled: 0, orders: 0, edge: 0n, assetShare: 0 }, manager, bandit: newBandit(), start: { stable, asset },
+      quoted: 0, llmDecisions: 0, peak: 0, drawdown: 0,
     };
   });
+  const llm: Llm | null = firms.some((f) => f.manager === "llm") ? makeLlm() : null;
   let last = toBase(fx[from]);
   let anchor = last;
   const totals = { orders: 0, fills: 0, refunded: 0, improvement: 0, volume: 0n, liquidations: 0, takeovers: 0 };
@@ -73,17 +90,19 @@ export async function simulate(o: SimOptions) {
       totals.orders++;
       const side = rand() < 0.5 ? "Buy" : "Sell";
       const amountIn = side === "Buy" ? USDC(10 + Math.round(rand() * 190)) : NEAR(2 + Math.round(rand() * 38));
-      // The client's minimum: what NEAR Intents 1Click would give (mid less its measured cost).
-      const minOut = outAt(side, amountIn, mid, ONECLICK_COST_BPS);
+      // The client's minimum: the market reference (mid less the client tolerance).
+      const minOut = outAt(side, amountIn, mid, CLIENT_TOLERANCE_BPS);
       const order: OrderView = { id: totals.orders, client: `c${Math.floor(rand() * o.clients)}`, side, amountIn, minOut, referenceOut: minOut };
       const market = { mid, last, unit: NEAR_UNIT };
       const bids: bigint[] = [];
       const who: Firm[] = [];
       for (const f of firms) {
         if (f.status !== "Solvent") continue;
+        f.results.orders!++;
         const v = safeQuote(f.strategy, order, f, market, f.params);
         if (v === null) continue;
         f.results.quoted++;
+        f.quoted++;
         bids.push(v);
         who.push(f);
       }
@@ -126,6 +145,12 @@ export async function simulate(o: SimOptions) {
     // Hourly: epochs (cash floor, liquidations), the managers and a new price window.
     if ((i - from) % 12 === 11) {
       anchor = last;
+      // Drawdown of P&L against holding, sampled hourly at the mid.
+      for (const f of firms) {
+        const pnl = Number(f.stable + f.dividends - f.start.stable + ((f.asset - f.start.asset) * toBase(mid)) / NEAR_UNIT) / 1e6;
+        f.peak = Math.max(f.peak, pnl);
+        f.drawdown = Math.max(f.drawdown, f.peak - pnl);
+      }
       for (const f of firms.filter((x) => x.status === "Solvent" || x.status === "Illiquid")) {
         if (f.stable < floor) {
           f.below++;
@@ -146,15 +171,19 @@ export async function simulate(o: SimOptions) {
           const price = buyers.length > 1 ? buyers[1].p! : 1n;
           buyers[0].b.stable -= price;
           totals.takeovers++;
-          events.push(`${new Date(replayPrices().start_ms + i * 300_000).toISOString().slice(0, 16)} ${f.name} liquidated, bought by ${buyers[0].b.name} for ${(Number(price) / 1e6).toFixed(2)} USDC`);
+          events.push(`${new Date(series.start_ms + i * 300_000).toISOString().slice(0, 16)} ${f.name} liquidated, bought by ${buyers[0].b.name} for ${(Number(price) / 1e6).toFixed(2)} USDC`);
         } else events.push(`${f.name} liquidated, no buyer: wound up`);
         f.status = "Closed";
       }
-      for (const f of firms.filter((x) => x.managed && x.status === "Solvent")) {
+      for (const f of firms.filter((x) => x.manager !== "fixed" && x.status === "Solvent")) {
         const value = (f.asset * toBase(mid)) / NEAR_UNIT;
-        const { params } = rule(f.params, { ...f.results, assetShare: Number(value) / Number(f.stable + value) });
-        f.params = bound(params, f.params, f.policy.max_asset_bps / 10_000);
-        f.results = { quoted: 0, filled: 0, edge: 0n, assetShare: 0 };
+        const r = { ...f.results, assetShare: Number(value) / Number(f.stable + value) };
+        const decideWith = (m: Llm | null) => decide(m, f.name, f.params, r, f.policy.max_asset_bps / 10_000, f.manager === "bandit" ? f.bandit : undefined);
+        // As the swarm: a failed LLM call leaves this decision to the rule.
+        const d = await decideWith(f.manager === "llm" ? llm : null).catch(() => decideWith(null));
+        if (d.source === "near-ai-cloud" || d.source === "anthropic") f.llmDecisions++;
+        f.params = d.after;
+        f.results = { quoted: 0, filled: 0, orders: 0, edge: 0n, assetShare: 0 };
       }
     }
   }
@@ -163,7 +192,7 @@ export async function simulate(o: SimOptions) {
   const hhi = firms.reduce((a, f) => a + (totals.fills ? (f.fills / totals.fills) ** 2 : 0), 0) * 10_000;
   return {
     seed: o.seed,
-    window: { from: new Date(replayPrices().start_ms + from * 300_000).toISOString().slice(0, 10), days: o.days, nearStart: fx[from], nearEnd: fx[from + bars - 1] },
+    window: { from: new Date(series.start_ms + from * 300_000).toISOString().slice(0, 10), days: o.days, nearStart: fx[from], nearEnd: fx[from + bars - 1] },
     orders: totals.orders,
     fillRate: totals.orders ? totals.fills / totals.orders : 0,
     refunded: totals.refunded,
@@ -184,6 +213,10 @@ export async function simulate(o: SimOptions) {
       pnlVsHoldUsdc: (Number(nav(f) + f.dividends) - Number(nav(f.start))) / 1e6,
       spreadBps: f.params.spreadBps,
       ai: f.strategy.managed === true,
+      /** Auctions it bid in, its worst fall of P&L against holding (hourly samples), its decisions made by an LLM. */
+      quoted: f.quoted,
+      maxDrawdownUsdc: f.drawdown,
+      llmDecisions: f.llmDecisions,
     })),
   };
 }
@@ -198,7 +231,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     console.log(JSON.stringify({ ...r, ablation: fixed.firms.filter((f) => f.ai) }, null, 2));
   } else {
     console.log(`seed ${r.seed}, ${r.window.days} days from ${r.window.from} (NEAR ${r.window.nearStart} -> ${r.window.nearEnd}), ${opts.clients} clients, ${r.firms.length} firms`);
-    console.log(`orders ${r.orders}, filled ${(r.fillRate * 100).toFixed(1)}%, refunded ${r.refunded}, average ${r.avgImprovementBps.toFixed(1)} bp better than NEAR Intents 1Click, volume ${r.volumeUsdc.toFixed(0)} USDC`);
+    console.log(`orders ${r.orders}, filled ${(r.fillRate * 100).toFixed(1)}%, refunded ${r.refunded}, average ${r.avgImprovementBps.toFixed(1)} bp better than the market reference, volume ${r.volumeUsdc.toFixed(0)} USDC`);
     console.log(`liquidations ${r.liquidations}, takeovers ${r.takeovers}, concentration (HHI) ${r.hhi}`);
     for (const e of r.events) console.log(`  ${e}`);
     console.log("\nfirm                status       fills  share   edge USDC  dividends  P&L vs holding  spread");

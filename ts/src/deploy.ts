@@ -65,7 +65,7 @@ export async function createFirm(opts: {
         0n,
       ),
       actions.addFunctionCallAccessKey(kTender.getPublicKey(), tenderAcct.accountId, AGENT_TENDER_METHODS),
-      actions.addFunctionCallAccessKey(kFirm.getPublicKey(), id, ["spend"]),
+      actions.addFunctionCallAccessKey(kFirm.getPublicKey(), id, ["spend", "sign_evm"]),
     ],
     throwOnFailure: true,
   });

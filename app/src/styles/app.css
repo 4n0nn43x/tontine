@@ -600,12 +600,6 @@
   box-shadow: 0 0 10px currentColor;
 }
 
-.dot.big {
-  width: 14px;
-  height: 14px;
-  box-shadow: 0 0 16px var(--tint, #fff);
-}
-
 /* ------------------------------------------------------------------ orders */
 
 .active-orders {
@@ -915,11 +909,11 @@ details summary {
   gap: 12px;
 }
 
-.firm-card-head .dot {
-  margin-top: 6px;
-}
-
 .firm-card-head h2 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin: 0 0 4px;
   font-size: 17px;
   font-weight: 600;
@@ -938,7 +932,7 @@ details summary {
 
 .firm-figures {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px 14px;
   margin: 0;
   padding-top: 12px;
@@ -956,10 +950,6 @@ details summary {
   font-size: 16px;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
-}
-
-.firm-title .dot {
-  margin-right: 2px;
 }
 
 /* ------------------------------------------------------------------ thesis chart */
@@ -1273,6 +1263,32 @@ details summary {
 .intervals button.on {
   background: var(--pill-dark);
   color: #fff;
+}
+
+/* Market tabs: NEAR, ETH, SOL with their colour. */
+.markets button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.mk-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.mk-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .chart-legend {
@@ -2001,5 +2017,500 @@ details summary {
 @media (max-width: 720px) {
   .city-feed {
     display: none;
+  }
+}
+
+/* ------------------------------------------------------------------ game layer: ranks, levels, badges, health, toasts */
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skel {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.035) 25%, rgba(255, 255, 255, 0.085) 50%, rgba(255, 255, 255, 0.035) 75%) 0 0 / 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+.kpi-value .skel {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.skel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 0;
+}
+
+.firm-card.loading {
+  min-height: 210px;
+}
+
+/* the level ring: fills since the last level, in the firm's colour */
+.lvl {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+}
+
+.lvl svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.lvl circle {
+  fill: none;
+  stroke-width: 3;
+}
+
+.lvl-track {
+  stroke: color-mix(in srgb, var(--tint, #fff) 20%, transparent);
+}
+
+.lvl-bar {
+  stroke: var(--tint, #fff);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tint, #fff) 70%, transparent));
+  transition: stroke-dasharray 0.8s var(--ease);
+}
+
+.lvl b {
+  font-family: var(--font-display);
+  font-weight: 400;
+  line-height: 1;
+  color: #fff;
+}
+
+/* cash health: a segmented bar, the floor at a third */
+.health {
+  --hc: var(--good);
+  position: relative;
+  display: block;
+  height: 8px;
+  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.08) 0 5px, transparent 5px 7px);
+}
+
+.health.warn {
+  --hc: var(--warn);
+}
+
+.health.bad {
+  --hc: var(--bad);
+}
+
+.health-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: repeating-linear-gradient(90deg, var(--hc) 0 5px, transparent 5px 7px);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--hc) 55%, transparent));
+  transition: width 0.8s var(--ease);
+}
+
+.health-floor {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: 33.333%;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.kpi-hint .health {
+  margin: 2px 0 8px;
+}
+
+.firm-health {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.firm-health b {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 13px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* badges: pixel chips with notched corners */
+.achs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin: 0;
+  padding: 2px;
+  list-style: none;
+}
+
+.page-head .achs {
+  margin-top: 14px;
+}
+
+.city-firm .achs {
+  margin: -2px 0 12px;
+}
+
+.ach {
+  --c: var(--accent);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  margin: 2px;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--c) 14%, #0b0b0e);
+  box-shadow:
+    2px 0 0 color-mix(in srgb, var(--c) 50%, transparent),
+    -2px 0 0 color-mix(in srgb, var(--c) 50%, transparent),
+    0 2px 0 color-mix(in srgb, var(--c) 50%, transparent),
+    0 -2px 0 color-mix(in srgb, var(--c) 50%, transparent);
+  color: var(--c);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ach i {
+  font-size: 10px;
+}
+
+.ach-first,
+.ach-fills {
+  --c: #ffe39d;
+}
+
+.ach-raider {
+  --c: #ffb48c;
+}
+
+.ach-survivor {
+  --c: #a9f2cb;
+}
+
+.ach-comeback {
+  --c: #9fd0ff;
+}
+
+.ach-dividends {
+  --c: #5ee6c8;
+}
+
+.ach-sharpest {
+  --c: #ffc6e8;
+}
+
+.achs.compact {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.achs.compact .ach {
+  justify-content: center;
+  width: 22px;
+  padding: 0;
+}
+
+.ach[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: -2px;
+  bottom: calc(100% + 10px);
+  z-index: 5;
+  display: none;
+  width: max-content;
+  max-width: 220px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: #17171c;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: #e9e8ee;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.4;
+  text-transform: none;
+  white-space: normal;
+  pointer-events: none;
+}
+
+.ach[data-tip]:hover::after,
+.ach[data-tip]:focus-visible::after {
+  display: block;
+}
+
+/* rank, medal and the move since the page opened */
+.rank {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--soft);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.rank b {
+  font-weight: 400;
+}
+
+.rank b::before {
+  content: "#";
+  opacity: 0.5;
+}
+
+.rank.gold {
+  color: #ffd76a;
+}
+
+.rank.silver {
+  color: #dde3ee;
+}
+
+.rank.bronze {
+  color: #eaa77c;
+}
+
+.rank.gold i,
+.rank.silver i,
+.rank.bronze i {
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+.rank small {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+
+.rank small.up {
+  color: var(--good);
+}
+
+.rank small.down {
+  color: var(--bad);
+}
+
+.firm-title .rank {
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.lb-firm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.lb td {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.lb tbody tr td {
+  transition: background 0.2s ease;
+}
+
+.lb tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.lb .num.pos {
+  color: var(--good);
+}
+
+.lb .num.neg {
+  color: var(--bad);
+}
+
+/* toasts for the visitor's own wins */
+.toasts {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(360px, calc(100vw - 24px));
+  pointer-events: none;
+}
+
+.toast {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 10px 12px 14px;
+  border: 1px solid rgba(142, 240, 179, 0.35);
+  border-radius: 14px;
+  background: rgba(14, 14, 18, 0.96);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.6),
+    0 0 24px rgba(142, 240, 179, 0.12);
+  pointer-events: auto;
+  animation: toastIn 0.45s var(--ease) both;
+}
+
+.toast-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: 2px;
+  background: rgba(142, 240, 179, 0.14);
+  box-shadow:
+    2px 0 0 rgba(142, 240, 179, 0.5),
+    -2px 0 0 rgba(142, 240, 179, 0.5),
+    0 2px 0 rgba(142, 240, 179, 0.5),
+    0 -2px 0 rgba(142, 240, 179, 0.5);
+  color: var(--good);
+}
+
+/* a one-off burst of pixel confetti */
+.toast-icon::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px;
+  box-shadow:
+    -22px -14px 0 var(--good),
+    20px -18px 0 var(--accent),
+    24px 10px 0 var(--dusk),
+    -20px 16px 0 #9fd0ff,
+    0 -26px 0 #ffe39d,
+    4px 24px 0 var(--good);
+  opacity: 0;
+  animation: sparks 0.9s steps(6) 0.15s;
+}
+
+.toast-text b {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 15px;
+}
+
+.toast-text span {
+  display: block;
+  margin-top: 3px;
+  color: var(--soft);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.toast-x {
+  align-self: start;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.toast-x:hover {
+  color: #fff;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+}
+
+@keyframes sparks {
+  from {
+    opacity: 1;
+    transform: scale(0.3);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+
+/* micro-interactions */
+.btn:active:not(:disabled),
+.btn.primary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.97);
+}
+
+.firm-card:hover {
+  box-shadow: 0 14px 34px -16px color-mix(in srgb, var(--tint) 45%, transparent);
+}
+
+.firm-card:active {
+  transform: scale(0.99);
+}
+
+@media (max-width: 560px) {
+  .lb .hide-m {
+    display: none;
+  }
+  .toasts {
+    right: 12px;
+    bottom: 12px;
+  }
+  .firm-title .rank {
+    font-size: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skel,
+  .toast,
+  .toast-icon::before,
+  .feed li {
+    animation: none;
+  }
+  .lvl-bar,
+  .health-fill,
+  .firm-card,
+  .btn {
+    transition: none;
+  }
+  .firm-card:hover,
+  .firm-card:active,
+  .btn:active:not(:disabled),
+  .btn.primary:hover:not(:disabled),
+  .btn.primary:active:not(:disabled) {
+    transform: none;
   }
 }

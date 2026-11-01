@@ -117,6 +117,9 @@ export function CandleChart({ candles, step, fills, line, fitKey, empty }: { can
   useEffect(() => {
     const c = chart.current;
     if (!ready || !c) return;
+    // 2 decimals from 10 USD up (ETH, SOL), 4 below (NEAR).
+    const precision = (candles.at(-1)?.close ?? 0) >= 10 ? 2 : 4;
+    c.bars.applyOptions({ priceFormat: { type: "price", precision, minMove: 1 / 10 ** precision } });
     c.bars.setData(candles.map((k) => ({ ...k, time: k.time as UTCTimestamp })));
     if (candles.length && framed.current !== fitKey) {
       framed.current = fitKey;

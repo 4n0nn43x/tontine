@@ -19,14 +19,18 @@ export type Stats = {
   refunded: number;
   volume: string; // stable notional of filled orders (USDC base units)
   edge: string; // sum of the fills' edges (can be negative)
-  /** Sum over fills of what the client got beyond its 1Click reference, in bp of the reference. */
+  /** Sum over fills of what the client received beyond its market reference, in bp of the reference. */
   improvementBps: number;
+  /** Tontine's revenue on fills: order fees plus surplus shares, valued in USDC at each fill's price. */
+  revenue: string;
   slashed: string;
   liquidations: number;
   takeovers: number;
   bids: number;
   deposits: string;
 };
+
+const emptyStats = (): Stats => ({ orders: 0, fills: 0, refunded: 0, volume: "0", edge: "0", improvementBps: 0, revenue: "0", slashed: "0", liquidations: 0, takeovers: 0, bids: 0, deposits: "0" });
 
 async function rpc<T = any>(url: string, method: string, params: unknown): Promise<T> {
   const r = await fetch(url, {
@@ -45,13 +49,21 @@ export class Indexer {
   private next = 0;
   private seq = 0;
   private stopped = false;
-  readonly stats: Stats = { orders: 0, fills: 0, refunded: 0, volume: "0", edge: "0", improvementBps: 0, slashed: "0", liquidations: 0, takeovers: 0, bids: 0, deposits: "0" };
+  /** Totals over every watched contract, and per contract (one tender per market). */
+  readonly stats: Stats = emptyStats();
+  readonly byContract = new Map<string, Stats>();
 
   constructor(
     private url: string,
     private watched: (contract: string) => boolean,
     private keep = 3000,
+    /** Base units of one asset token on a tender, to value fees paid in the asset. */
+    private unitOf: (contract: string) => bigint = () => 10n ** 24n,
   ) {}
+
+  statsOf(contract: string): Stats {
+    return this.byContract.get(contract) ?? emptyStats();
+  }
 
   subscribe(fn: (e: ChainEvent) => void) {
     this.listeners.add(fn);
@@ -124,11 +136,16 @@ export class Indexer {
   }
 
   private count(e: ChainEvent) {
-    const s = this.stats;
-    const add = (k: "volume" | "edge" | "slashed" | "deposits", v: unknown) => {
+    if (e.standard !== "tontine") return;
+    if (!this.byContract.has(e.contract)) this.byContract.set(e.contract, emptyStats());
+    this.countInto(this.stats, e);
+    this.countInto(this.byContract.get(e.contract)!, e);
+  }
+
+  private countInto(s: Stats, e: ChainEvent) {
+    const add = (k: "volume" | "edge" | "slashed" | "deposits" | "revenue", v: unknown) => {
       s[k] = (BigInt(s[k]) + BigInt(String(v ?? 0))).toString();
     };
-    if (e.standard !== "tontine") return;
     switch (e.event) {
       case "order_posted":
         s.orders++;
@@ -138,10 +155,17 @@ export class Indexer {
         break;
       case "order_filled": {
         s.fills++;
-        add("volume", e.data.side === "Buy" ? e.data.amount_in : e.data.out);
-        add("edge", e.data.edge);
-        const ref = BigInt(e.data.reference_out ?? 0);
-        if (ref > 0n) s.improvementBps += Number(((BigInt(e.data.out) - ref) * 10_000n) / ref);
+        // `out` is what the firm delivered; the client received it less Tontine's surplus share.
+        const d = e.data;
+        const surplus = BigInt(d.surplus_fee ?? 0);
+        add("volume", d.side === "Buy" ? d.amount_in : d.out);
+        add("edge", d.edge);
+        const ref = BigInt(d.reference_out ?? 0);
+        if (ref > 0n) s.improvementBps += Number(((BigInt(d.out) - surplus - ref) * 10_000n) / ref);
+        // A buy pays its fee in USDC and its surplus in the asset, a sell the other way round.
+        const asset = (v: bigint) => (v * BigInt(d.price ?? 0)) / this.unitOf(e.contract);
+        const fee = BigInt(d.fee ?? 0);
+        add("revenue", d.side === "Buy" ? fee + asset(surplus) : asset(fee) + surplus);
         break;
       }
       case "order_refunded":
@@ -157,7 +181,7 @@ export class Indexer {
         s.takeovers++;
         break;
       case "deposit":
-        add("deposits", e.data.amount);
+        if (e.data.token !== "asset") add("deposits", e.data.amount); // USDC only: asset units differ per market
         break;
     }
   }

@@ -6,7 +6,7 @@ import { FailSection, HowSection } from "../components/LandingSections";
 import { EventFeed } from "../components/ui";
 import { getThesis } from "../lib/api";
 import { bpText, usdc } from "../lib/format";
-import { useAppState, useEvents, useFirmName, useStats } from "../lib/hooks";
+import { useEvents, useFirmNames, useStats } from "../lib/hooks";
 import { PHASES } from "./Dashboard";
 
 
@@ -274,9 +274,9 @@ function Hero() {
 }
 
 export function Landing() {
-  const { data: state } = useAppState();
+  // The feed spans every market: names are resolved on the tender of each event.
   const { data: stats } = useStats();
-  const firmName = useFirmName(state);
+  const firmName = useFirmNames();
   const events = useEvents(40);
 
   return (
@@ -308,7 +308,7 @@ export function Landing() {
               </div>
               <div>
                 <span className="big-num">{stats.fills ? bpText(stats.improvementBps / stats.fills) : "–"}</span>
-                <span>over NEAR Intents 1Click, on average</span>
+                <span>over the market reference, on average</span>
               </div>
               <div>
                 <span className="big-num">{stats.takeovers}</span>
@@ -327,7 +327,7 @@ export function Landing() {
             Open the dashboard
           </Link>
           <Link className="cta ghost" to="/app/trade">
-            Trade NEAR
+            Trade NEAR, ETH, SOL
           </Link>
         </div>
       </section>
@@ -408,7 +408,7 @@ export function Landing() {
         <pre className="code">{`export default defineFirm({
   spec: { name: "My Maker", description: "...",
           skills: ["NEAR/USDC"] },
-  // quote 9 bp from the 1Click mid, keep 40% in NEAR
+  // quote 9 bp from the market mid, keep 40% in NEAR
   params: { spreadBps: 9, targetAssetShare: 0.4,
             skewBps: 25 },
   // what it delivers for an order, or null to pass
@@ -422,10 +422,10 @@ export function Landing() {
         <div className="foot-inner">
           <div className="foot-cta">
             <h2 className="section-title">Trade against the firms</h2>
-            <p className="lead">Post a NEAR order, watch the firms quote for it, and own a share of the winners.</p>
+            <p className="lead">Post a NEAR, ETH or SOL order, watch the firms quote for it, and own a share of the winners.</p>
             <div className="section-ctas">
               <Link className="cta" to="/app/trade">
-                Trade NEAR
+                Trade NEAR, ETH, SOL
               </Link>
               <Link className="cta ghost" to="/app">
                 Open the dashboard

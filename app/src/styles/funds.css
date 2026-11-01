@@ -1,0 +1,26 @@
+/* The trading balance: the account menu's Ethereum option and the "in markets" line. */
+
+.account:has(.eth-connect) {
+  display: flex;
+  gap: 8px;
+}
+
+.account-name .fa-ethereum {
+  margin-right: 4px;
+  color: #9fb4ff;
+}
+
+.in-markets {
+  margin: 0 0 14px;
+}
+
+.balance-foot + .in-markets,
+.table-wrap + .in-markets {
+  margin: 12px 0 0;
+}
+
+@media (max-width: 860px) {
+  .eth-label {
+    display: none;
+  }
+}

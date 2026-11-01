@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useAppState } from "../lib/hooks";
 import { AccountMenu } from "./AccountMenu";
+import { Toasts } from "./Game";
 
 const LINKS = [
   { to: "/app", label: "Dashboard", icon: "fa-gauge-high", end: true },
@@ -41,6 +42,7 @@ export function AppShell() {
       <main className="app-main">
         <Outlet />
       </main>
+      <Toasts />
       <footer className="app-foot">
         <span>Tontine · settled on NEAR</span>
         <Link to="/thesis">Thesis</Link>

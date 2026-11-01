@@ -311,15 +311,15 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         setStatus(f, "idle");
       }
     },
-    order({ id, side, amount, min }) {
+    order({ id, side, amount, min, asset = "NEAR" }) {
       job.id = id;
-      job.label = `ORDER #${id} · ${side === "Buy" ? "BUY NEAR" : "SELL NEAR"} · ${amount}`;
+      job.label = `ORDER #${id} · ${side === "Buy" ? "BUY" : "SELL"} ${asset} · ${amount}`;
       job.target = 1;
       job.x = -0.15;
       job.tx = 0.5;
       onPhase?.(0);
-      log(`<b>order #${id}</b> · ${side === "Buy" ? "buy" : "sell"} NEAR · ${amount}`);
-      if (min) log(`min ${min}, the 1Click quote`);
+      log(`<b>order #${id}</b> · ${side === "Buy" ? "buy" : "sell"} ${asset} · ${amount}`);
+      if (min) log(`min ${min}, the market reference`);
     },
     commit({ firm, target }) {
       const f = byName.get(firm);
@@ -398,7 +398,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       setStatus(f, liquidating ? "for sale" : `cash under the floor ${n}/${of}`);
       log(liquidating ? `${firm} · <b>liquidating</b>` : `${firm} · cash under the floor ${n}/${of}`, "bad");
     },
-    takeover({ buyer, target, price, fee, holders, near }) {
+    takeover({ buyer, target, price, fee, holders, near, asset = "NEAR" }) {
       const t = byName.get(target);
       const bu = byName.get(buyer);
       if (!t) return;
@@ -417,7 +417,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       onPhase?.(6);
       log(`<b>${buyer}</b> buys ${target} · ${price}`);
       log(`fee ${fee} · old holders <b>+${holders}</b>`);
-      if (near) log(`old holders <b>+${near} NEAR</b>, in kind`);
+      if (near) log(`old holders <b>+${near} ${asset}</b>, in kind`);
     },
     close({ firm }) {
       const f = byName.get(firm);
@@ -926,6 +926,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   }
 
   function simulateLive(dt) {
+    simulateWeather(dt);
     shake = Math.max(0, shake - dt * 1.5);
     parallax += (parallaxTarget - parallax) * Math.min(1, dt * 3);
     tickerX += dt * 26;
@@ -1038,6 +1039,76 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         a.fillRect(x0 + i, G - h, 1, 1);
       }
     });
+  }
+
+  // ------------------------------------------------------------------ live city: weather, from the market regime
+
+  // calm keeps the dusk; alert darkens the sky under drifting clouds; storm adds pixel rain and lightning that
+  // lights the towers. Live only: the replay draws exactly what it drew. Without frames (reduced motion) the
+  // sky and the rain stand still and no lightning strikes.
+  let weather = "calm";
+  let bolt = 0; // seconds left of the current flash
+  let boltX = 0.5;
+  let nextBolt = 3;
+  let rain = null; // drops, made on the first storm
+
+  function simulateWeather(dt) {
+    bolt = Math.max(0, bolt - dt);
+    if (weather !== "storm" || dt <= 0) return;
+    if ((nextBolt -= dt) <= 0) {
+      bolt = 0.4;
+      boltX = 0.1 + Math.random() * 0.8;
+      nextBolt = 4 + Math.random() * 8;
+    }
+  }
+
+  function drawWeatherSky() {
+    if (weather === "calm") return;
+    const storm = weather === "storm";
+    a.globalAlpha = storm ? 0.6 : 0.4;
+    a.fillStyle = "#06040b";
+    a.fillRect(0, 0, W, G);
+    a.globalAlpha = 1;
+    // Flat pixel clouds drifting right, wrapping round.
+    a.fillStyle = storm ? "#1f1828" : "#2b2135";
+    for (let i = 0; i < (storm ? 8 : 5); i++) {
+      const w = 18 + ((i * 37) % 26);
+      const x = (((i * 0.29 + clock * (0.006 + (i % 3) * 0.003)) % 1.25) - 0.15) * W;
+      const y = 3 + ((i * 11) % Math.max(6, Math.round(G * 0.3)));
+      a.fillRect(Math.round(x), y, w, 3);
+      a.fillRect(Math.round(x + 3), y - 2, w - 8, 2);
+      a.fillRect(Math.round(x + 1), y + 3, w - 3, 1);
+    }
+  }
+
+  function drawStorm() {
+    if (weather !== "storm") return;
+    // Rain: thin slanted streaks at three speeds, from a seeded list so a still frame stays put.
+    rain ??= ((r) => Array.from({ length: 240 }, (_, i) => ({ x: r(), y: r(), v: 90 + (i % 3) * 25 })))(rng(97));
+    a.fillStyle = "#9fb4ff";
+    a.globalAlpha = 0.35;
+    for (let i = 0, n = Math.min(rain.length, Math.round(W / 3)); i < n; i++) {
+      const d = rain[i];
+      const y = ((d.y * (H + 8) + clock * d.v) % (H + 8)) - 4;
+      a.fillRect(Math.round(d.x * (W + 20) - 10 - y * 0.12), Math.round(y), 1, 3);
+    }
+    a.globalAlpha = 1;
+    if (bolt <= 0) return;
+    // Lightning: the sky flashes, a bolt drops and every standing tower lights up.
+    const k = Math.min(1, bolt / 0.4);
+    a.globalAlpha = 0.18 * k;
+    a.fillStyle = "#e9e4ff";
+    a.fillRect(0, 0, W, H);
+    a.globalAlpha = 0.45 * k;
+    for (const f of firms) if (f.phase === "standing" && f.lot >= 0 && f.box) a.fillRect(Math.round(f.box.x), f.box.top, f.box.w, f.box.h);
+    a.globalAlpha = k;
+    const r = rng(Math.round(boltX * 1e6));
+    let x = boltX * W;
+    for (let y = 0; y < G * 0.55; y += 3) {
+      x += Math.round((r() - 0.5) * 4);
+      a.fillRect(Math.round(x), y, 1, 3);
+    }
+    a.globalAlpha = 1;
   }
 
   function drawParts() {
@@ -1321,6 +1392,8 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     const live = mode === "live";
     // On a phone the towers are too close for names in the hero view: only the order and the arena show text.
     const crowded = W * 4 < 900 && !live && explore < 0.5;
+    // The live city with more towers than a dashboard card fits (three markets): names only, smaller.
+    const packed = live && canvas.clientWidth < 1100 && firms.filter((f) => f.phase !== "gone" && f.lot >= 0).length > 8;
     if (crowded) {
       if (job.on > 0.05 && job.label) text(job.label, jobPos().x, jobPos().y - 7, "#fff", 12, "center", Math.min(1, job.on));
       return;
@@ -1334,9 +1407,10 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
       const show = live ? (f.phase === "rubble" ? 0.5 : 1) : 0.55 + 0.45 * explore;
       const title = live && f.brand ? f.brand : f.name;
       const sub = !live ? f.status : f.phase === "rubble" ? "wound up" : f.building ? "under construction" : f.forSale ? "for sale" : f.exName ? `ex ${f.exName}` : f.status;
-      text(title.toUpperCase(), x, top, f.forSale ? RED : f.sign, W * 4 < 900 ? 10 : 12, "center", show);
-      // On a phone the live city shows names only: the status lines would run into each other.
-      if ((live && canvas.clientWidth >= 720) || (!live && explore > 0.05)) text(f.forSale && !live ? "for sale" : sub, x, top + 4, "rgba(255,255,255,0.75)", 11, "center", live ? 0.9 * show : explore);
+      text(title.toUpperCase(), x, top, f.forSale ? RED : f.sign, W * 4 < 900 || packed ? 10 : 12, "center", show);
+      // On a phone, or with more towers than the width fits, the live city shows names only: the status lines
+      // would run into each other.
+      if ((live && canvas.clientWidth >= 720 && !packed) || (!live && explore > 0.05)) text(f.forSale && !live ? "for sale" : sub, x, top + 4, "rgba(255,255,255,0.75)", 11, "center", live ? 0.9 * show : explore);
     }
     // Event labels stack above their tower, newest on top, so two never sit on each other.
     const stack = new Map();
@@ -1358,6 +1432,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
   function draw() {
     a.drawImage(back, 0, 0);
     drawStars();
+    if (live) drawWeatherSky();
     drawSkyline();
     drawJob();
     if (live) {
@@ -1369,6 +1444,7 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
     if (live) drawParts();
     if (live) drawAgents();
     drawFlyers();
+    if (live) drawStorm();
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const jolt = () => (live && shake > 0 ? Math.round((Math.random() - 0.5) * shake * 3) * S : 0);
@@ -1514,6 +1590,14 @@ export function startScene({ canvas, tagsLayer, onEvent, onPhase, reducedMotion 
         if (x >= f.box.x - 1 && x <= f.box.x + f.box.w + 1 && y >= top && y <= G + 2) return { id: f.id, name: f.name };
       }
       return null;
+    },
+    /** Live city: the market regime as weather, "calm", "alert" or "storm". */
+    setWeather(level) {
+      if (!live) return;
+      const next = level === "storm" || level === "alert" ? level : "calm";
+      if (next === weather) return;
+      weather = next;
+      if (still) step(0);
     },
     /** -1 to 1: where the pointer is across the page, for a little depth in the far skyline. */
     setParallax(v) {

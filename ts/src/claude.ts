@@ -6,6 +6,7 @@ import type { Completion, Llm } from "./llm.ts";
 export const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5-5";
 
 export class Claude implements Llm {
+  readonly live = true;
   private client = new Anthropic(); // reads ANTHROPIC_API_KEY
 
   async complete(system: string, user: string): Promise<Completion> {
