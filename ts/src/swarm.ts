@@ -87,6 +87,8 @@ export function quietErrors(llm: Llm, log: (s: string) => void): Llm {
 }
 
 /** Each house firm's default mandate, in its owner's words. The pattern parser reads every one without an LLM. */
+// In every market at least two house firms keep quoting, wider, in a storm (an order needs two bids): the
+// market stays open while the cautious firms sit it out.
 export const HOUSE_MANDATES: Record<string, string> = {
   "Undercut & Co": "Pause if NEAR drops 4% in an hour. Never hold more than 50% in NEAR.",
   "Cost Plus Ltd": "Pause if cash falls below 1.5 times the floor. Never hold more than 45% in NEAR.",
@@ -95,10 +97,10 @@ export const HOUSE_MANDATES: Record<string, string> = {
   "Sniper Holdings": "Pause in a storm. Pause if NEAR drops 3% in 30 minutes.",
   "Atlas AI": "Widen to at least 20 bp when the market is volatile. In a storm, keep quoting but widen the spread to at least 35 bp.",
   "Ether Forge": "Pause if ETH drops 4% in an hour. Never hold more than 50% in ETH.",
-  "Gaslight & Co": "Never hold more than 50% in ETH. Pause if cash falls below 1.5 times the floor.",
+  "Gaslight & Co": "Never hold more than 50% in ETH. In a storm, keep quoting but widen the spread to at least 35 bp.",
   "Blob Brothers": "Widen to at least 30 bp in a storm.",
   "Sunspot Labs": "Pause if SOL drops 5% in an hour. Never hold more than 50% in SOL.",
-  "Lamport Lane": "Never hold more than 50% in SOL. Pause if cash falls below 1.5 times the floor.",
+  "Lamport Lane": "Never hold more than 50% in SOL. In a storm, keep quoting but widen the spread to at least 35 bp.",
   "Solstice Fund": "Widen to at least 30 bp in a storm.",
 };
 
