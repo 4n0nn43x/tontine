@@ -180,7 +180,7 @@ export function describe(e: ChainEvent, firm: (id: number) => string, sideOf: (a
     return null;
   }
   if (e.standard === "tontine-firm" && e.event === "spend") {
-    return { icon: "fa-microchip", tone: "", text: `${short(e.contract)} paid ${usdc(d.amount)} USDC of inference` };
+    return { icon: "fa-microchip", tone: "", text: `${short(e.contract)} paid ${usdc(d.amount, 4)} USDC of inference` };
   }
   return null;
 }
