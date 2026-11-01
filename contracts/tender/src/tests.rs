@@ -50,6 +50,8 @@ impl T {
             min_bidders: 0,
             min_order: U128(0),
             max_move_bps: 0,
+            surplus_bps: 0,
+            launch_shares: 0,
         });
         let mut t = T { c, t: 1_000 * SEC };
         // Every caller now prepays the storage it creates (storage_deposit, NEP-145 style).
@@ -600,6 +602,7 @@ fn funds_are_conserved_across_random_orders() {
     stock(&mut t);
     t.c.config.no_reveal_slash_bps = 100;
     t.c.config.slash = U128(USDC / 2);
+    t.c.config.surplus_bps = 3000; // the surplus share lands in admin.near, already counted below
     // Unrevealed bids cost 0.5 USDC of bond each: bond enough to stay over the 5 USDC minimum all run.
     for o in ["o1.near", "o2.near", "o3.near", "o4.near"] {
         t.as_(o, 1);
@@ -1271,4 +1274,266 @@ fn poc_f18_zero_withdrawals_are_refused() {
         let msg = r.err().and_then(|e| e.downcast_ref::<String>().cloned()).unwrap_or_default();
         assert!(msg.contains("amount must be > 0"), "{call}: {msg}");
     }
+}
+
+// ---------------------------------------------------------------- surplus share, launch shares, intents exit, findings 19 to 21
+
+fn panic_msg(f: impl FnOnce()) -> String {
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    r.err().and_then(|e| e.downcast_ref::<String>().cloned()).unwrap_or_default()
+}
+
+/// Buy 40 USDC of NEAR, at least 9: the fill delivers 9.7, 0.7 over the minimum. Tontine takes 30% of that
+/// surplus (0.21 NEAR) and the client gets 9.49; the firm's edge still counts the 9.7 it delivered.
+#[test]
+fn the_surplus_share_on_a_buy() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.c.config.surplus_bps = 3000;
+    let (o, a) = t.post(Side::Buy, 40 * USDC, 9 * NEAR);
+    t.run(a, &[(0, "o1.near", 95 * NEAR / 10), (1, "o2.near", 99 * NEAR / 10), (2, "o3.near", 97 * NEAR / 10)]);
+    let logs = near_sdk::test_utils::get_logs();
+    assert_eq!(t.asset("client.near"), 100 * NEAR + 949 * NEAR / 100);
+    assert_eq!(t.asset("admin.near"), 21 * NEAR / 100, "30% of the 0.7 NEAR surplus");
+    assert_eq!(t.asset("w2.tender.near"), 100 * NEAR - 97 * NEAR / 10, "the firm delivered 9.7");
+    assert_eq!(t.c.get_firm(1).edge.0, 1_200_000, "edge unchanged: 40 - 9.7 * 4");
+    assert_eq!(t.c.get_order(o).out.unwrap().0, 949 * NEAR / 100, "what the client received");
+    assert!(logs.iter().any(|l| l.contains("order_filled") && l.contains(&format!(r#""surplus_fee":"{}""#, 21 * NEAR / 100))));
+}
+
+/// Sell 10 NEAR for at least 38 USDC: the fill pays 39, 1 USDC over the minimum; Tontine takes 0.3 USDC.
+#[test]
+fn the_surplus_share_on_a_sell() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.c.config.surplus_bps = 3000;
+    let (_, a) = t.post(Side::Sell, 10 * NEAR, 38 * USDC);
+    t.run(a, &[(1, "o2.near", 395 * USDC / 10), (2, "o3.near", 39 * USDC)]);
+    assert_eq!(t.bal("client.near"), 100 * USDC + 387 * USDC / 10);
+    assert_eq!(t.bal("admin.near"), 300_000);
+    assert_eq!(t.c.get_firm(1).edge.0, 1_000_000, "edge unchanged: 10 * 4 - 39");
+    assert_eq!(t.bal("w2.tender.near"), 1000 * USDC - 39 * USDC - 300_000, "the firm delivered 39, then 30% of its edge to holders");
+}
+
+#[test]
+fn no_surplus_share_on_a_lone_bid() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.c.config.surplus_bps = 3000;
+    let (_, a) = t.post(Side::Buy, 40 * USDC, 9 * NEAR);
+    t.run(a, &[(0, "o1.near", 95 * NEAR / 10)]);
+    assert_eq!(t.asset("client.near"), 109 * NEAR, "a lone bid fills at the minimum: no surplus");
+    assert_eq!(t.asset("admin.near"), 0);
+}
+
+/// A firm launched with create_firm gives `launch_shares` to Tontine, then a holder like any other:
+/// dividends, liquidation proceeds and inventory in kind. House firms (register_firm) keep all 100.
+#[test]
+fn launch_shares_go_to_tontine_as_a_normal_holder() {
+    let mut t = T::new();
+    t.c.config.launch_shares = 2;
+    t.as_("admin.near", 0);
+    t.c.set_firm_code(Base64VecU8(vec![0, 97, 115, 109]));
+    t.as_("investor.near", 3 * 10u128.pow(24));
+    let id = t.c.create_firm(keys(), U128(20 * USDC), U128(USDC), 3600);
+    assert_eq!(t.c.mt_balance_of(acc("investor.near"), id.to_string()).0, 98);
+    assert_eq!(t.c.mt_balance_of(acc("admin.near"), id.to_string()).0, 2);
+    let logs = near_sdk::test_utils::get_logs();
+    assert_eq!(logs.iter().filter(|l| l.contains("mt_mint")).count(), 2, "one NEP-245 mint per holder");
+    t.as_("admin.near", 0);
+    let house = t.c.register_firm(acc("w7.tender.near"), acc("o1.near"));
+    assert_eq!(t.c.mt_balance_of(acc("o1.near"), house.to_string()).0, 100, "house firms keep their shares");
+    let mut f = t.c.firm(id);
+    Tender::distribute(&mut f, 100 * USDC);
+    t.c.save_firm(f);
+    assert_eq!(t.c.pending_dividends(id, acc("admin.near")).0, 2 * USDC, "2% of the dividends");
+    // w6 has 1 USDC (under the floor) and 10 NEAR; w2 buys it at the second price, 11 USDC.
+    for w in ["w1", "w2", "w3", "w4", "w5", "w7"] {
+        t.c.balances.insert(acc(&format!("{w}.tender.near")), 50 * USDC);
+    }
+    t.c.balances.insert(acc("w6.tender.near"), USDC);
+    t.c.assets.insert(acc("w6.tender.near"), 10 * NEAR);
+    for _ in 0..2 {
+        t.wait(10);
+        t.c.epoch_tick();
+    }
+    let a = t.c.get_firm(id).liquidation_auction.unwrap();
+    t.run(a, &[(1, "o2.near", 20 * USDC), (3, "o4.near", 11 * USDC)]);
+    // Price 11 + treasury 1 - fee 0.22 = 11.78 USDC to the holders.
+    assert_eq!(t.bal("admin.near"), 2 * USDC + 220_000 + 235_600, "its dividends, the fee, and 2% of 11.78");
+    assert_eq!(t.bal("investor.near"), 98 * USDC + 11_544_400);
+    assert_eq!(t.asset("admin.near"), 2 * NEAR / 10, "2% of the inventory in kind");
+    assert_eq!(t.asset("investor.near"), 98 * NEAR / 10);
+}
+
+/// A client from another chain holds an implicit account inside intents.near and no NEAR key: anyone (a
+/// relayer) pays its tender balances back to that same account inside intents.near.
+#[test]
+fn withdraw_to_intents_pays_an_account_its_own_balances() {
+    let mut t = T::new();
+    assert!(panic_msg(|| t.c.withdraw_to_intents(acc("client.near"))).contains("intents only"));
+    t.c.config.payment = Payment::Intents { contract: acc("intents.near"), token_id: "nep141:usdc.near".into() };
+    t.c.config.asset = Payment::Intents { contract: acc("intents.near"), token_id: "nep141:wrap.near".into() };
+    let evm = "0x5aeda56215b167893e80b4fe645ba6d5bab767de";
+    t.as_("x.near", 10u128.pow(22));
+    t.c.storage_deposit(Some(acc(evm)));
+    t.as_("intents.near", 0);
+    let _ = t.c.mt_on_transfer(acc(evm), vec![acc(evm)], vec!["nep141:usdc.near".into()], vec![U128(5 * USDC)], String::new());
+    let _ = t.c.mt_on_transfer(acc(evm), vec![acc(evm)], vec!["nep141:wrap.near".into()], vec![U128(NEAR)], String::new());
+    t.as_("anyone.near", 0);
+    t.c.withdraw_to_intents(acc(evm));
+    assert_eq!((t.bal(evm), t.asset(evm)), (0, 0), "both ledgers emptied");
+    let calls: Vec<String> = near_sdk::test_utils::get_created_receipts()
+        .into_iter()
+        .filter(|r| r.receiver_id == acc("intents.near"))
+        .flat_map(|r| r.actions)
+        .filter_map(|a| match a {
+            near_sdk::mock::MockAction::FunctionCallWeight { method_name, args, .. } => {
+                Some(format!("{}:{}", String::from_utf8_lossy(&method_name), String::from_utf8_lossy(&args)))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls.len(), 2);
+    assert!(calls.iter().all(|c| c.starts_with("mt_transfer:") && c.contains(&format!(r#""receiver_id":"{evm}""#))), "{calls:?}");
+    assert!(panic_msg(|| t.c.withdraw_to_intents(acc(evm))).contains("nothing to withdraw"));
+    t.c.balances.insert(acc("w1.tender.near"), USDC);
+    assert!(panic_msg(|| t.c.withdraw_to_intents(acc("w1.tender.near"))).contains("not for a firm account"));
+}
+
+/// F19 PoC: the keeper gate of 11 compared a sell's fee, in yocto NEAR, with a reward in USDC: self-filled
+/// sells of dust NEAR farmed the reward again. The fee is now valued in stable at the last price.
+#[test]
+fn poc_f19_sell_self_fills_do_not_farm_the_keeper_reward() {
+    let mut t = with_fees();
+    t.c.config.min_order = U128(USDC);
+    t.c.balances.insert(acc("admin.near"), USDC);
+    t.c.balances.insert(acc("anyone.near"), 0);
+    // An honest sell still pays it: 1% of 10 NEAR is worth 0.38 USDC at the fill's price.
+    t.c.balances.insert(acc("w2.tender.near"), 100 * USDC);
+    let (_, a) = t.post(Side::Sell, 10 * NEAR, 38 * USDC);
+    t.run(a, &[(1, "o2.near", 39 * USDC)]);
+    assert_eq!(t.bal("anyone.near"), 20_000);
+    t.c.config.order_fee_bps = 2;
+    t.c.balances.insert(acc("w4.tender.near"), 100 * USDC);
+    t.c.assets.insert(acc("x.near"), 10u128.pow(12));
+    t.c.balances.insert(acc("x.near"), 0);
+    for _ in 0..3 {
+        self_fill(&mut t, Side::Sell, 10u128.pow(8), USDC); // 1e-16 NEAR for 1 USDC: a fee of 2e4 yocto
+    }
+    assert_eq!(t.bal("anyone.near"), 20_000, "no reward for fills whose fee is worth 0.0002 USDC");
+    assert_eq!(t.bal("admin.near"), USDC - 20_000);
+}
+
+/// F20 PoC: the exemption of 12 read the firm's status at settlement. A firm put in liquidation while it
+/// could have revealed, then taken over, is Solvent again, and its old owner was slashed. A takeover since
+/// the commit now exempts the bid.
+#[test]
+fn poc_f20_no_slash_after_a_takeover() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.as_("client.near", 1);
+    let id = t.c.post_order(PostOrder { side: Side::Buy, amount_in: U128(40 * USDC), min_out: U128(9 * NEAR), reference_out: None, commit_secs: 60, reveal_secs: 600 });
+    let a = t.c.get_order(id).auction;
+    t.bid(a, 1, "o2.near", 95 * NEAR / 10); // w2 commits while solvent
+    t.c.balances.insert(acc("w2.tender.near"), USDC); // under the 2 USDC floor
+    for _ in 0..2 {
+        t.wait(10);
+        t.c.epoch_tick();
+    }
+    assert_eq!(t.c.get_firm(1).status, FirmStatus::Liquidating);
+    let la = t.c.get_firm(1).liquidation_auction.unwrap();
+    t.run(la, &[(2, "o3.near", USDC)]);
+    assert_eq!(t.c.get_firm(1).owner, acc("o3.near"));
+    t.wait(700);
+    t.c.settle(a);
+    assert_eq!(t.c.bond_of(acc("o2.near")).0, 10 * USDC, "the old owner could not reveal: no slash");
+    t.as_("o2.near", 1);
+    t.c.withdraw_bond(U128(10 * USDC)); // its lock was released
+}
+
+/// F21 PoC: what reached a closed firm's account could not move. w1 holds half of w5 and is closed first;
+/// w5's wind-up then pays w1 5 USDC and 2 NEAR. Anyone sweeps them to w1's shareholders, as its wind-up did.
+#[test]
+fn poc_f21_a_closed_firm_balance_reaches_its_shareholders() {
+    let mut t = T::new();
+    t.as_("o1.near", 1);
+    t.c.mt_transfer(acc("w1.tender.near"), "4".into(), U128(50), None, None);
+    t.as_("o1.near", 1);
+    t.c.mt_transfer(acc("investor.near"), "0".into(), U128(25), None, None);
+    t.as_("o1.near", 1);
+    t.c.close_firm(0);
+    t.c.balances.insert(acc("w5.tender.near"), 10 * USDC);
+    t.c.assets.insert(acc("w5.tender.near"), 4 * NEAR);
+    t.as_("o1.near", 1);
+    t.c.close_firm(4);
+    assert_eq!((t.bal("w1.tender.near"), t.asset("w1.tender.near")), (5 * USDC, 2 * NEAR), "landed in a closed firm");
+    let o1 = t.bal("o1.near");
+    t.as_("anyone.near", 0);
+    t.c.sweep_closed_firm(0);
+    assert_eq!((t.bal("w1.tender.near"), t.asset("w1.tender.near")), (0, 0));
+    assert_eq!(t.bal("investor.near"), 1_250_000, "25% of the 5 USDC");
+    assert_eq!(t.bal("o1.near") - o1, 3_750_000);
+    assert_eq!(t.asset("investor.near"), NEAR / 2, "25% of the 2 NEAR in kind");
+    assert_eq!(t.asset("o1.near"), 2 * NEAR + 3 * NEAR / 2, "its half of w5, then 75% of what w1 got");
+    assert!(panic_msg(|| t.c.sweep_closed_firm(0)).contains("nothing to sweep"));
+    assert!(panic_msg(|| t.c.sweep_closed_firm(1)).contains("firm not closed"));
+}
+
+/// F23 PoC: a quote committed before a takeover could still be revealed by the buyer (or the old agent key)
+/// when the market moved its way, while its slash was waived (F20): a free option. Now it cannot be revealed.
+#[test]
+fn poc_f23_a_bid_committed_before_a_takeover_cannot_be_revealed() {
+    let mut t = T::new();
+    stock(&mut t);
+    t.as_("client.near", 1);
+    let id = t.c.post_order(PostOrder { side: Side::Buy, amount_in: U128(40 * USDC), min_out: U128(9 * NEAR), reference_out: None, commit_secs: 60, reveal_secs: 600 });
+    let a = t.c.get_order(id).auction;
+    t.bid(a, 1, "o2.near", 95 * NEAR / 10);
+    t.c.balances.insert(acc("w2.tender.near"), USDC); // o2 drains w2 under the floor
+    for _ in 0..2 {
+        t.wait(10);
+        t.c.epoch_tick();
+    }
+    let la = t.c.get_firm(1).liquidation_auction.unwrap();
+    t.run(la, &[(2, "o3.near", USDC)]);
+    assert_eq!(t.c.get_firm(1).owner, acc("o3.near"));
+    t.wait(60);
+    t.c.assets.insert(acc("w2.tender.near"), 10 * NEAR);
+    for who in ["o3.near", "w2.tender.near"] {
+        t.as_(who, 0);
+        assert_eq!(panic_msg(|| t.c.reveal_bid(a, 1, U128(95 * NEAR / 10), "s1".into())), "the firm changed hands since this commit");
+    }
+}
+
+/// F24 PoC: anyone could push Tontine's fee balance, which pays keeper rewards, out with withdraw_to_intents.
+#[test]
+fn poc_f24_nobody_moves_tontines_fee_balance() {
+    let mut t = with_fees();
+    t.c.config.payment = Payment::Intents { contract: acc("intents.near"), token_id: "nep141:usdc.near".into() };
+    t.c.config.asset = Payment::Intents { contract: acc("intents.near"), token_id: "nep141:wrap.near".into() };
+    t.c.balances.insert(acc("admin.near"), 5 * USDC);
+    t.c.balances.insert(acc("tender.near"), USDC);
+    for who in ["admin.near", "tender.near"] {
+        t.as_("mallory.near", 0);
+        assert_eq!(panic_msg(|| t.c.withdraw_to_intents(acc(who))), "not for Tontine's own balance");
+    }
+    assert_eq!(t.bal("admin.near"), 5 * USDC);
+}
+
+/// F19, the gate without a price cap: a sell's fee is valued at the price before the fill, which the fill
+/// cannot move, so a self-sell of dust NEAR for a lot of the seller's own USDC earns no keeper reward.
+#[test]
+fn poc_f19_the_fee_is_valued_before_the_fill_moves_the_price() {
+    let mut t = with_fees();
+    t.c.config.order_fee_bps = 2;
+    t.c.config.min_order = U128(USDC);
+    t.c.config.max_move_bps = 0;
+    t.c.balances.insert(acc("admin.near"), USDC);
+    t.c.balances.insert(acc("anyone.near"), 0);
+    t.c.balances.insert(acc("w4.tender.near"), 1000 * USDC);
+    t.c.assets.insert(acc("x.near"), 10u128.pow(12));
+    t.c.balances.insert(acc("x.near"), 0);
+    self_fill(&mut t, Side::Sell, 10u128.pow(8), 100 * USDC);
+    assert_eq!(t.bal("anyone.near"), 0, "a fee of 2e4 yocto NEAR is worth nothing at the price before the fill");
 }

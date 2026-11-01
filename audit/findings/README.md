@@ -20,6 +20,13 @@
 | 16 | A copied commit turned the second price into the first | Medium | fixed |
 | 17 | buy_shares paid whatever the ask said when the transaction landed | Medium | fixed |
 | 18 | storage_deposit with nothing attached created an entry nobody paid for | Low | fixed |
+| 19 | A sell's fee in NEAR was compared with a keeper reward in USDC | Low | fixed |
+| 20 | An old owner was slashed for a bid that a takeover made impossible to reveal | Low | fixed |
+| 21 | What reached a closed firm's account could not move | Low | fixed |
+| 22 | The old owner kept control of the firm's EVM address after a takeover | Medium | fixed |
+| 23 | A quote committed before a takeover was a free option | Low | fixed |
+| 24 | Anyone could push Tontine's fee balance out with withdraw_to_intents | Low | fixed |
+| 25 | The EVM policy limited the call, not where the tokens went | Low | fixed, amount not capped |
 
 Re-run every PoC: `cd ts && npx tsx src/audit-poc.ts` (prints NOT REPRODUCED on the fixed contracts) and
 `cd contracts && cargo test poc_`.
@@ -50,6 +57,11 @@ Every finding up to 05, and 07, still has its test or sandbox PoC on the order c
 
 Fourth pass (commit `fa98ee5`, 2026-10-31): a second independent reviewer re-read both contracts and
 checked the fixes of 01 to 13. It found 14 to 18, each with a PoC that fails on `fa98ee5` and a test that
-passes on the fix. Also found, Low and not fixed yet: the fix of 11 compares a fee in NEAR with a reward
-in USDC on sell orders; the fix of 12 misses a firm taken over between its commit and the settlement;
-NEAR credited to a closed firm account cannot be moved.
+passes on the fix. It also found three Lows, fixed afterwards: the fix of 11 compared a fee in NEAR with a
+reward in USDC on sell orders (19); the fix of 12 missed a firm taken over between its commit and the
+settlement (20); NEAR credited to a closed firm account could not be moved (21). Each has a PoC test,
+`poc_f19_...` to `poc_f21_...`, that fails with its fix reverted and passes with it.
+
+Fifth pass (2026-11-01, uncommitted work on `fa3c438`: surplus share, launch shares, `withdraw_to_intents`,
+`sweep_closed_firm`, the EVM signing path): a third independent reviewer found 22 to 25 (nothing High) and
+confirmed each with a test; all fixed, 25 without an amount cap.

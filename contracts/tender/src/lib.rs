@@ -100,6 +100,13 @@ pub struct Config {
     /// Most the reference price moves per hour, however many fills (0 = no limit): fills cannot set it at will.
     #[serde(default)]
     pub max_move_bps: u16,
+    /// Tontine's cut of a fill's improvement over the client's minimum (`out - min_out`), in the token the
+    /// client receives. Paid to `admin`: the client always gets at least `min_out`.
+    #[serde(default)]
+    pub surplus_bps: u16,
+    /// Shares of a firm launched with `create_firm` that go to `admin` (at most 100); the creator gets the rest.
+    #[serde(default)]
+    pub launch_shares: u32,
 }
 
 #[near(serializers = [borsh, json])]
@@ -200,6 +207,8 @@ pub struct Bid {
     /// hex(sha256("{auction_id}:{firm_id}:{amount}:{salt}")): bound to its auction and firm, so it cannot be copied.
     pub hash: String,
     pub revealed: Option<U128>,
+    /// Firm takeover count at commit: after a takeover the old owner cannot reveal, so it is not slashed.
+    pub takeover: u32,
 }
 
 #[near(serializers = [borsh, json])]
@@ -395,12 +404,13 @@ impl Tender {
     #[init]
     pub fn new(config: Config) -> Self {
         require!(
-            [config.dividend_bps, config.liquidation_fee_bps, config.order_fee_bps, config.trade_fee_bps, config.no_reveal_slash_bps]
+            [config.dividend_bps, config.liquidation_fee_bps, config.order_fee_bps, config.trade_fee_bps, config.no_reveal_slash_bps, config.surplus_bps]
                 .iter()
                 .all(|b| *b as u128 <= BPS),
             "bps > 100%"
         );
         require!(config.asset_unit.0 > 0 && config.initial_price.0 > 0, "asset_unit and initial_price must be > 0");
+        require!(config.launch_shares <= SHARES, "launch_shares above 100");
         let mut c = Self {
             last_price: config.initial_price.0,
             price_anchor: config.initial_price.0,
@@ -629,6 +639,33 @@ impl Tender {
         require!(amount.0 > 0, "amount must be > 0");
         let me = env::predecessor_account_id();
         let to = receiver_id.unwrap_or_else(|| me.clone());
+        self.send(t, me, amount, to)
+    }
+
+    /// Anyone pays an account its whole stable and asset balances into the same account inside intents.near:
+    /// a relayer pays back a client from another chain, whose implicit `0x...` account has no NEAR key.
+    /// There is no receiver: it only moves an account's own money. Firm accounts are refused, since a firm
+    /// contract cannot move a balance held inside intents.near. Attach 60 TGas (two transfers).
+    pub fn withdraw_to_intents(&mut self, account_id: AccountId) {
+        require!(
+            matches!((&self.config.payment, &self.config.asset), (Payment::Intents { .. }, Payment::Intents { .. })),
+            "intents only"
+        );
+        require!(self.firm_by_account.get(&account_id).is_none(), "not for a firm account");
+        // Tontine's fee balance pays keeper rewards: nobody else may move it out.
+        require!(account_id != self.config.admin && account_id != env::current_account_id(), "not for Tontine's own balance");
+        let stable = self.balances.get(&account_id).copied().unwrap_or(0);
+        let asset = self.asset_of(&account_id);
+        require!(stable > 0 || asset > 0, "nothing to withdraw");
+        for (t, amount) in [(Token::Stable, stable), (Token::Asset, asset)] {
+            if amount > 0 {
+                self.send(t, account_id.clone(), U128(amount), account_id.clone()).detach();
+            }
+        }
+    }
+
+    /// Debit `me` and send to `to`; the callback credits `me` back if the transfer fails.
+    fn send(&mut self, t: Token, me: AccountId, amount: U128, to: AccountId) -> Promise {
         self.debit_t(t, &me, amount.0);
         let route = if t == Token::Stable { &self.config.payment } else { &self.config.asset };
         let p = match route {
@@ -692,7 +729,7 @@ impl Tender {
     /// The owner receives the 100 shares.
     pub fn register_firm(&mut self, account: AccountId, owner: AccountId) -> u32 {
         require!(env::predecessor_account_id() == self.config.admin, "admin only");
-        self.add_firm(account, owner)
+        self.add_firm(account, owner, 0)
     }
 
     /// Admin stores the firm contract code that `create_firm` deploys.
@@ -702,8 +739,9 @@ impl Tender {
     }
 
     /// Anyone launches a firm: tender creates `w{id+1}.<tender>` with the firm contract and the two agent
-    /// keys (bidding on tender, `spend` on the firm), never a full access key. The caller owns the 100
-    /// shares and can list them for sale at once. Attach 3 NEAR (code storage and agent gas) and 150 TGas.
+    /// keys (bidding on tender, `spend` and `sign_evm` on the firm), never a full access key. The caller owns
+    /// the 100 shares less `launch_shares`, which go to Tontine, and can list them for sale at once. Attach
+    /// 3 NEAR (code storage and agent gas) and 150 TGas.
     #[payable]
     pub fn create_firm(&mut self, agent_keys: Vec<PublicKey>, budget: U128, max_per_call: U128, epoch_secs: u64) -> u32 {
         let me = env::predecessor_account_id();
@@ -715,7 +753,8 @@ impl Tender {
         let code = env::storage_read(FIRM_CODE_KEY).unwrap_or_else(|| env::panic_str("firm code not set"));
         let account: AccountId = format!("w{}.{}", self.firms.len() + 1, env::current_account_id()).parse().unwrap();
         let s0 = self.usage();
-        let id = self.add_firm(account.clone(), me.clone());
+        let launch = if me == self.config.admin { 0 } else { self.config.launch_shares };
+        let id = self.add_firm(account.clone(), me.clone(), launch);
         self.charge(&me, s0);
         let init = json!({
             "tender": env::current_account_id(),
@@ -731,7 +770,8 @@ impl Tender {
             .deploy_contract(code)
             .function_call("new".to_string(), init.to_string().into_bytes(), NearToken::from_yoctonear(0), GAS_FIRM_INIT)
             .add_access_key_allowance(agent_keys[0].clone(), Allowance::unlimited(), env::current_account_id(), AGENT_TENDER_METHODS.to_string())
-            .add_access_key_allowance(agent_keys[1].clone(), Allowance::unlimited(), account, "spend".to_string())
+            // The firm key may spend the budget and call the firm contract's `sign_evm`.
+            .add_access_key_allowance(agent_keys[1].clone(), Allowance::unlimited(), account, "spend,sign_evm".to_string())
             .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_firm_created(id, me, U128(deposit.as_yoctonear())))
             .detach();
         id
@@ -749,16 +789,22 @@ impl Tender {
         ok
     }
 
-    fn add_firm(&mut self, account: AccountId, owner: AccountId) -> u32 {
+    /// `launch` of the 100 shares go to `admin`, the rest to the owner.
+    fn add_firm(&mut self, account: AccountId, owner: AccountId, launch: u32) -> u32 {
         require!(self.firm_by_account.get(&account).is_none(), "firm exists");
         let id = self.firms.len();
+        let holdings: Vec<Holding> = [(owner.clone(), SHARES - launch), (self.config.admin.clone(), launch)]
+            .into_iter()
+            .filter(|h| h.1 > 0)
+            .map(|(account, shares)| Holding { account, shares, debt: U128(0) })
+            .collect();
         self.firms.push(Firm {
             id,
             account: account.clone(),
             owner: owner.clone(),
             status: FirmStatus::Solvent,
             acc_per_share: U128(0),
-            holdings: vec![Holding { account: owner.clone(), shares: SHARES, debt: U128(0) }],
+            holdings: holdings.clone(),
             debts: vec![],
             loan_terms: None,
             epochs_below_floor: 0,
@@ -778,7 +824,9 @@ impl Tender {
         });
         self.firm_by_account.insert(account.clone(), id);
         emit("firm_registered", json!({"firm_id": id, "account": account, "owner": owner}));
-        emit_mt("mt_mint", json!({"owner_id": owner, "token_ids": [id.to_string()], "amounts": [SHARES.to_string()]}));
+        for h in holdings {
+            emit_mt("mt_mint", json!({"owner_id": h.account, "token_ids": [id.to_string()], "amounts": [h.shares.to_string()]}));
+        }
         id
     }
 
@@ -1083,7 +1131,7 @@ impl Tender {
             }
         }
         let s0 = self.usage();
-        a.bids.push(Bid { firm_id, owner: f.owner.clone(), hash, revealed: None });
+        a.bids.push(Bid { firm_id, owner: f.owner.clone(), hash, revealed: None, takeover: f.takeovers });
         self.auctions.replace(auction_id as u32, a);
         self.lock(&f.owner, true);
         self.charge(&f.owner, s0);
@@ -1098,6 +1146,9 @@ impl Tender {
         let i = a.bids.iter().position(|b| b.firm_id == firm_id).unwrap_or_else(|| env::panic_str("no commit"));
         require!(a.bids[i].revealed.is_none(), "already revealed");
         require!(bid_hash(auction_id, firm_id, amount.0, &salt) == a.bids[i].hash, "hash mismatch");
+        // The firm changed hands since the commit: the old owner's quote is not the buyer's to reveal
+        // (and the slash is waived for it, audit finding 20), so it cannot be a free option either.
+        require!(a.bids[i].takeover == f.takeovers, "the firm changed hands since this commit");
         require!(amount.0 >= a.reserve.0, "bid below reserve");
         require!(f.status != FirmStatus::Liquidating && f.status != FirmStatus::Closed, "firm in liquidation or closed");
         let s0 = self.usage();
@@ -1199,8 +1250,11 @@ impl Tender {
                     self.credit_t(escrow, &f.account, refund);
                     self.save_firm(f);
                 }
-                // A firm put in liquidation or closed after its commit could not reveal: no slash.
-                (None, Some(o)) if f.status != FirmStatus::Liquidating && f.status != FirmStatus::Closed => self.slash_no_reveal(o, b),
+                // A firm put in liquidation or closed after its commit could not reveal: no slash. Nor could the
+                // owner who bid once a takeover gave the firm to another (audit finding 20).
+                (None, Some(o)) if f.status != FirmStatus::Liquidating && f.status != FirmStatus::Closed && f.takeovers == b.takeover => {
+                    self.slash_no_reveal(o, b)
+                }
                 _ => {}
             }
         }
@@ -1208,7 +1262,7 @@ impl Tender {
         self.auctions.replace(auction_id as u32, a.clone());
         emit("auction_settled", json!({"auction_id": auction_id, "winner": a.winner, "price": a.price}));
         // A keeper is paid for a liquidation, or for a fill whose fee covers the reward: an order nobody
-        // filled, or a self-filled dust order, would let anyone farm rewards (audit findings 07, 10).
+        // filled, or a self-filled dust order, would let anyone farm rewards (audit findings 07, 11, 19).
         let pay_keeper = match kind {
             AuctionKind::Order(oid) => self.on_order_auction(oid, a.winner, a.price).map_or(false, |fee| fee >= self.config.keeper_reward.0),
             AuctionKind::Liquidation(firm_id) => {
@@ -1308,7 +1362,8 @@ impl Tender {
     /// (`price`), keeps the rest, and receives what the client sold, minus Tontine's fee. The fill's edge
     /// against the previous clearing price is the firm's realized result: 30% of a positive edge goes to
     /// its shareholders at once.
-    /// Returns Tontine's fee on the fill, None when the order is refunded.
+    /// Tontine also takes `surplus_bps` of the client's improvement over its minimum, in the output token.
+    /// Returns the stable value of Tontine's order fee on the fill, None when the order is refunded.
     fn on_order_auction(&mut self, id: u64, winner: Option<u32>, price: Option<U128>) -> Option<u128> {
         let mut o = self.order(id);
         let (tin, tout) = tokens(o.side);
@@ -1322,9 +1377,13 @@ impl Tender {
         let mut f = self.firm(fid);
         let (amount_in, out) = (o.amount_in.0, out.0);
         let fee = amount_in * self.config.order_fee_bps as u128 / BPS;
-        self.credit_t(tout, &o.client, out);
+        // The firm delivered `out`; the client gets it less Tontine's share of the surplus, never under min_out.
+        let surplus_fee = (out - o.min_out.0) * self.config.surplus_bps as u128 / BPS;
+        let admin = self.config.admin.clone();
+        self.credit_t(tout, &o.client, out - surplus_fee);
+        self.credit_t(tout, &admin, surplus_fee);
         self.credit_t(tin, &f.account, amount_in - fee);
-        self.credit_t(tin, &self.config.admin.clone(), fee);
+        self.credit_t(tin, &admin, fee);
 
         let unit = self.config.asset_unit.0;
         let (edge, notional, price) = match o.side {
@@ -1352,17 +1411,20 @@ impl Tender {
         f.edge = I128(f.edge.0 + edge);
         f.fills += 1;
         f.volume = U128(f.volume.0 + notional);
+        // A sell's fee is in the asset: value it in stable at the price before this fill, which the fill
+        // itself cannot move (audit finding 19).
+        let fee_value = if tin == Token::Asset { self.value(fee) } else { fee };
         self.last_price = price;
         o.status = OrderStatus::Filled;
         o.firm = Some(fid);
-        o.out = Some(U128(out));
+        o.out = Some(U128(out - surplus_fee));
         emit(
             "order_filled",
-            json!({"order_id": id, "firm_id": fid, "side": o.side, "amount_in": o.amount_in, "out": U128(out), "min_out": o.min_out, "reference_out": o.reference_out, "fee": U128(fee), "edge": I128(edge), "price": U128(price)}),
+            json!({"order_id": id, "firm_id": fid, "side": o.side, "amount_in": o.amount_in, "out": U128(out), "min_out": o.min_out, "reference_out": o.reference_out, "fee": U128(fee), "surplus_fee": U128(surplus_fee), "edge": I128(edge), "price": U128(price)}),
         );
         self.save_firm(f);
         self.orders.replace(id as u32, o);
-        Some(fee)
+        Some(fee_value)
     }
 
     // ---------------------------------------------------------------- epochs & liquidation
@@ -1493,6 +1555,28 @@ impl Tender {
 
     fn wind_up(&mut self, f: &mut Firm, reason: &str) {
         require!(f.escrow.0 == 0 && f.escrow_asset.0 == 0, "the firm has open bids: settle them first");
+        let (paid, given) = self.pay_out(f);
+        f.status = FirmStatus::Closed;
+        f.liquidation_auction = None;
+        emit("firm_closed", json!({"firm_id": f.id, "reason": reason, "to_shareholders": U128(paid), "asset_to_shareholders": U128(given)}));
+    }
+
+    /// Anyone pays what reached a closed firm's account after it closed (NEAR from a wound-up subsidiary,
+    /// dividends on shares it holds) the way it was wound up: lenders, then shareholders (audit finding 21).
+    pub fn sweep_closed_firm(&mut self, firm_id: u32) {
+        let mut f = self.firm(firm_id);
+        require!(f.status == FirmStatus::Closed, "firm not closed");
+        require!(self.balances.get(&f.account).copied().unwrap_or(0) > 0 || self.asset_of(&f.account) > 0, "nothing to sweep");
+        let s0 = self.usage();
+        let (paid, given) = self.pay_out(&mut f);
+        self.save_firm(f);
+        self.charge(&env::predecessor_account_id(), s0);
+        emit("firm_swept", json!({"firm_id": firm_id, "to_shareholders": U128(paid), "asset_to_shareholders": U128(given)}));
+    }
+
+    /// The treasury pays the creditors, then the shareholders pro rata (dust to Tontine); the asset goes to
+    /// the shareholders in kind. Returns the stable and the asset paid to shareholders.
+    fn pay_out(&mut self, f: &mut Firm) -> (u128, u128) {
         let treasury = self.balances.get(&f.account).copied().unwrap_or(0);
         self.debit(&f.account.clone(), treasury);
         let rest = self.pay_creditors(f, treasury);
@@ -1504,10 +1588,7 @@ impl Tender {
             self.settle_holding(f, i);
         }
         self.credit(&self.config.admin.clone(), dust);
-        let given = self.asset_to_holders(f);
-        f.status = FirmStatus::Closed;
-        f.liquidation_auction = None;
-        emit("firm_closed", json!({"firm_id": f.id, "reason": reason, "to_shareholders": U128(rest - dust), "asset_to_shareholders": U128(given)}));
+        (rest - dust, self.asset_to_holders(f))
     }
 
     /// The asset inventory goes to the shareholders in kind, pro rata; the rounding remainder to Tontine.
