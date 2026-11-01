@@ -301,7 +301,10 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
     const T = tenderOf(s);
     const saved = [...st.orders.filter((o) => o.symbol === s), ...(s === "NEAR" ? st.wallets.map((w) => ({ ...w, id: w.orderId })) : [])];
     const from = Math.max(0, Math.max(0, ...saved.map((o) => o.id)) - 40);
-    const open = (await view<any[]>(provider, T, "get_orders", { from, limit: 80 })).filter((o) => o.status === "Open");
+    // Open on chain, or saved as open (its auction settled but the read after it failed): both are refreshed.
+    const chain = (await view<any[]>(provider, T, "get_orders", { from, limit: 80 })).filter((o) => o.status === "Open");
+    const ids = new Set([...chain.map((o) => o.id), ...saved.filter((o) => o.status === "Open").map((o) => o.id)]);
+    const open = await Promise.all([...ids].map((id) => chain.find((o) => o.id === id) ?? view(provider, T, "get_order", { order_id: id })));
     if (!open.length) return;
     const now = BigInt(((await provider.viewBlock({ finality: "final" } as any)) as any).header.timestamp_nanosec);
     for (const o of open) {

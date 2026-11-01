@@ -235,7 +235,12 @@ export class Swarm {
       if (!String(e).includes("already settled")) throw e;
       return null;
     });
-    const a = await view(this.provider, this.tender, "get_auction", { auction_id: auctionId });
+    // A load-balanced public RPC (testnet) may answer from a node a block behind the settle: read until it shows.
+    let a = await view(this.provider, this.tender, "get_auction", { auction_id: auctionId });
+    for (let i = 0; i < 10 && !a.settled; i++) {
+      await new Promise((ok) => setTimeout(ok, 1000));
+      a = await view(this.provider, this.tender, "get_auction", { auction_id: auctionId });
+    }
     return { ...a, events: r?.events ?? [], txHash: r?.txHash ?? "" };
   }
 
@@ -357,7 +362,7 @@ export class Swarm {
       r.filled++;
       r.edge += BigInt(filled?.edge ?? 0);
     }
-    this.log(`  filled  ${w?.strategy.name ?? `firm #${a.winner}`} delivers ${this.fmt(BigInt(a.price), o.side)} (second best), client gets ${this.fmt(BigInt(after.out), o.side)}, edge ${(Number(filled?.edge ?? 0) / 1e6).toFixed(4)} USDC`);
+    this.log(`  filled  ${w?.strategy.name ?? `firm #${a.winner}`} delivers ${a.price ? this.fmt(BigInt(a.price), o.side) : "?"} (second best), client gets ${this.fmt(BigInt(after.out), o.side)}, edge ${(Number(filled?.edge ?? 0) / 1e6).toFixed(4)} USDC`);
     return { auction: a, order: after };
   }
 
