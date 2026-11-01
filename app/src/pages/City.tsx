@@ -7,7 +7,7 @@ import { getQuote, marketOf, nameOf, regimeOf, SYMBOLS, type AppState, type Chai
 import { announceTx, firmNameIn, useConfig, useEvents, useStates, useWallet } from "../lib/hooks";
 import { createWallet, postOrder } from "../lib/near";
 import { ASSETS, auctionAmount, firmColor, usdc } from "../lib/format";
-import { BADGES, loadPlayer, oddsOf, Sealed, STAKES, type Round } from "../lib/sealed";
+import { BADGES, loadPlayer, oddsOf, Sealed, secondsLeft, STAKES, type Round } from "../lib/sealed";
 import "../styles/city.css";
 
 const STORE = "tontine.sealed";
@@ -43,14 +43,6 @@ function plazaFirms(states: Record<MarketSymbol, AppState | null>): PlazaFirm[] 
     const order = [...firms].sort((a, b) => Number(BigInt(b.nav) - BigInt(a.nav)));
     return firms.map((f, i) => ({ key: keyOf(m, f.id), market: m, name: nameOf(f), color: firmColor(nameOf(f), i), nav: Number(f.nav) / 1e6, fills: f.fills, status: f.status, rank: order.indexOf(f) + 1 }));
   });
-}
-
-/** Seconds left to back a firm: the order's commit end against the chain clock the state last saw. */
-function secondsLeft(r: Round, s: AppState | null): number | null {
-  const o = s?.orders.find((x) => x.id === r.order);
-  if (!o || !s) return null;
-  const now = BigInt(s.chainTime) + BigInt(Date.now() - s.updatedAt) * 1_000_000n;
-  return Math.max(0, Math.ceil(Number(BigInt(o.auctionState.commit_end) - now) / 1e9));
 }
 
 /** SEALED, the live city: every auction is a round; back the firm you think wins before the bids open. */

@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { LineChart, type Series } from "../components/Chart";
-import { SceneView, type SceneApi } from "../components/SceneView";
 import { Count, fixed, Leaderboard, Skel, useLeaderboard } from "../components/Game";
 import { Badge, Card, Countdown, Empty, EventFeed, Kpi, MarketTabs } from "../components/ui";
 import { RegimeChip } from "../components/Ai";
 import { TestnetCard } from "../components/Testnet";
-import { worstRegime } from "../lib/ai";
-import { regimeOf, SYMBOLS, type AppState, type ChainEvent, type MarketSymbol, type OrderState } from "../lib/api";
-import { ASSETS, bpText, gotText, paidText, regimeSplit, STORM_NOTE, usd, usdc, type Asset } from "../lib/format";
-import { firmNameIn, inMarket, inTender, useChainNow, useConfig, useEvents, useFirmNames, useMarket, useStates, useStats } from "../lib/hooks";
-import { cityFirms, cityLink, cityMarket, liveDriver } from "../lib/live";
+import { marketOf, nameOf, regimeOf, SYMBOLS, type AppState, type ChainEvent, type MarketSymbol, type OrderState } from "../lib/api";
+import { ASSETS, auctionAmount, bpText, gotText, paidText, regimeSplit, STORM_NOTE, usd, usdc, type Asset } from "../lib/format";
+import { inMarket, inTender, useChainNow, useConfig, useEvents, useFirmNames, useMarket, useStates, useStats } from "../lib/hooks";
+import { newPlayer, secondsLeft, Sealed, type Market as RoundMarket, type Round } from "../lib/sealed";
 
 export const PHASES = ["Order", "Sealed", "Revealed", "Filled", "Slashed", "Liquidating", "Acquired"];
 
@@ -23,6 +21,36 @@ export function PhaseStrip({ phase }: { phase: number }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/** The newest auction, as text over the SEALED poster: who sealed a bid, the countdown, then the winner. */
+function LiveRound({ rounds, states }: { rounds: Sealed; states: Record<MarketSymbol, AppState | null> }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const all = [...rounds.rounds.values()];
+  const r: Round | undefined = all.filter((x) => x.phase === "sealed" || x.phase === "revealed").at(-1) ?? all.filter((x) => Date.now() - x.at < 25_000).at(-1);
+  if (!r) return <p className="sealed-live">The next sealed auction starts in a few seconds.</p>;
+  const firm = (id: number) => nameOf(states[r.market]?.firms.find((f) => f.id === id), id);
+  const left = r.phase === "sealed" ? secondsLeft(r, states[r.market]) : null;
+  return (
+    <div className="sealed-live">
+      <p>
+        <b style={{ color: ASSETS[r.market].color }}>{r.market}</b> order #{r.order} · {r.phase === "sealed" ? `${r.bidders.length} sealed bid${r.bidders.length === 1 ? "" : "s"}` : r.phase}
+        {left !== null && <b className="t"> {left}s</b>}
+      </p>
+      <ul>
+        {r.bidders.map((id) => (
+          <li key={id} className={r.winner === id ? "won" : ""}>
+            {r.winner === id && <i className="fa-solid fa-crown" aria-label="winner" />} {firm(id)}
+            {r.revealed[id] && <span> {auctionAmount(r.revealed[id], r.side, ASSETS[r.market])}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -59,24 +87,19 @@ export function Dashboard() {
   const { data: stats } = useStats();
   const config = useConfig();
   const firmName = useFirmNames();
-  const scene = useRef<SceneApi | null>(null);
-  const driver = useRef<((e: any) => void) | null>(null);
+  // The live round of the SEALED card: chain events in, text out (no canvas here, so the dashboard stays light).
+  const rounds = useRef(new Sealed(newPlayer("")));
   const [phase, setPhase] = useState(-1);
-  const events = useEvents(500, (e) => driver.current?.(e));
+  const latest = useRef(config);
+  latest.current = config;
+  const events = useEvents(500, (e) => {
+    const m = marketOf(latest.current, e.contract)?.symbol as RoundMarket | undefined;
+    if (!m || e.standard !== "tontine") return;
+    rounds.current.apply({ event: e.event, market: m, data: e.data });
+    const at = { order_posted: 0, bid_committed: 1, bid_revealed: 2, order_filled: 3, slashed: 4, liquidation_started: 5, liquidated: 6 }[e.event];
+    if (at !== undefined) setPhase(at);
+  });
   const now = useChainNow(states.NEAR);
-  // The city is built once every market has answered; later firms are founded in it (setFirms), not rebuilt.
-  const ready = SYMBOLS.every((s) => states[s]);
-  const firmNames = useMemo(() => (ready ? cityFirms(states).map((f) => f.name) : null), [ready]);
-  const latest = useRef({ states, config });
-  latest.current = { states, config };
-  useEffect(() => {
-    if (ready) scene.current?.setFirms(cityFirms(states), cityMarket(states.NEAR));
-  }, [states.NEAR, states.ETH, states.SOL]);
-  // The worst market regime is the city's weather.
-  const weather = worstRegime(states);
-  useEffect(() => scene.current?.setWeather(weather), [weather]);
-  const navigate = useNavigate();
-  const [pointer, setPointer] = useState(false);
   const own = useMemo(() => events.filter((e) => inTender(e, market?.tender)), [events, market?.tender]);
   // Recompute the chart only when an order event arrives or the reference moves, so a zoom survives the polls.
   const lastOrderEvent = own.reduce((k, e) => (e.event === "order_filled" || e.event === "order_posted" ? e.id : k), 0);
@@ -131,37 +154,17 @@ export function Dashboard() {
           action={
             <div className="arena-actions">
               <PhaseStrip phase={phase} />
-              <a className="btn small" href="/city" target="_blank" rel="noopener" title="Open the city full screen in a new tab">
-                <i className="fa-solid fa-up-right-from-square" aria-hidden="true" /> Full screen
-              </a>
             </div>
           }
         >
-          <div
-            className={`arena-hit ${pointer ? "pointer" : ""}`}
-            onClick={(e) => {
-              const hit = scene.current?.pick(e.clientX, e.clientY);
-              if (hit) navigate(cityLink(hit.id));
-            }}
-            onMouseMove={(e) => setPointer(!!scene.current?.pick(e.clientX, e.clientY))}
-          >
-            <SceneView
-              mode="live"
-              className="arena"
-              firmNames={firmNames}
-              onReady={(api) => {
-                scene.current = api;
-                api.setExplore(true);
-                // Names come from the latest states: firms founded after the city was built keep theirs.
-                driver.current = liveDriver(api, (id, contract) => firmNameIn(latest.current.states, latest.current.config)(id, contract));
-                api.setFirms(cityFirms(latest.current.states), cityMarket(latest.current.states.NEAR));
-                api.setWeather(worstRegime(latest.current.states));
-              }}
-              onPhase={setPhase}
-              fallback={<Empty>The city view needs a canvas. The figures and the feed below are live anyway.</Empty>}
-            />
-          </div>
-          <p className="caption">Each tower is a firm of the NEAR, ETH or SOL market: it grows with its fills and value, goes dark when for sale, moves next to its buyer, falls when wound up. Click one to open it.</p>
+          <Link className="sealed-card" to="/city" aria-label="Play SEALED, the live auctions as a game">
+            <img src="/sealed.jpg" alt="" width="1200" height="600" loading="lazy" />
+            <LiveRound rounds={rounds.current} states={states} />
+            <span className="btn primary sealed-play">
+              <i className="fa-solid fa-play" aria-hidden="true" /> Play SEALED
+            </span>
+          </Link>
+          <p className="caption">Every order is a sealed auction between AI firms. In SEALED, back the firm you think wins before the bids open: play chips, nothing on chain.</p>
         </Card>
 
         <Card title="Live feed" className="feed-card">

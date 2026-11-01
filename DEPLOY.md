@@ -141,8 +141,8 @@ saved as soon as it is posted, and auctions left open by a restart are settled f
 ### Website details
 
 The landing background is a pixel-art city at dusk (Canvas 2D, no WebGL) where every building is a firm. It
-**replays the real `make demo` run** with its figures; on the dashboard the same city is driven by the
-events of the devnet. With `prefers-reduced-motion` it renders one still frame. QA helpers on the landing:
+**replays the real `make demo` run** with its figures. The dashboard shows no animation of its own: a still
+of SEALED with the live round as text, so it stays light. With `prefers-reduced-motion` it renders one still frame. QA helpers on the landing:
 `?t=24` jumps to second 24 of the replay, `&still` renders a single frame.
 
 Shared links get a preview (X, Discord, Slack, Telegram...): crawlers do not run the app, so the server writes

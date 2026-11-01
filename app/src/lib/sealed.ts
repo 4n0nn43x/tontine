@@ -166,3 +166,11 @@ export function loadPlayer(raw: string | null, day: string): Player {
     return newPlayer(day);
   }
 }
+
+/** Seconds left to back a firm: the order's commit end against the chain clock the market state last saw. */
+export function secondsLeft(r: Round, s: { orders: { id: number; auctionState: { commit_end: number | string } }[]; chainTime: string; updatedAt: number } | null | undefined): number | null {
+  const o = s?.orders.find((x) => x.id === r.order);
+  if (!o || !s) return null;
+  const now = BigInt(s.chainTime) + BigInt(Date.now() - s.updatedAt) * 1_000_000n;
+  return Math.max(0, Math.ceil(Number(BigInt(o.auctionState.commit_end) - now) / 1e9));
+}

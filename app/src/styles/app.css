@@ -1908,8 +1908,73 @@ details summary {
   justify-content: flex-end;
 }
 
-.arena-hit.pointer {
-  cursor: pointer;
+/* The SEALED card: a still of the 3D game and the live round as text (no canvas on the dashboard). */
+.sealed-card {
+  position: relative;
+  display: block;
+  height: clamp(320px, 46vh, 480px);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #120f2e;
+  color: #fff;
+  text-decoration: none;
+}
+.sealed-card img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+.sealed-card:hover img {
+  transform: scale(1.02);
+}
+.sealed-live {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  max-width: min(360px, calc(100% - 28px));
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(11, 10, 26, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.sealed-live p {
+  margin: 0;
+}
+.sealed-live .t {
+  color: #ffcc4d;
+}
+.sealed-live ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  color: rgba(255, 255, 255, 0.8);
+}
+.sealed-live li span {
+  color: #ffcc4d;
+}
+.sealed-live li.won {
+  color: #7be0b4;
+  font-weight: 600;
+}
+.sealed-play {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sealed-card img {
+    transition: none;
+  }
 }
 
 /* ------------------------------------------------------------------ game layer: ranks, levels, badges, health, toasts */
