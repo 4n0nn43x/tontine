@@ -27,6 +27,18 @@ test("safeQuote keeps only bids the contract would accept at reveal", () => {
   assert.equal(defaultQuote(order, me, market, params), (10n * NEAR * 9990n) / 10000n);
 });
 
+test("safeQuote never pays a seller out of the cash a firm must keep above the floor (Gambler Inc may)", () => {
+  // The client sells 10 NEAR at 4 USD: the firm pays about 39.96 USDC. With 70 USDC of cash and a 40 USDC floor, no.
+  const sell: OrderView = { ...order, side: "Sell", amountIn: 10n * NEAR, minOut: 39_000_000n };
+  const tight = { ...me, stable: 70_000_000n, asset: 0n };
+  const floored = { ...market, floor: 40_000_000n };
+  const mk = (ignoresFloor?: boolean): Strategy => ({ name: "t", author: "t", house: false, params, ignoresFloor });
+  assert.equal(safeQuote(mk(), sell, tight, floored, params), null, "would leave 30 USDC, under the 40 USDC floor");
+  assert.ok(safeQuote(mk(), sell, { ...tight, stable: 100_000_000n }, floored, params)! > 0n, "leaves 60 USDC: quotes");
+  assert.ok(safeQuote(mk(true), sell, tight, floored, params)! > 0n, "a strategy written to fail may");
+  assert.ok(safeQuote(mk(), sell, tight, market, params)! > 0n, "no floor given (the simulation): unchanged");
+});
+
 test("the inventory lean: a firm long NEAR sells it cheaper", () => {
   const long = { ...me, stable: 0n };
   const lean = { ...params, skewBps: 20 };

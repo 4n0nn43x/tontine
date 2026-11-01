@@ -13,6 +13,7 @@ const s: Strategy = {
   },
   author: "tontine (house)",
   house: true,
+  ignoresFloor: true,
   params: { spreadBps: 5, targetAssetShare: 0.95, skewBps: 0 },
   quote: (o, me, m, p) => (o.side === "Sell" ? defaultQuote(o, me, m, p) : null),
 };

@@ -32,6 +32,8 @@ export type Market = {
   /** Last clearing price on tender, stable base units per asset unit: the anchor of the owner's band. */
   last: bigint;
   unit: bigint;
+  /** The tender's cash floor: a firm never pays a sell order's USDC out of the cash it must keep above it. */
+  floor?: bigint;
 };
 
 /** What a manager tunes. */
@@ -75,6 +77,8 @@ export interface Strategy {
    * when NEARAI_API_KEY is set, else the rule), "rule" for the stated rule only, "bandit" for a UCB1 bandit
    * on the spread (banditDecide). */
   managed?: boolean | "rule" | "bandit";
+  /** Spends past the cash floor (Gambler Inc, written to fail); every other firm keeps its cash above it. */
+  ignoresFloor?: boolean;
   /** Optional: replace the default quote (output for an order, or null to pass). */
   quote?(order: OrderView, me: FirmCtx, market: Market, params: Params): bigint | null;
   /** Optional: sealed price to buy a firm in liquidation (forward auction), paid from the treasury. */
@@ -107,6 +111,9 @@ export function safeQuote(s: Strategy, order: OrderView, me: FirmCtx, market: Ma
     return null;
   }
   if (v === null || v <= 0n) return null;
+  // Paying a seller out of the cash that keeps the firm above the floor makes it illiquid, then for sale three
+  // epochs later (seen live on 2026-11-01: a firm launched with 5 USDC over the floor was bought 3 minutes later).
+  if (order.side === "Sell" && market.floor !== undefined && !s.ignoresFloor && me.stable - v < market.floor) return null;
   return revealRefusal(order.side, order.amountIn, order.minOut, v, me, market.last, market.unit) ? null : v;
 }
 

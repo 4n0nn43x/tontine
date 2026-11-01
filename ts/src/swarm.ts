@@ -184,7 +184,7 @@ export class Swarm {
   async market(): Promise<Market> {
     const [mid, last, cfg] = await Promise.all([this.mid(), view(this.provider, this.tender, "get_last_price"), view(this.provider, this.tender, "get_config")]);
     this.cfg = cfg;
-    return { mid, last: BigInt(last), unit: BigInt(cfg.asset_unit) };
+    return { mid, last: BigInt(last), unit: BigInt(cfg.asset_unit), floor: BigInt(cfg.treasury_floor ?? 0) };
   }
 
   /** The band anchor of an order: the reference price when it was posted. */
