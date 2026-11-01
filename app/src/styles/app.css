@@ -537,7 +537,7 @@
   white-space: nowrap;
 }
 
-.sealed {
+.sealed-hash {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 12px;

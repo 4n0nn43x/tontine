@@ -192,7 +192,7 @@ export function OrderDetail() {
                             : "never revealed"
                           : "sealed"}
                     </td>
-                    <td className="num">{b.revealed !== null ? gotText(side, b.revealed, asset) : <span className="sealed">{b.hash.slice(0, 10)}…</span>}</td>
+                    <td className="num">{b.revealed !== null ? gotText(side, b.revealed, asset) : <span className="sealed-hash">{b.hash.slice(0, 10)}…</span>}</td>
                     <td className="num">{b.revealed !== null ? bpText(bpOver(b.revealed, o.reference_out)) : "–"}</td>
                   </tr>
                 ))
