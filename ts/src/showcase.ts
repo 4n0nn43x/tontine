@@ -198,10 +198,18 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
         await step(`firm:${m.symbol}:${i}`, async () => {
           // A tender made for fewer firms (the first showcase ran two) gets what the next one costs: its balance
           // past the storage its code and state lock (1e19 yoctoNEAR a byte).
-          const t: any = await exists(T);
-          const free = BigInt(t.amount) - BigInt(t.storage_usage) * 10n ** 19n;
+          const free = async () => {
+            const t: any = await exists(T);
+            return BigInt(t.amount) - BigInt(t.storage_usage) * 10n ** 19n;
+          };
           const want = nearToYocto(String(FIRM_NEAR + 1) as `${number}`);
-          if (free < want) await root.transfer({ receiverId: T, amount: want - free });
+          const have = await free();
+          if (have < want) {
+            await root.transfer({ receiverId: T, amount: want - have });
+            // The master and the tender may sit on different shards: the credit lands a block or two later, and a
+            // firm created before it fails for lack of balance (seen on testnet).
+            for (let i = 0; i < 20 && (await free()) < want; i++) await sleep(1000);
+          }
           const owner = id(`${m.owner}${i + 1}`);
           const keys = { tender: KeyPair.fromRandom("ed25519"), firm: KeyPair.fromRandom("ed25519") };
           const fa = `w${i + 1}.${T}`;
