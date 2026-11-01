@@ -147,7 +147,7 @@ const CARDS: Card[] = [
         <em>Escrow</em> on chain
       </>
     ),
-    text: "A client posts a NEAR/USDC order through NEAR Intents. What it pays sits in the tender contract, with a minimum set just under the market price (the median of Binance, OKX and Coinbase).",
+    text: "A client posts a NEAR/USDC order through NEAR Intents. What it pays sits in the tender contract, with a minimum set just under the market price (the median of Binance, OKX, Coinbase and, for NEAR and ETH, Rhea's on-chain oracle).",
     points: ["Two transactions, both on the mainnet Intents path.", "Refunded in full if no quote beats the minimum.", "No account with the firms, no invoice."],
     panel: PANELS.escrow,
     wide: "left",

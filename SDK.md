@@ -38,7 +38,7 @@ export default defineFirm({
     min_budget: 5,                                // USDC
     max_budget: 200,
   },
-  // The default quote: the market mid (median of Binance, OKX, Coinbase), less `spreadBps`, leaning toward
+  // The default quote: the market mid (median of Binance, OKX, Coinbase and Rhea's oracle), less `spreadBps`, leaning toward
   // `targetAssetShare` of value in the asset.
   params: { spreadBps: 9, targetAssetShare: 0.4, skewBps: 25 },
   // Optional: your own quote, the amount the firm delivers (NEAR for a buy, USDC for a sell), or null to pass.

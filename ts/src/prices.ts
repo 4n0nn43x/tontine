@@ -1,5 +1,6 @@
 // Reference prices for NEAR, ETH and SOL in USDC.
-// Live: the median mid of the Binance, OKX and Coinbase order books (public tickers, no key). Not 1Click:
+// Live: the median mid of the Binance, OKX and Coinbase order books (public tickers, no key) and, for NEAR and
+// ETH, the price of Rhea Finance's aggregate oracle on NEAR mainnet (a NEAR-native feed). Not 1Click:
 // its terms (2026-10-07, §4.1(b)) forbid using it to benchmark a competing product, and Tontine is an RFQ
 // venue. NEAR Intents stays the money rail. USDT and USD are treated as equal to USDC here.
 // Replay: Binance 5-minute closes frozen in fixtures/<asset>-usd-5m.json, so `make demo` and `make sim` run
@@ -75,11 +76,40 @@ export async function oneClickQuote(side: Side, amountIn: bigint): Promise<bigin
 export type MarketSource = { name: string; mid: number };
 export type MarketMid = { mid: number; sources: MarketSource[]; spreadBps: number };
 
-// Public book tickers. Binance and OKX quote USDT, Coinbase USD.
-const VENUES: { name: string; url: (s: AssetSymbol) => string; mid: (j: any) => number }[] = [
-  { name: "binance", url: (s) => `https://api.binance.com/api/v3/ticker/bookTicker?symbol=${s}USDT`, mid: (j) => (+j.bidPrice + +j.askPrice) / 2 },
-  { name: "okx", url: (s) => `https://www.okx.com/api/v5/market/ticker?instId=${s}-USDT`, mid: (j) => (+j.data[0].bidPx + +j.data[0].askPx) / 2 },
-  { name: "coinbase", url: (s) => `https://api.exchange.coinbase.com/products/${s}-USD/ticker`, mid: (j) => (+j.bid + +j.ask) / 2 },
+const getJson = async (url: string, init?: RequestInit) => {
+  const r = await fetch(url, { ...init, signal: AbortSignal.timeout(3000) });
+  if (!r.ok) throw new Error(`${url} ${r.status}`);
+  return r.json() as Promise<any>;
+};
+
+/**
+ * Rhea Finance's aggregate oracle (`aggregate-oracle.near`, NEAR mainnet): Pyth Pro, Binance, Outlayer, Atlas and
+ * CoinGecko aggregated on chain, read through its Pyth-compatible view with Pyth feed ids. It lists NEAR and ETH
+ * (bridged), not SOL. A feed older than RHEA_MAX_AGE_S answers null and is skipped.
+ */
+const RHEA_RPC = process.env.RHEA_RPC ?? "https://rpc.mainnet.fastnear.com";
+export const RHEA_ORACLE = "aggregate-oracle.near";
+const RHEA_FEEDS: Partial<Record<AssetSymbol, string>> = {
+  NEAR: "c415de8d2eba7db216527dff4b60e8f3a5311c740dadb233e13e12547e226750", // wrap.near
+  ETH: "ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace", // eth.bridge.near
+};
+const RHEA_MAX_AGE_S = 600;
+async function rheaMid(s: AssetSymbol): Promise<number> {
+  const id = RHEA_FEEDS[s];
+  if (!id) return NaN;
+  const args = Buffer.from(JSON.stringify({ price_id: id, age: RHEA_MAX_AGE_S })).toString("base64");
+  const body = { jsonrpc: "2.0", id: 1, method: "query", params: { request_type: "call_function", finality: "optimistic", account_id: RHEA_ORACLE, method_name: "get_price_no_older_than", args_base64: args } };
+  const j = await getJson(RHEA_RPC, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const p = JSON.parse(Buffer.from(j.result.result).toString());
+  return p ? Number(p.price) * 10 ** p.expo : NaN;
+}
+
+// Public book tickers (Binance and OKX quote USDT, Coinbase USD), and Rhea's oracle.
+const VENUES: { name: string; mid: (s: AssetSymbol) => Promise<number> }[] = [
+  { name: "binance", mid: async (s) => ((j) => (+j.bidPrice + +j.askPrice) / 2)(await getJson(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${s}USDT`)) },
+  { name: "okx", mid: async (s) => ((j) => (+j.data[0].bidPx + +j.data[0].askPx) / 2)(await getJson(`https://www.okx.com/api/v5/market/ticker?instId=${s}-USDT`)) },
+  { name: "coinbase", mid: async (s) => ((j) => (+j.bid + +j.ask) / 2)(await getJson(`https://api.exchange.coinbase.com/products/${s}-USD/ticker`)) },
+  { name: "rhea", mid: rheaMid },
 ];
 const MID_TTL_MS = 5000;
 /** How long the last good mid stands in: to pick between two venues that disagree, or when none answers. */
@@ -91,7 +121,7 @@ const good = new Map<AssetSymbol, { at: number; mid: number }>();
 const inflight = new Map<AssetSymbol, Promise<MarketMid>>();
 
 /**
- * The market mid in USD: the median of the venues that answer within 3 s, cached 5 s per asset, one fetch at
+ * The market mid in USD: the median of the venues that answer within 3 s (four for NEAR and ETH, three for SOL), cached 5 s per asset, one fetch at
  * a time per asset. Two venues more than 2% apart: the one closer to the last good mid, if under 10 minutes
  * old. No venue: that last good mid, its source saying so. Else it throws. `spreadBps` is the gap between the
  * highest and lowest venue, in bp of the mid.
@@ -109,10 +139,9 @@ export function marketMid(symbol: AssetSymbol): Promise<MarketMid> {
 
 async function fetchMid(symbol: AssetSymbol): Promise<MarketMid> {
   const got = await Promise.all(
-    VENUES.map(async ({ name, url, mid }) => {
+    VENUES.map(async ({ name, mid }) => {
       try {
-        const r = await fetch(url(symbol), { signal: AbortSignal.timeout(3000) });
-        const m = r.ok ? mid(await r.json()) : NaN;
+        const m = await mid(symbol);
         return Number.isFinite(m) && m > 0 ? { name, mid: m } : null;
       } catch {
         return null;

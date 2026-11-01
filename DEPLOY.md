@@ -16,7 +16,7 @@ make serve      # http://127.0.0.1:8080
   wNEAR, wETH and wSOL, and house firms with bonded owners, cash, the asset and shares for sale: six on NEAR,
   three each on ETH and SOL (rule or bandit managers). The default sandbox root key is public, so it is
   replaced first;
-- prices each asset at the market mid, the median of Binance, OKX and Coinbase (the replay when offline), and
+- prices each asset at the market mid, the median of Binance, OKX, Coinbase and, for NEAR and ETH, Rhea Finance's on-chain aggregate oracle on NEAR mainnet (the replay when offline), and
   runs one house swarm per market for real: sealed quotes, reveals, settlement, the managers, epochs,
   liquidations; a house client visits the markets in turn and posts a buy or a sell, at the market
   reference, on one with no open order;

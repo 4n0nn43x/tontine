@@ -119,7 +119,7 @@ flowchart LR
     holders(["Shareholders"])
 
     subgraph off["Off chain"]
-        quote["Market mid<br/>Binance, OKX, Coinbase"]
+        quote["Market mid<br/>Binance, OKX, Coinbase,<br/>Rhea oracle"]
         swarm["Swarm<br/>one agent per firm,<br/>function call keys only"]
         ai["AI manager<br/>LLM on NEAR AI Cloud"]
     end
@@ -277,7 +277,7 @@ use), the Solana, TON and Stellar logos of Simple Icons 16.36.0 and the Tron log
 (© 1995 Image Club Graphics, loaded from the OnlineWebFonts CDN, which states no license for it) and Geist
 Pixel Circle (SIL OFL, license included); browser QA
 with Playwright (not in the repo). Data: DefiLlama, NEARBlocks, Binance (candles, Coinbase as fallback) public
-APIs; Binance, OKX and Coinbase tickers for the market mid; CoinDesk, Cointelegraph and Decrypt RSS for the
+APIs; Binance, OKX and Coinbase tickers and Rhea Finance's aggregate oracle (`aggregate-oracle.near`, NEAR mainnet, NEAR and ETH) for the market mid; CoinDesk, Cointelegraph and Decrypt RSS for the
 regime guard.
 
 ## License

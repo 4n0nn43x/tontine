@@ -12,17 +12,24 @@ after(() => {
 });
 delete process.env.REPLAY;
 
-/** Each venue answers its own JSON shape with a book of mid ± 0.5, fails with 503 if `null`, and throws if absent. */
-function stub(m: Partial<Record<"binance" | "okx" | "coinbase", number | null>>): string[] {
+/**
+ * Each venue answers its own JSON shape with a book of mid ± 0.5, fails with 503 if `null`, and throws if absent.
+ * Rhea's oracle answers a NEAR RPC view result: its Pyth-style price, or null (`"stale"`: older than the max age).
+ */
+function stub(m: Partial<Record<"binance" | "okx" | "coinbase" | "rhea", number | null | "stale">>): string[] {
   const calls: string[] = [];
-  globalThis.fetch = async (input: string | URL | Request) => {
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    calls.push(url);
-    const venue = (["binance", "okx", "coinbase"] as const).find((v) => url.includes(v))!;
+    const venue = (["binance", "okx", "coinbase"] as const).find((v) => url.includes(v)) ?? "rhea";
+    calls.push(venue === "rhea" ? `rhea ${JSON.parse(Buffer.from(JSON.parse(String(init?.body)).params.args_base64, "base64").toString()).price_id}` : url);
     const mid = m[venue];
     if (mid === undefined) throw new TypeError("fetch failed");
     if (mid === null) return new Response("down", { status: 503 });
-    const [bid, ask] = [String(mid - 0.5), String(mid + 0.5)];
+    if (venue === "rhea") {
+      const view = mid === "stale" ? null : { price: String(Math.round(mid * 1e8)), conf: "1000", expo: -8, publish_time: 0 };
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { result: [...Buffer.from(JSON.stringify(view))] } }));
+    }
+    const [bid, ask] = [String(Number(mid) - 0.5), String(Number(mid) + 0.5)];
     const body = venue === "binance" ? { bidPrice: bid, askPrice: ask } : venue === "okx" ? { code: "0", data: [{ bidPx: bid, askPx: ask }] } : { bid, ask };
     return new Response(JSON.stringify(body));
   };
@@ -70,7 +77,7 @@ test("marketMid is cached 5 s per asset", async () => {
   stub({ binance: 200, okx: 200, coinbase: 200 });
   mock.timers.tick(4999);
   assert.equal((await marketMid("ETH")).mid, 100, "still cached");
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4); // and Rhea's oracle for ETH
   assert.equal((await marketMid("SOL")).mid, 200, "another asset is not");
   mock.timers.tick(1);
   assert.equal((await marketMid("ETH")).mid, 200, "expired");
@@ -99,15 +106,15 @@ test("reference uses the market mid live, and the replay when every venue fails"
   const off = await reference("Sell", ASSETS.ETH.unit, -1, "ETH");
   const last = replayPrices("ETH").prices.at(-1)!;
   assert.deepEqual(off, { out: outAt("Sell", ASSETS.ETH.unit, last, CLIENT_TOLERANCE_BPS, ASSETS.ETH.unit), mid: last, source: "replay", sources: [] });
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   assert.equal((await reference("Buy", 100_000_000n, 7)).mid, replayPrices().prices[7]);
-  assert.equal(calls.length, 3, "a replay index skips the network");
+  assert.equal(calls.length, 4, "a replay index skips the network");
 });
 
 test("marketMid: concurrent misses share one fetch per venue", async () => {
   const calls = stub({ binance: 3, okx: 3, coinbase: 3 });
   const all = await Promise.all(Array.from({ length: 60 }, () => marketMid("NEAR")));
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   assert.ok(all.every((m) => m.mid === 3));
   mock.timers.tick(60_000);
   stub({});
@@ -155,4 +162,19 @@ test("each replay fixture covers the NEAR range with sensible prices", () => {
     assert.equal(fx.prices.length, near.prices.length, symbol);
     assert.ok(fx.prices.every((p) => p > lo && p < hi), `${symbol} within ${lo}..${hi}`);
   }
+});
+
+test("Rhea's on-chain oracle joins the median for NEAR and ETH; a stale feed is skipped; SOL has none", async () => {
+  const calls = stub({ binance: 4.32, okx: 4.3, coinbase: 4.31, rhea: 4.307 });
+  const m = await marketMid("NEAR");
+  assert.deepEqual(m.sources.map((s) => s.name), ["binance", "okx", "coinbase", "rhea"]);
+  assert.ok(Math.abs(m.mid - (4.307 + 4.31) / 2) < 1e-9, "four venues: the mean of the middle two");
+  assert.ok(calls.includes("rhea c415de8d2eba7db216527dff4b60e8f3a5311c740dadb233e13e12547e226750"), "the Pyth feed id of wrap.near");
+  mock.timers.tick(60_000);
+  stub({ binance: 2000, okx: 2002, coinbase: 2001, rhea: "stale" });
+  assert.deepEqual((await marketMid("ETH")).sources.map((s) => s.name), ["binance", "okx", "coinbase"]);
+  mock.timers.tick(60_000);
+  const solCalls = stub({ binance: 100, okx: 100, coinbase: 100, rhea: 999 });
+  assert.equal((await marketMid("SOL")).mid, 100);
+  assert.ok(!solCalls.some((c) => c.startsWith("rhea")), "no SOL feed: Rhea is not asked");
 });

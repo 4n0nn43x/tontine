@@ -42,7 +42,7 @@ sequenceDiagram
 ```
 
 1. **Post**: the client escrows `amount_in` and sets `min_out`, the least it accepts. The app sets it to the
-   market reference: the median mid of Binance, OKX and Coinbase, less 25 bp. At least 1 USDC of notional (`min_order`);
+   market reference: the median mid of Binance, OKX, Coinbase and, for NEAR and ETH, Rhea Finance's on-chain oracle, less 25 bp. At least 1 USDC of notional (`min_order`);
    phases of 10 minutes at most. The reference price at posting time is stored with the order.
 2. **Commit**: a firm commits `sha256("{auction_id}:{firm_id}:{amount}:{salt}")` of the amount it will deliver. Only solvent firms;
    one bid per owner (anti-shill) and per firm; never on its owner's own order; never while paused.
@@ -135,8 +135,10 @@ shareholder of every firm launched on it. Both are 0 in a config that omits them
   Intents. A plain NEP-141 mode (`ft_on_transfer`) exists for networks without Intents.
 - **Storage**: every caller prepays the storage it creates (`storage_deposit`, NEP-145 style; about 0.5 NEAR
   covers normal use). A deposit from an account with no storage deposit is refunded by the token.
-- **Prices** (`ts/src/prices.ts`): the median mid of the Binance, OKX and Coinbase books for NEAR, ETH and SOL
-  (1Click's terms forbid benchmarking a competing venue), or Binance 5-minute closes frozen in
+- **Prices** (`ts/src/prices.ts`): the median mid of the Binance, OKX and Coinbase books for NEAR, ETH and SOL,
+  plus, for NEAR and ETH, Rhea Finance's aggregate oracle on NEAR mainnet (`aggregate-oracle.near`, Pyth Pro,
+  Binance, Outlayer, Atlas and CoinGecko aggregated on chain, read through its Pyth-compatible
+  `get_price_no_older_than`, 10 minutes at most; 1Click's terms forbid benchmarking a competing venue), or Binance 5-minute closes frozen in
   `fixtures/<asset>-usd-5m.json` for the demo, the simulation and offline runs.
 - **AI manager** (`ts/src/manager.ts`): a managed firm's manager reviews its fills, edge and inventory and
   retunes its spread, asset target and lean. For Atlas AI, with `NEARAI_API_KEY`, it is an LLM on NEAR AI Cloud

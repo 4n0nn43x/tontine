@@ -15,11 +15,11 @@ const STEPS: Record<string, number> = { "1m": 60, "5m": 300, "15m": 900, "1h": 3
 const candleSource = (src: Candles["source"], s: string) => ({ binance: `Binance ${s}/USDT`, coinbase: `Coinbase ${s}/USD`, replay: `replayed ${s} prices (offline)` })[src];
 /** A sell's default size: about 10 to 20 USD of the asset. */
 const SELL_DEFAULT: Record<string, string> = { NEAR: "5", ETH: "0.005", SOL: "0.1" };
-const VENUE: Record<string, string> = { binance: "Binance", okx: "OKX", coinbase: "Coinbase" };
+const VENUE: Record<string, string> = { binance: "Binance", okx: "OKX", coinbase: "Coinbase", rhea: "Rhea oracle" };
 
 type Candles = { source: "binance" | "coinbase" | "replay"; candles: Candle[] };
 
-/** Where the reference comes from: "Market mid, median of Binance, OKX, Coinbase", or the replay. */
+/** Where the reference comes from: "Market mid, median of Binance, OKX, Coinbase, Rhea oracle", or the replay. */
 export function referenceText(r: { source: string; sources?: MarketSource[] } | undefined): string {
   if (!r) return "";
   if (r.source !== "market") return "Replayed price: the venues are unreachable";
