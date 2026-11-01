@@ -1,7 +1,8 @@
 # CLAIMS
 
 One line per claim of the README: the test that proves it, the command, and whether it is measured on
-a real network or simulated. Explorer links are added when the mainnet run happens.
+a real network or simulated. Explorer links point to NEAR testnet (the showcase) and mainnet (the thesis
+hash); the contracts do not run on mainnet.
 
 | Claim | Proof | Command | Badge |
 | --- | --- | --- | --- |
@@ -62,8 +63,8 @@ a real network or simulated. Explorer links are added when the mainnet run happe
 | The due-diligence note quotes only the firm's own numbers (an invented number falls back to the template) | `the validator catches an invented number and accepts rounding`, `prose: the LLM's note if its numbers are facts, else the template` | `make test` | unit |
 | Shadow quotes replay what the rule and fixed params would have won in each real auction; every decision is in a hash chain with a daily Merkle root | `counterfactual second price: ...`, `decision log: hash chain, tampering detected, daily root, reload`, `Merkle root on a known vector` | `make test` | unit |
 | On a real week of NEAR prices, 20 clients and 12 firms: 2036 orders, 93.3% filled, 18.2 bp better than the market reference, one liquidation and takeover, HHI 2240 (none above 29% of fills) | `ts/src/sim.ts` | `make sim SEED=1` | simulated (off chain, replayed Binance prices) |
-| Contracts deploy on protocol 86 (mainnet until about 2026-11-04) and 88 (from about 2026-11-07) | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
-| Audit findings 01 to 25 fixed (06 removed with disputes; 25 without an amount cap) | `poc_f*` tests; `audit-poc.ts` prints NOT REPRODUCED for F1 to F3 | `make test`, `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
+| Contracts deploy on protocol 86 (mainnet's at the start of the hackathon) and 88 (its upgrade scheduled for 2026-11-06) | demo on sandbox 2.13.4 and 2.14.0 | `make demo`, `SANDBOX_VERSION=2.14.0 make demo` | simulated (sandbox) |
+| Audit findings 01 to 25 fixed (06 removed with disputes; 13 with one storage case left; 25 without an amount cap) | `poc_f*` tests; `audit-poc.ts` prints NOT REPRODUCED for F1 to F3 | `make test`, `cd ts && npx tsx src/audit-poc.ts` | simulated (sandbox) |
 | A firm runs on its owner's machine with its own keys (SDK runner) | `ts/src/agent.ts` against the devnet `/rpc` | `npx tsx src/agent.ts firm.json` | simulated (devnet) |
 | Buyback multiple 5.5x at 2.5% emission | `thesis multiple reproduces the spec figure`, `thesis/result.json` | `make thesis` | measured (public data, snapshot 2026-10-31) |
 | Take rate 12-day blocks 1.95-3.02 bp (Jul-Aug), 3.89-5.58 bp since 2026-09-11 | `thesis/index.html` | `make thesis` | measured (public data) |

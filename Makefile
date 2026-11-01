@@ -53,7 +53,7 @@ app:
 	cd app && npm ci && npm run build
 
 # The hosted app on one port (PORT=8080, HOST=127.0.0.1): a fresh NEAR devnet with the contracts, the
-# house swarm and client, the chain indexer, the API and the website. See README "Run the app".
+# house swarm and client, the chain indexer, the API and the website. See DEPLOY.md "Run the app".
 serve: verify-wasm
 	@test -d ts/node_modules || $(MAKE) deps
 	@test -f app/dist/index.html || $(MAKE) app

@@ -198,7 +198,7 @@ async function main() {
     const w1 = swarm.firm(r1.auction.winner);
     const edge1 = BigInt(filled1?.edge ?? 0);
     const pending = BigInt(await view(provider, T, "pending_dividends", { firm_id: w1.id, account_id: w1.owner.accountId }));
-    check("30% of the edge accrued to shareholders", edge1 > 0n && pending === (edge1 * 3000n) / 10000n, `edge ${fmt(edge1)} USDC, ${fmt(pending)} USDC to ${w1.owner.accountId}`);
+    check("30% of the edge accrued to shareholders", edge1 > 0n && pending === (edge1 * 3000n) / 10000n, `edge ${(Number(edge1) / 1e6).toFixed(4)} USDC, ${(Number(pending) / 1e6).toFixed(4)} USDC to ${w1.owner.accountId}`);
     const mtBal = async (a: string) => BigInt(await view(provider, I, "mt_balance_of", { account_id: a, token_id: STABLE }));
     const usdcBefore = BigInt(await view(provider, usdc.acct.accountId, "ft_balance_of", { account_id: w1.owner.accountId }));
     const intentsBefore = await mtBal(w1.owner.accountId);

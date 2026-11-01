@@ -3,7 +3,7 @@
 // liquidations), a house client that keeps posting orders at the market price, a chain indexer, the JSON
 // API, a filtered RPC proxy for visitors' wallets, and the website itself.
 //
-//   npx tsx src/server.ts          (PORT=8080 HOST=127.0.0.1 by default; see README "Run the app")
+//   npx tsx src/server.ts          (PORT=8080 HOST=127.0.0.1 by default; see DEPLOY.md "Run the app")
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
@@ -31,7 +31,8 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 const PORT = Number(process.env.PORT ?? 8080);
 const HOST = process.env.HOST ?? "127.0.0.1";
 const DIST = process.env.APP_DIST ?? path.join(ROOT, "app", "dist");
-const HOUSE_CLIENT_SECS = Number(process.env.HOUSE_CLIENT_SECS ?? 70);
+// One house order every 25 s across the markets (each market every 75 s): /city always has a round coming.
+const HOUSE_CLIENT_SECS = Number(process.env.HOUSE_CLIENT_SECS ?? 25);
 const TRUST_PROXY = process.env.TRUST_PROXY === "1";
 
 const log = (s: string) => console.log(`${new Date().toISOString().slice(11, 19)} ${s}`);
@@ -347,7 +348,7 @@ async function houseClientLoop() {
         await devnet.deposit(
           devnet.houseClient,
           amountIn,
-          { PostOrder: { side, amount_in: amountIn.toString(), min_out: minOut.toString(), reference_out: q.out.toString(), commit_secs: 8, reveal_secs: 6 } },
+          { PostOrder: { side, amount_in: amountIn.toString(), min_out: minOut.toString(), reference_out: q.out.toString(), commit_secs: 12, reveal_secs: 6 } }, // 12 s to back a firm in /city
           buy ? "usdc" : m.token,
           m.T,
         );

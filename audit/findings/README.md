@@ -1,4 +1,4 @@
-# Audit findings (self-audit and two independent reviews, 2026-10-30 and 31)
+# Audit findings (a self-audit and independent reviews, 2026-10-30 to 2026-11-01)
 
 | # | Finding | Severity | Status |
 | --- | --- | --- | --- |
