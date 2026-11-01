@@ -514,8 +514,9 @@ Mediums and eleven Lows, all fixed (25 without an amount cap), each with a PoC o
   wallet; the signatures themselves are checked by the mainnet intents.near code (demo steps 12 and 13).
 - `sign_evm` limits the target, the function and the recipient of token transfers and approvals, not the
   amount; a takeover moves the firm to a fresh EVM address, so what the old owner signed or left on the old
-  one does not pass with the firm. Run against the live testnet signer by the testnet showcase, once its
-  master account holds enough testnet NEAR.
+  one does not pass with the firm. Run against the live testnet MPC signer by the testnet showcase
+  ([tx](https://testnet.nearblocks.io/txns/CTnWaLijQia83VegfXaQwsYSyuKABS7x29PXK757mPnw): the signature recovers to the firm's derived address);
+  signed, not broadcast to Base Sepolia.
 - The regime guard reads public RSS; without an LLM, keywords can only raise an alert, never a storm. The
   LLM budget is capped per day (`LLM_DAILY_CAP`, `AI_DAILY_CAP`); past it the rule, the parser and the
   template take over.

@@ -137,5 +137,7 @@ A selector limits the call, not all of its arguments: token transfers and approv
 recipient, but the amount is not capped, and other calls are checked by target and selector only. A signed
 transaction stays valid until its nonce is used; after a takeover it can only touch the old address.
 
-Testnet or mainnet only: the sandbox and the devnet have no MPC signer, so `make demo` does not cover it.
+Testnet or mainnet only: the sandbox and the devnet have no MPC signer, so `make demo` does not cover it. The
+testnet showcase (`ts/src/showcase.ts`) runs this flow on testnet: [v1.signer-prod.testnet signing for a
+firm](https://testnet.nearblocks.io/txns/CTnWaLijQia83VegfXaQwsYSyuKABS7x29PXK757mPnw), checked against the firm's derived address.
 The unit tests in `contracts/firm` check the policy, and the encoding against an ethereumjs vector and a real Base transaction.
