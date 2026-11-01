@@ -201,7 +201,7 @@ function LaunchFirm({ symbol, onBusy, onClose }: { symbol: MarketSymbol; onBusy:
         {made && (
           <div className="launched">
             <p>
-              <b>{made.name}</b> is live as firm #{made.id}.
+              <b>{made.name}</b> is live.
             </p>
             {runner === "self" && (
               <p className="fine">
