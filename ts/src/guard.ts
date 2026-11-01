@@ -9,7 +9,7 @@ export const NEWS_PROMPT =
   'Answer with JSON only: {"level": "calm" | "alert" | "storm", "reasons": [string], "ids": [number]}. ' +
   "storm: a hack, exploit, halt, depeg, delisting or legal action that hits the asset or the venues it trades on, " +
   "or a market-wide crash. alert: risk news that may move the market. Else calm. " +
-  "At most 3 short reasons; ids are the ids of the headlines behind them.";
+  "At most 3 short reasons, in English whatever the language of the headlines; ids are the ids of the headlines behind them.";
 
 export type Regime = "calm" | "alert" | "storm";
 export const RANK: Record<Regime, number> = { calm: 0, alert: 1, storm: 2 };
@@ -145,10 +145,13 @@ export function validateNews(j: unknown, n: number): Omit<NewsVerdict, "source">
   const o = j as Record<string, unknown>;
   if (Object.keys(o).some((k) => !["level", "reasons", "ids"].includes(k))) return null;
   if (typeof o.level !== "string" || !Object.hasOwn(RANK, o.level)) return null;
-  if (!Array.isArray(o.reasons) || o.reasons.length > 3 || !o.reasons.every((r) => typeof r === "string")) return null;
+  // Reasons in English (Latin script): the site shows them as they are (one came back in Chinese, 2026-11-01).
+  if (!Array.isArray(o.reasons) || o.reasons.length > 3 || !o.reasons.every((r) => typeof r === "string" && LATIN.test(r))) return null;
   if (!Array.isArray(o.ids) || !o.ids.every((i) => Number.isInteger(i) && i >= 0 && i < n)) return null;
   return { level: o.level as Regime, reasons: (o.reasons as string[]).map((r) => r.slice(0, 160)), ids: o.ids as number[] };
 }
+
+const LATIN = /^[\x20-\x7e\u00a0-\u024f\u2010-\u2027\u20ac]*$/;
 
 /** One batched LLM call on the headlines; without a live LLM, or on an invalid answer, the keyword heuristic. */
 export async function newsLevel(llm: Llm | null, headlines: Headline[], asset: AssetSymbol): Promise<NewsVerdict> {
@@ -172,7 +175,12 @@ export const NEWS_EVERY_MS = 10 * 60_000;
 /** A news verdict not refreshed for an hour (feeds down) is dropped. */
 const NEWS_TTL_MS = 60 * 60_000;
 
-/** The regime of one asset: the higher of volatility and news, with hysteresis. */
+/**
+ * The regime of one asset: the higher of volatility and news, with hysteresis. News alone raises an alert at
+ * most: a storm takes a price that moves too (volatility at alert or above), or the volatility alone. With calm
+ * prices, a headline (the Binance hack, 2026-11-01) had put every market in a storm for hours, quotes 30 to
+ * 40 bp from the mid.
+ */
 export class Guard {
   private state: GuardState | null = null;
   private news: (NewsVerdict & { at: number }) | null = null;
@@ -183,8 +191,10 @@ export class Guard {
     if (this.news && now - this.news.at > NEWS_TTL_MS) this.news = null;
     const vol = volatilityLevel(series);
     const n = this.news;
-    const byNews = n !== null && n.level !== "calm" && RANK[n.level] >= RANK[vol.level];
-    const next: GuardState = { level: byNews ? n.level : vol.level, since: now, reasons: byNews ? n.reasons : [vol.reason], source: byNews ? n.source : "volatility" };
+    const cap: Regime = RANK[vol.level] >= RANK.alert ? "storm" : "alert";
+    const fromNews: Regime | null = n && n.level !== "calm" ? (RANK[n.level] > RANK[cap] ? cap : n.level) : null;
+    const byNews = n !== null && fromNews !== null && RANK[fromNews] >= RANK[vol.level];
+    const next: GuardState = { level: byNews ? fromNews! : vol.level, since: now, reasons: byNews ? n!.reasons : [vol.reason], source: byNews ? n!.source : "volatility" };
     const cur = this.state;
     if (!cur || (next.level !== cur.level && (RANK[next.level] > RANK[cur.level] || now - cur.since >= HOLD_MS))) this.state = next;
     else if (next.level === cur.level) this.state = { ...next, since: cur.since };

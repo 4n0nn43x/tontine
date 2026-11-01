@@ -152,6 +152,8 @@ export type Stats = {
   edge: string;
   /** Sum over fills of the bp the client received over its market reference. */
   improvementBps: number;
+  /** The same, by the market regime each fill was made in (the fills the indexer keeps). */
+  byRegime?: Record<"calm" | "alert" | "storm", { bps: number; fills: number }>;
   /** Tontine's revenue: order fees plus surplus shares, in USDC base units. */
   revenue: string;
   slashed: string;

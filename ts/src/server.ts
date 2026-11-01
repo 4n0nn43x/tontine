@@ -485,13 +485,42 @@ async function refreshState(m: Market) {
 await Promise.all(markets.map(refreshState));
 setInterval(() => markets.forEach(refreshState), 2000);
 
+/**
+ * The fills the indexer keeps, by the market regime they were made in (the regime changes in the decision log
+ * against each fill's time): what clients got against the market reference in calm, alert and storm. In a storm
+ * the house client accepts up to STORM_EXTRA_BPS less, so the average alone reads as a loss.
+ */
+const regimeCache = new Map<string, { at: number; value: Record<Regime, { bps: number; fills: number }> }>();
+function byRegime(m: Market | null) {
+  const key = m?.symbol ?? "all";
+  const hit = regimeCache.get(key);
+  if (hit && Date.now() - hit.at < 10_000) return hit.value; // /api/stats is polled every few seconds
+  const out: Record<Regime, { bps: number; fills: number }> = { calm: { bps: 0, fills: 0 }, alert: { bps: 0, fills: 0 }, storm: { bps: 0, fills: 0 } };
+  const changes = new Map<string, { at: number; level: Regime }[]>();
+  for (const e of decisionLog.entries) {
+    const r = JSON.parse(e.json).record;
+    if (r?.kind === "regime") changes.set(r.market, [...(changes.get(r.market) ?? []), { at: e.at, level: r.level }]);
+  }
+  for (const e of indexer.events) {
+    const mk = marketOf(e.contract);
+    if (e.standard !== "tontine" || e.event !== "order_filled" || !mk || e.contract !== mk.T || (m && mk !== m)) continue;
+    const ref = BigInt(e.data?.reference_out ?? 0);
+    if (ref <= 0n) continue;
+    const level = (changes.get(mk.symbol) ?? []).filter((c) => c.at <= e.time).at(-1)?.level ?? "calm";
+    out[level].bps += Number(((BigInt(e.data.out) - BigInt(e.data.surplus_fee ?? 0) - ref) * 10_000n) / ref);
+    out[level].fills++;
+  }
+  regimeCache.set(key, { at: Date.now(), value: out });
+  return out;
+}
+
 /** Stats of one market, or of all, with the dividends its firms paid and Tontine's revenue. */
 function statsOf(m: Market | null) {
   const list = m ? [m] : markets;
   const base: Stats = m ? indexer.statsOf(m.T) : indexer.stats;
   const dividends = list.flatMap((x) => x.state.firms).reduce((a: bigint, f: any) => a + BigInt(f.dividends), 0n).toString();
   const sum = (k: "firms" | "totalOrders") => list.reduce((a, x) => a + (k === "firms" ? x.state.firms.length : (x.state.totalOrders ?? 0)), 0);
-  return { ...base, dividends, firms: sum("firms"), totalOrders: sum("totalOrders") };
+  return { ...base, dividends, firms: sum("firms"), totalOrders: sum("totalOrders"), byRegime: byRegime(m) };
 }
 
 // The sandbox's RocksDB info log never rolls (about 140 MB an hour here) and nothing reads it: keep it

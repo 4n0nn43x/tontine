@@ -5,7 +5,7 @@ import { PixelDusk } from "../components/PixelDusk";
 import { FailSection, HowSection } from "../components/LandingSections";
 import { EventFeed } from "../components/ui";
 import { getThesis } from "../lib/api";
-import { bpText, usdc } from "../lib/format";
+import { bpText, regimeSplit, STORM_NOTE, usdc } from "../lib/format";
 import { useEvents, useFirmNames, useStats } from "../lib/hooks";
 import { PHASES } from "./Dashboard";
 
@@ -309,6 +309,11 @@ export function Landing() {
               <div>
                 <span className="big-num">{stats.fills ? bpText(stats.improvementBps / stats.fills) : "–"}</span>
                 <span>over the market reference, on average</span>
+                {regimeSplit(stats.byRegime) && (
+                  <small className="regime-split" title={STORM_NOTE}>
+                    {regimeSplit(stats.byRegime)}
+                  </small>
+                )}
               </div>
               <div>
                 <span className="big-num">{stats.takeovers}</span>

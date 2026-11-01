@@ -160,8 +160,11 @@ Qwen3.8-27B in a TEE on NEAR AI Cloud):
 
 - **Market regime**: one guard per market reads the asset's realised volatility (against a 7-day baseline)
   and the news (CoinDesk, Cointelegraph and Decrypt RSS, rated by the LLM every 10 minutes, by keywords
-  without a key). Calm, alert or storm: managed house firms widen their spread on alert and stop quoting in a
-  storm, unless their mandate says otherwise. The city shows it as the weather (clouds, then rain and lightning).
+  without a key, reasons in English only). Calm, alert or storm; news alone raises an alert at most, a storm
+  takes a price that moves too (volatility at alert or above), or the volatility alone. Managed house firms
+  widen their spread on alert and stop quoting in a storm, unless their mandate says otherwise; the house client
+  then accepts up to 40 bp less, so the dashboard's "Vs market" shows the average by regime. The city shows
+  it as the weather (clouds, then rain and lightning).
 - **Mandates**: an owner writes its firm's mandate in plain English ("pause if NEAR drops 4% in an hour") and
   publishes it in the firm's on-chain profile; the server compiles only that published text into a closed,
   validated rule set (LLM, or a pattern parser) that the swarm applies before quoting. The firm page shows the

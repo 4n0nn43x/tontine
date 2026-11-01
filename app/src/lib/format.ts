@@ -57,6 +57,21 @@ export function bpOver(out: string | bigint | null | undefined, ref: string | bi
 
 export const bpText = (x: number | null) => (x === null ? "–" : `${x >= 0 ? "+" : ""}${x.toFixed(1)} bp`);
 
+/**
+ * "calm +6.3 bp, storm -24.1 bp": the average over the market reference in each regime that had fills, or null
+ * when every fill was calm (the average says it all). In a storm firms quote wider and clients accept less.
+ */
+export function regimeSplit(r?: Record<string, { bps: number; fills: number }>): string | null {
+  if (!r || !Object.entries(r).some(([k, v]) => k !== "calm" && v.fills > 0)) return null;
+  return (["calm", "alert", "storm"] as const)
+    .filter((k) => r[k]?.fills)
+    .map((k) => `${k} ${bpText(r[k].bps / r[k].fills)}`)
+    .join(", ");
+}
+
+/** Why fills made in a storm sit under the market reference. */
+export const STORM_NOTE = "In a storm (risk news and a moving price), firms quote 30 to 40 bp from the mid and the house client accepts up to 40 bp less to keep trading.";
+
 /** USD per unit of the asset implied by a fill or a quote. */
 export function priceOf(side: Side, amountIn: string | bigint, out: string | bigint, decimals = NEAR_DECIMALS): number {
   const usd = Number(side === "Buy" ? amountIn : out) / 1e6;

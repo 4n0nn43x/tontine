@@ -94,6 +94,26 @@ test("guard: rises at once, holds 15 minutes before dropping, one news call per 
   assert.equal(llm.calls, 2);
 });
 
+test("guard: news alone raises an alert at most; a storm takes a moving price too", async () => {
+  const t = T0 + 10 * 86_400_000;
+  const calm = zigzag(0.001, 0.001), alert = zigzag(0.001, 0.0013), storm = zigzag(0.001, 0.003);
+  const hs = [h("Binance hack: withdrawals halted")];
+  const quiet = await new Guard(fake('{"level":"storm","reasons":["largest exchange hacked"],"ids":[0]}'), "NEAR").update(t, calm, hs);
+  assert.deepEqual([quiet.level, quiet.source, quiet.reasons], ["alert", "llm", ["largest exchange hacked"]], "calm prices: an alert");
+  const moving = await new Guard(fake('{"level":"storm","reasons":["largest exchange hacked"],"ids":[0]}'), "NEAR").update(t, alert, hs);
+  assert.deepEqual([moving.level, moving.source], ["storm", "llm"], "news and a price that moves: a storm");
+  const crash = await new Guard(fake('{"level":"calm","reasons":[],"ids":[]}'), "NEAR").update(t, storm, hs);
+  assert.deepEqual([crash.level, crash.source], ["storm", "volatility"], "the volatility alone still makes a storm");
+});
+
+test("news: reasons in another script are refused (the site shows them as they are)", async () => {
+  const hs = [h("Binance hack")];
+  const v = await newsLevel(fake('{"level":"storm","reasons":["Binance遭受63亿美元黑客攻击"],"ids":[0]}'), hs, "ETH");
+  assert.equal(v.source, "keywords");
+  const ok = await newsLevel(fake('{"level":"alert","reasons":["Binance hack: \u20ac and \u2019quotes\u2019 are fine"],"ids":[0]}'), hs, "ETH");
+  assert.equal(ok.source, "llm");
+});
+
 const RSS = `<?xml version="1.0"?><rss><channel><title>Feed</title>
 <item><title><![CDATA[Hackers drain a bridge &amp; more]]></title><link>https://a.test/1?utm=x</link><pubDate>Sun, 01 Nov 2026 10:00:00 +0000</pubDate></item>
 <item><title>Old news</title><link>https://a.test/0</link><pubDate>Sat, 24 Oct 2026 10:00:00 +0000</pubDate></item>

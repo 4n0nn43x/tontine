@@ -8,7 +8,7 @@ import { RegimeChip } from "../components/Ai";
 import { TestnetCard } from "../components/Testnet";
 import { worstRegime } from "../lib/ai";
 import { regimeOf, SYMBOLS, type AppState, type ChainEvent, type MarketSymbol, type OrderState } from "../lib/api";
-import { ASSETS, bpText, gotText, paidText, usd, usdc, type Asset } from "../lib/format";
+import { ASSETS, bpText, gotText, paidText, regimeSplit, STORM_NOTE, usd, usdc, type Asset } from "../lib/format";
 import { firmNameIn, inMarket, inTender, useChainNow, useConfig, useEvents, useFirmNames, useMarket, useStates, useStats } from "../lib/hooks";
 import { cityFirms, cityLink, cityMarket, liveDriver } from "../lib/live";
 
@@ -114,7 +114,7 @@ export function Dashboard() {
           unit="USDC"
           hint={stats ? `Tontine earned ${usdc(revenue, revenue < 1e6 ? 4 : 2)} USDC` : ""}
         />
-        <Kpi icon="fa-arrow-trend-up" label="Vs market" value={stats ? avgBp === null ? bpText(null) : <Count value={avgBp} format={bpText} /> : <Skel w="60%" h={26} />} hint="average per fill, over the market reference" />
+        <Kpi icon="fa-arrow-trend-up" label="Vs market" value={stats ? avgBp === null ? bpText(null) : <Count value={avgBp} format={bpText} /> : <Skel w="60%" h={26} />} hint={regimeSplit(stats?.byRegime) ? <span title={STORM_NOTE}>{regimeSplit(stats?.byRegime)}</span> : "average per fill, over the market reference"} />
         <Kpi icon="fa-hand-holding-dollar" label="Dividends" value={stats ? <Count value={Number(stats.dividends) / 1e6} format={fixed(2)} /> : <Skel w="50%" h={26} />} unit="USDC" hint={share ? `${share}% of each fill's edge` : "a share of each fill's edge"} />
         <Kpi icon="fa-scissors" label="Bonds slashed" value={stats ? <Count value={Number(stats.slashed) / 1e6} format={fixed(2)} /> : <Skel w="50%" h={26} />} unit="USDC" hint="quotes sealed, never revealed" />
         <Kpi icon="fa-handshake" label="Takeovers" value={stats ? <Count value={stats.takeovers} format={fixed(0)} /> : <Skel w="30%" h={26} />} hint={stats ? `${stats.liquidations} liquidation${stats.liquidations === 1 ? "" : "s"}` : ""} />

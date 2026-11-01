@@ -1051,6 +1051,12 @@ body.exploring .scroll-cue {
   font-size: 13px;
 }
 
+.live-kpis .regime-split {
+  font-size: 12px;
+  color: var(--soft);
+  cursor: help;
+}
+
 .big-num {
   font-family: var(--font-display);
   font-size: clamp(30px, 3.6vw, 44px);
