@@ -23,6 +23,11 @@ export type House = {
   minBond: bigint;
   /** Puts `amount` of USDC in `owner`'s tender ledger (mint, then deposit: test chains only). */
   credit(owner: Account, amount: bigint): Promise<unknown>;
+  /**
+   * The asset each solvent house firm keeps to fill buys: under `floor`, its owner tops it back up to `to`, as an
+   * owner does with the firm page's top-up (`fund`: mint, then deposit with a Credit msg; test chains only).
+   */
+  stock?: { firms: { owner: Account; account: string }[]; floor: bigint; to: bigint; fund(owner: Account, firm: string, amount: bigint): Promise<unknown> };
 };
 
 /** One pass over a market's house accounts; returns what it topped up. */
@@ -48,6 +53,12 @@ export async function upkeep(provider: JsonRpcProvider, funder: Account, h: Hous
     if (cash < need) await h.credit(o, need - cash);
     await call(o, h.tender, "deposit_bond", { amount: need.toString() }, 1n);
     done.push(`${o.accountId} bond`);
+  }
+  for (const f of h.stock?.firms ?? []) {
+    const have = BigInt(await view(provider, h.tender, "asset_balance_of", { account_id: f.account }));
+    if (have >= h.stock!.floor) continue;
+    await h.stock!.fund(f.owner, f.account, h.stock!.to - have);
+    done.push(`${f.account} stock`);
   }
   return done;
 }

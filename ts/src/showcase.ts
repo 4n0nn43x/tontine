@@ -288,7 +288,19 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
       await mint(U, o.accountId, amount);
       await deposit(o, U, T, amount);
     };
-    const done = await upkeep(provider, root, { tender: T, signers: accounts, stored: accounts, owners: firms.map((f) => acct(f.owner)), minBond: DEVNET_CONFIG.minBond, credit });
+    // Each house firm's asset at setup (40 NEAR, or 150 USD of ETH or SOL); a quarter of it is the floor.
+    const mid = (await reference("Buy", USDC(100), -1, s)).mid;
+    const start = s === "NEAR" ? NEAR_(40) : units(150 / mid, ASSETS[s].decimals);
+    const stock = {
+      firms: firms.filter((f) => f.strategy !== "Gambler Inc").map((f) => ({ owner: acct(f.owner), account: f.account })),
+      floor: start / 4n,
+      to: start,
+      fund: async (o: Account, firm: string, amount: bigint) => {
+        await mint(tokenOf(s), o.accountId, amount);
+        await deposit(o, tokenOf(s), T, amount, { Credit: firm });
+      },
+    };
+    const done = await upkeep(provider, root, { tender: T, signers: accounts, stored: accounts, owners: firms.map((f) => acct(f.owner)), minBond: DEVNET_CONFIG.minBond, credit, stock });
     if (done.length) log(`upkeep ${s}: ${done.join(", ")}`);
   }
 
@@ -327,7 +339,8 @@ export function startShowcase(opts: { master: string; key: string; log: (s: stri
     const buy = n % 2 === 0;
     const side = buy ? "Buy" : "Sell";
     const mid = (await reference("Buy", USDC(100), -1, s)).mid;
-    const amountIn = buy ? USDC(10 + Math.floor(Math.random() * 20)) : units((5 + Math.floor(Math.random() * 15)) / mid, ASSETS[s].decimals);
+    // Same size both ways: a client that buys more than it sells drains the firms' asset.
+    const amountIn = buy ? USDC(10 + Math.floor(Math.random() * 20)) : units((10 + Math.floor(Math.random() * 20)) / mid, ASSETS[s].decimals);
     const q = await reference(side, amountIn, -1, s);
     const posted = await deposit(acct(id("client")), buy ? U : tokenOf(s), tenderOf(s), amountIn, {
       PostOrder: { side, amount_in: amountIn.toString(), min_out: q.out.toString(), reference_out: q.out.toString(), commit_secs: 20, reveal_secs: 15 },

@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { decodeSignedTransaction, KeyPair, type Account } from "near-api-js";
 import { account, call, sleep, view, TGAS, USDC } from "./chain.ts";
-import { DEVNET_CONFIG, FAUCET, startDevnet, units, type DevMarket, type Devnet } from "./devnet.ts";
+import { DEVNET_CONFIG, FAUCET, NEAR_, startDevnet, units, type DevMarket, type Devnet } from "./devnet.ts";
 import { Indexer, type ChainEvent, type Stats } from "./indexer.ts";
 import { pageMeta, withMeta } from "./meta.ts";
 import { checkRelay, Payouts, RelayGate, submitRelay, type RelayTargets } from "./relay.ts";
@@ -339,10 +339,16 @@ async function houseClientLoop() {
     try {
       const recent: any[] = await view(provider, m.T, "get_orders", { from: Math.max(0, m.nextOrder - 10), limit: 10 });
       if (!quiet && !recent.some((o) => o.status === "Open")) {
-        const buy = Math.floor(houseIndex / markets.length) % 2 === 0;
+        // The side the house firms need: a client that bought more than it sold drained their asset on the lasting
+        // devnet (2026-11-01: NEAR firms down to 2 to 7 NEAR of 60, so buys found too few quotes). Under 20% of
+        // their value in the asset it sells to them, over 45% it buys, in between it alternates.
+        const house = (m.state.firms ?? []).filter((f: any) => f.status === "Solvent" && m.firms.some((h) => h.id === f.id && h.strategy.house));
+        const nav = house.reduce((a: number, f: any) => a + Number(f.nav), 0);
+        const share = nav > 0 ? house.reduce((a: number, f: any) => a + Number(f.nav) - Number(f.treasury), 0) / nav : 0.3;
+        const buy = share < 0.2 ? false : share > 0.45 ? true : Math.floor(houseIndex / markets.length) % 2 === 0;
         const side = buy ? "Buy" : "Sell";
-        // Buys of 10 to 59 USDC; sells of 3 to 24 USD of the asset.
-        const amountIn = buy ? USDC(10 + Math.floor(Math.random() * 50)) : units((3 + Math.floor(Math.random() * 22)) / (await m.mid()), m.decimals);
+        // Buys of 10 to 59 USDC, sells of 10 to 59 USD of the asset.
+        const amountIn = buy ? USDC(10 + Math.floor(Math.random() * 50)) : units((10 + Math.floor(Math.random() * 50)) / (await m.mid()), m.decimals);
         const q = await reference(side, amountIn, -1, m.symbol);
         const minOut = m.swarm.regime === "storm" ? (q.out * (10_000n - STORM_EXTRA_BPS)) / 10_000n : q.out;
         await devnet.deposit(
@@ -375,7 +381,19 @@ async function upkeepLoop() {
         await devnet.mint(o.accountId, amount);
         await devnet.deposit(o, amount, undefined, "usdc", m.T);
       };
-      await upkeep(provider, devnet.root, { tender: m.T, signers: accounts, stored: accounts, owners: house.map((f) => f.owner), minBond: DEVNET_CONFIG.minBond, credit }).then(
+      // The asset each house firm starts with (devnet.ts): a quarter of it is the floor.
+      const start = m.symbol === "NEAR" ? NEAR_(60) : units(150 / m.start.mid, m.decimals);
+      const solvent = new Set((m.state.firms ?? []).filter((f: any) => f.status === "Solvent" || f.status === "Illiquid").map((f: any) => f.id));
+      const stock = {
+        firms: house.filter((f) => solvent.has(f.id) && f.strategy.name !== "Gambler Inc").map((f) => ({ owner: f.owner, account: f.account })),
+        floor: start / 4n,
+        to: start,
+        fund: async (o: Account, firm: string, amount: bigint) => {
+          await devnet.mint(o.accountId, amount, m.token);
+          await devnet.deposit(o, amount, { Credit: firm }, m.token, m.T);
+        },
+      };
+      await upkeep(provider, devnet.root, { tender: m.T, signers: accounts, stored: accounts, owners: house.map((f) => f.owner), minBond: DEVNET_CONFIG.minBond, credit, stock }).then(
         (done) => done.length && log(`upkeep ${m.symbol}: ${done.join(", ")}`),
         (e) => log(`upkeep ${m.symbol}: ${(e as Error).message}`),
       );
