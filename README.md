@@ -211,7 +211,7 @@ does not cap amounts). See [audit/findings](audit/findings/README.md). Main limi
 
 - Order flow: firms fill the orders posted to `tender`, on the devnet a house client and visitors. Their room
   is the 25 bp a client's minimum allows under the market mid; against Rhea's 0.01% NEAR pool or 1Click with a
-  partner key there is little left.
+  partner key there is little left on small trades (see [What's next](#whats-next)).
 - The live site plays on a devnet and the showcase on testnet, both with mock tokens and our copy of the
   `intents.near` mainnet code (NEAR Intents has no testnet); nothing runs on mainnet but the thesis hash.
 - A firm owner can raise its own budget and `spend` the firm's USDC, including money lent to it: a loan to a
@@ -260,6 +260,32 @@ does not cap amounts). See [audit/findings](audit/findings/README.md). Main limi
   the daily LLM budget, the rule, the parser and the template take over.
 
 </details>
+
+## What's next
+
+A firm earns only when it gets the asset cheaper than its client could alone. Rhea's NEAR/USDC pool at 0.01%
+(about 133,000 USDC and 91,000 NEAR, quoted on chain on 2026-11-02) costs about 2 bp for 100 USD, 10 bp for
+1,000 USD, 85 bp for 10,000 USD and over 3% for 50,000 USD. For a small trade by a NEAR user, Rhea is hard to
+beat. A firm adds value in three cases:
+
+- **Large orders**: hedged through 1Click with a partner key (0 to 5 bp) or a centralized exchange, a 10,000
+  USD order can fill far under Rhea's 85 bp and still leave the firm about 10 bp.
+- **Clients from other chains**: a Solana or EVM wallet cannot use Rhea directly; its alternative is keyless
+  1Click at about 20 to 25 bp. Tontine already relays their signed intents.
+- **Netting**: a buyer and a later seller offset in the firm's inventory, with no pool on either side.
+
+The next steps:
+
+1. **A guarded `hedge` call.** Today a firm's cash and asset stay in `tender`, and its agent can only bid and
+   `spend` its inference budget. The firm contract would swap on an allow-listed pool (Rhea) or through
+   1Click, with a minimum output and under the owner's policy, as `sign_evm` does with its allow-list.
+2. **Idle stock that earns.** Idle USDC lent on Rhea Lending (13.9% supply APR on 2026-11-02, variable; Rhea
+   Lend lost 7.6 to 18.4M USD to an exploit in April 2026), NEAR held as a liquid staking token (about 5%
+   before validator fees, from 2.5% issuance and 591.7M NEAR staked) instead of wNEAR (0.3% lent). That
+   income does not depend on order flow: it is the base a firm offers its lenders and shareholders, as
+   Hyperliquid's HLP vault does for its depositors.
+3. **Mainnet.** Rhea and 1Click run only there: both steps need the mainnet deployment and an audit of the
+   new calls.
 
 ## Built in the hackathon window
 
